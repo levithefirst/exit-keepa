@@ -1,6 +1,6 @@
 # KeeperHub integration: research findings & status
 
-<!-- verification-in-progress: forcing a fresh Railway build+predeploy pipeline -->
+<!-- verification-in-progress: forcing a fresh Railway build+predeploy pipeline (retry after path fix) -->
 
 
 This document records what was verified about KeeperHub's real API/MCP
