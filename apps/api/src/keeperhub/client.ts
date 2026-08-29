@@ -87,6 +87,40 @@ export class KeeperHubClient {
   }
 
   /**
+   * Performs a raw, unauthenticated-response-shape-agnostic GET against the
+   * KeeperHub API and returns status + response headers + parsed body
+   * verbatim, without throwing on non-2xx. Used exclusively by the
+   * temporary diagnostics route (see routes/diagnostics.ts) to capture and
+   * verify real API behavior - not intended for application logic, which
+   * should use the typed methods above once their shapes are confirmed.
+   *
+   * Never logs or returns the request Authorization header.
+   */
+  async rawGet(path: string): Promise<{ status: number; headers: Record<string, string>; body: unknown }> {
+    const url = `${this.baseUrl.replace(/\/$/, "")}${path}`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    });
+
+    const headers: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
+
+    const text = await response.text();
+    let body: unknown = text;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      // Response wasn't JSON - return the raw text so nothing is hidden.
+    }
+
+    return { status: response.status, headers, body };
+  }
+
+  /**
    * NOT IMPLEMENTED: Safe transaction simulation via KeeperHub.
    * KeeperHub's marketing/docs surface mentions Safe transaction
    * preparation and simulation, but no confirmed endpoint path or payload

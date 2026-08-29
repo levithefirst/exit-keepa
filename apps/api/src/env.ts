@@ -23,6 +23,13 @@ const envSchema = z.object({
 
   BASE_CHAIN_ID: z.coerce.number().int().positive().default(8453),
   BASE_RPC_URL: z.string().url().default("https://mainnet.base.org"),
+
+  // Optional: enables the temporary /internal/diagnostics/keeperhub/* route
+  // used to verify KeeperHub's live API from this deployment's own network.
+  // Unset in any environment where that route should stay disabled (it
+  // returns 503 when this is absent). Remove this variable and the route
+  // once KeeperHub integration verification is complete.
+  DIAGNOSTIC_SECRET: z.string().min(16).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

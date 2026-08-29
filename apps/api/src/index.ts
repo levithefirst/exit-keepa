@@ -6,6 +6,7 @@ import { logger } from "./logger";
 import { healthRouter } from "./routes/health";
 import { exitStrategiesRouter } from "./routes/exitStrategies";
 import { webhooksRouter } from "./routes/webhooks";
+import { diagnosticsRouter } from "./routes/diagnostics";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 
 const app = express();
@@ -21,6 +22,7 @@ app.use(pinoHttp({ logger }));
 app.use(healthRouter);
 app.use("/api", exitStrategiesRouter);
 app.use("/api", webhooksRouter);
+app.use(diagnosticsRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
