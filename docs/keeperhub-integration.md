@@ -1,5 +1,8 @@
 # KeeperHub integration: research findings & status
 
+<!-- verification-in-progress: forcing a fresh Railway build+predeploy pipeline -->
+
+
 This document records what was verified about KeeperHub's real API/MCP
 surface before any integration code was written, per the project rule:
 **no invented KeeperHub endpoints, SDK methods, MCP methods, contract
