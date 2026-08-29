@@ -1,6 +1,6 @@
 import { env } from "../env";
 import { logger } from "../logger";
-import type { CreateWorkflowRequest, KeeperHubExecution, KeeperHubWorkflow } from "./types";
+import type { CreateWorkflowRequest, KeeperHubChain, KeeperHubExecution, KeeperHubWorkflow } from "./types";
 
 /**
  * Thin client for KeeperHub's REST API (https://docs.keeperhub.com/api).
@@ -14,17 +14,21 @@ import type { CreateWorkflowRequest, KeeperHubExecution, KeeperHubWorkflow } fro
  *   - GET    /workflows/:id/executions
  *   - GET    /executions/:id
  *
+ * `listChains()` (GET /chains) is LIVE-VERIFIED - a real request from a
+ * Railway-hosted deployment of this service, with a real KeeperHub API
+ * key, returned HTTP 200 and the chain list on 2026-08-29. Base
+ * (chainId 8453) is present with isEnabled: true. Full request/response
+ * record: docs/keeperhub-integration.md.
+ *
  * KeeperHub also advertises first-class Safe support (pending-transaction
  * monitoring, signature tracking, simulation) and an MCP server, but the
  * exact endpoint paths / MCP tool names / request-response shapes for the
- * Safe-specific flows are not published in a way this session could verify
- * (network egress to docs.keeperhub.com was unavailable, and the linked
- * GitHub repos don't enumerate them - see docs/keeperhub-integration.md).
+ * Safe-specific flows, and for POST /execute/contract-call, are NOT yet
+ * live-verified - see docs/keeperhub-integration.md.
  *
  * Rather than guessing at those shapes, the Safe-specific methods below are
- * intentionally left unimplemented. Wire them up once a real KeeperHub API
- * key is available and the exact contract has been confirmed against the
- * live API or an authenticated MCP session - do not fill them in from
+ * intentionally left unimplemented. Wire them up once each contract has
+ * been confirmed the same way listChains() was - do not fill them in from
  * assumption.
  */
 export class KeeperHubClient {
@@ -84,6 +88,16 @@ export class KeeperHubClient {
 
   getExecution(executionId: string): Promise<KeeperHubExecution> {
     return this.request<KeeperHubExecution>(`/executions/${executionId}`);
+  }
+
+  /** Live-verified 2026-08-29 - see class-level doc comment. */
+  listChains(): Promise<KeeperHubChain[]> {
+    return this.request<KeeperHubChain[]>("/chains");
+  }
+
+  async isChainSupported(chainId: number): Promise<boolean> {
+    const chains = await this.listChains();
+    return chains.some((chain) => chain.chainId === chainId && chain.isEnabled);
   }
 
   /**

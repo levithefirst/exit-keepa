@@ -40,3 +40,25 @@ export interface CreateWorkflowRequest {
    */
   definition: Record<string, unknown>;
 }
+
+/**
+ * GET /chains response item. LIVE-VERIFIED on 2026-08-29 by calling the
+ * real KeeperHub API (Bearer kh_... auth) from a Railway-hosted deployment
+ * of this service - see docs/keeperhub-integration.md for the full
+ * request/response record. Response is a flat JSON array of these, no
+ * envelope or pagination.
+ */
+export interface KeeperHubChain {
+  id: string;
+  chainId: number;
+  name: string;
+  symbol: string;
+  chainType: "evm" | "solana" | (string & {});
+  explorerUrl: string;
+  explorerAddressPath: string;
+  explorerApiUrl: string;
+  explorerApiType: string;
+  isTestnet: boolean;
+  isEnabled: boolean;
+  usePrivateMempoolRpc: boolean;
+}

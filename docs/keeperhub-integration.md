@@ -1,17 +1,110 @@
 # KeeperHub integration: research findings & status
 
-<!-- verification-in-progress: forcing a fresh Railway build+predeploy pipeline (retry after path fix) -->
-
-
 This document records what was verified about KeeperHub's real API/MCP
 surface before any integration code was written, per the project rule:
 **no invented KeeperHub endpoints, SDK methods, MCP methods, contract
 addresses, or execution flows.**
 
-## How this was researched
+## Live-verified (2026-08-29)
 
-Direct HTTP access to `docs.keeperhub.com` was blocked by this session's
-network egress policy, so findings below come from:
+Neither this session's sandbox nor its network policy allows outbound
+HTTPS to `keeperhub.com` or `*.up.railway.app`. To verify anything for
+real, the actual API call had to be made **from Railway's own network**:
+a one-off script (`apps/api/src/scripts/verify-keeperhub.js`) was run as
+a Railway `preDeployCommand` on the deployed `apps/api` service (project
+`exit-keepa`, service `api`), using the real `KEEPERHUB_API_KEY` set
+directly in Railway's dashboard (never seen by this session). Its stdout
+was read back via the Railway MCP's log tool.
+
+**`GET https://app.keeperhub.com/api/chains`**, `Authorization: Bearer
+kh_...`:
+
+- **Status: `200 OK`**, reproduced on two independent deploys.
+- Response is a **flat JSON array** of chain objects, no envelope, no
+  pagination:
+  ```json
+  {
+    "id": "9wr4m6zv2dwflb1trbzsx",
+    "chainId": 8453,
+    "name": "Base",
+    "symbol": "BASE",
+    "chainType": "evm",
+    "explorerUrl": "https://basescan.org",
+    "explorerAddressPath": "/address/{address}",
+    "explorerApiUrl": "https://api.etherscan.io/v2/api",
+    "explorerApiType": "etherscan",
+    "isTestnet": false,
+    "isEnabled": true,
+    "usePrivateMempoolRpc": false
+  }
+  ```
+- **Base (`chainId: 8453`) is present and `isEnabled: true`.** Base
+  Sepolia (`84532`) is also present and enabled. 27 chains total were
+  returned (Ethereum, Optimism, Arbitrum, Polygon, BNB Chain, Avalanche,
+  Solana, and several others, mainnet + testnet).
+- Response headers: served through Cloudflare (`server: cloudflare`,
+  `cf-ray`, `cf-cache-status: DYNAMIC`), `content-type: application/json`,
+  a custom `kh-minimum-cli-version: 0.11.1` header, standard security
+  headers (HSTS, X-Frame-Options, etc.), and Cloudflare NEL/Report-To
+  headers. **No `x-ratelimit-*` or `retry-after` headers were present on
+  this successful call** — rate-limit header behavior is therefore still
+  unverified (only observable on a 429, which hasn't been triggered).
+- This confirms: the base URL (`https://app.keeperhub.com/api`) is
+  correct, `Authorization: Bearer kh_...` is the correct and *sufficient*
+  auth format for this endpoint (a wrong/absent key would 401 rather than
+  200), and the response is exactly the shape now encoded in
+  `apps/api/src/keeperhub/types.ts` (`KeeperHubChain`).
+- `apps/api/src/keeperhub/client.ts` now has a live-verified
+  `listChains()` and `isChainSupported(chainId)`, both covered by real
+  unit tests in `apps/api/src/keeperhub/client.test.ts` built from this
+  exact captured response.
+
+**Operational finding on Railway** (for anyone repeating this): the
+Railway MCP's `redeploy` action reuses a previously *built* deployment's
+snapshotted config, including `preDeployCommand` **as it was at that
+build**, not the service's current live setting. To pick up a
+`preDeployCommand` change, a genuine new build+deploy is needed (a git
+push through the connected GitHub source), not `redeploy`.
+
+## Still not verified — do not build on these yet
+
+1. `GET /api/keys` (or `/api/api-keys`) — not yet called live. Not
+   required to confirm credential validity (the 200 on `/chains` already
+   proves the key is valid), but its exact response shape (used for
+   identifying the org/key) is unconfirmed.
+2. `POST /api/execute/contract-call` — endpoint path, exact request body,
+   `simulate: true` behavior, response shape, execution ID format,
+   status/polling endpoint, idempotency-key behavior, and 429 behavior.
+   None of this has been called live yet. **Do not implement the
+   execution path against assumed shapes** — the next session's job is to
+   run this same Railway-preDeployCommand technique against a read-only
+   or `simulate: true`-only call first.
+3. Exact endpoint path(s) and payload shape for **simulating a Safe
+   transaction** via KeeperHub, if that is even a distinct endpoint from
+   (2) — see the Safe/Zodiac section below.
+4. Exact endpoint path(s) for **monitoring** a Safe's pending
+   transactions / signature status via KeeperHub.
+5. The webhook payload shape and signature scheme KeeperHub uses for
+   execution status callbacks.
+6. MCP tool names/parameters for the hosted MCP server.
+7. Any KeeperHub-specific contract addresses (executor/module addresses).
+
+Because of (1)-(7), `apps/api/src/keeperhub/client.ts` still only
+implements the generic, confirmed workflow/execution REST endpoints plus
+the now-live-verified `listChains()`, and explicitly throws on the
+Safe-simulation method rather than guessing at a contract. The inbound
+webhook handler (`apps/api/src/routes/webhooks.ts`) verifies a
+conventional HMAC-SHA256 `X-Signature` header against
+`KEEPERHUB_WEBHOOK_SECRET` and stores every payload verbatim to the audit
+log, so nothing is lost while the real webhook contract is confirmed — no
+business logic should be built on specific payload fields until that's
+done.
+
+## How the earlier (pre-live-verification) findings below were researched
+
+Before live verification was possible, direct HTTP access to
+`docs.keeperhub.com` was blocked by this session's network egress policy,
+so the findings in "Confirmed" below came from:
 
 - Web search result snippets referencing `docs.keeperhub.com/api`,
   `docs.keeperhub.com/api/api-keys`, and `docs.keeperhub.com/ai-tools/mcp-server`
@@ -20,11 +113,9 @@ network egress policy, so findings below come from:
   [`KeeperHub/mcp`](https://github.com/KeeperHub/mcp)
 - KeeperHub's marketing site (`keeperhub.com`, `keeperhub.com/daos`)
 
-**This is not a substitute for reading the live docs with a real API key.**
-Before building further on top of this, re-verify against
-`https://docs.keeperhub.com/api` directly (or via an authenticated MCP
-session) once network access allows it, and update this file with the
-confirmed source.
+These are lower-confidence than the live-verified section above and
+should be treated as a starting point for further live verification, not
+as ground truth on their own.
 
 ## Confirmed
 
@@ -66,29 +157,15 @@ confirmed source.
   concrete endpoint path, payload shape, or response shape for these
   Safe-specific operations was found in any reachable source.
 
-## Explicitly NOT verified — do not build on these yet
-
-1. Exact endpoint path(s) and payload shape for **simulating a Safe
-   transaction** via KeeperHub.
-2. Exact endpoint path(s) for **monitoring** a Safe's pending
-   transactions / signature status via KeeperHub (as opposed to a
-   generic workflow execution).
-3. The webhook payload shape and signature scheme KeeperHub uses for
-   execution status callbacks.
-4. MCP tool names/parameters for the hosted MCP server.
-5. Any KeeperHub-specific contract addresses (executor/module addresses).
-
-Because of (1)-(5), `apps/api/src/keeperhub/client.ts` implements only the
-generic, confirmed workflow/execution REST endpoints, and explicitly
-throws on the Safe-simulation method rather than guessing at a contract.
-The inbound webhook handler
-(`apps/api/src/routes/webhooks.ts`) verifies a conventional
-HMAC-SHA256 `X-Signature` header against `KEEPERHUB_WEBHOOK_SECRET` and
-stores every payload verbatim to the audit log, so nothing is lost while
-the real webhook contract is confirmed — no business logic should be
-built on specific payload fields until that's done.
-
 ## Safe / Zodiac architecture for the Ratehopper Auto-Exit concept
+
+**Status: architecture proposed, not yet tested against a live
+`POST /execute/contract-call` call.** Whether KeeperHub's contract-call
+execution can actually drive a Zodiac Roles Modifier (as opposed to just
+being theoretically compatible, per the reasoning below) has not been
+confirmed live and is the next verification step — see "Still not
+verified" item 2 above. Do not treat this section as a green light to
+build the executor side yet.
 
 The "Ratehopper Auto-Exit" idea is: a user's position (e.g. a
 borrow/lend position on a money market) sits behind a **Safe**, and
@@ -128,11 +205,36 @@ implementing the trigger side.
 
 ## Action items before real integration
 
-- [ ] Obtain a KeeperHub API key and re-verify every endpoint above
-      directly against `https://docs.keeperhub.com/api`.
+- [x] Obtain a KeeperHub API key and verify `GET /chains` live (done
+      2026-08-29, see "Live-verified" above).
+- [ ] Verify `GET /keys` (or `/api-keys`) live for completeness (not
+      blocking - auth is already proven valid).
+- [ ] Verify `POST /execute/contract-call` live with `simulate: true`
+      against a harmless read-only call, using the same
+      Railway-preDeployCommand technique, and capture: exact request
+      body, response shape, execution ID format, status/polling
+      endpoint, idempotency-key header name/behavior, and 429 behavior.
+      **Do this before writing any execution code beyond `listChains()`.**
 - [ ] Confirm the Safe simulation/monitoring endpoint contract, or
       confirm it is MCP-only and capture the real tool schema.
 - [ ] Confirm the webhook payload/signature scheme from the dashboard's
       webhook configuration screen.
 - [ ] Enable a Zodiac Roles Modifier on a test Safe on Base Sepolia and
-      confirm the exact call KeeperHub needs configured as its "action".
+      confirm the exact call KeeperHub needs configured as its "action" -
+      this is what will determine whether the architecture above actually
+      works, per the "Status" note on that section.
+
+## Temporary verification infrastructure (remove when no longer needed)
+
+- `apps/api/src/scripts/verify-keeperhub.ts` - one-off script run as a
+  Railway `preDeployCommand` to call an allow-listed KeeperHub GET
+  endpoint from Railway's network and log the result.
+- `apps/api/src/routes/diagnostics.ts` - `GET
+  /internal/diagnostics/keeperhub/:resource`, gated by `DIAGNOSTIC_SECRET`
+  (disabled/503 when unset), allow-listed to `chains`/`keys`. Not yet
+  used for the live verification above (the `preDeployCommand` route was
+  used instead, since this sandbox cannot reach the deployed Railway
+  domain either) - kept in place in case a reachable caller (e.g. the
+  Vercel frontend, once deployed) needs to trigger it.
+- Both exist solely to support verification without ever exposing
+  `KEEPERHUB_API_KEY`. Delete them once the checklist above is complete.
