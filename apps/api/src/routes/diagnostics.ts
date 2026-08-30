@@ -386,24 +386,30 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-role-config-ch
       .map((f) => f.name);
     steps.functionFieldClassification = { scalarLikeFunctionFields, nestedFunctionFields };
 
-    // The singular `rolesModifier(id:...)` query returned null in a prior
-    // attempt. Switch to the top-level `rolesModifiers(avatar:...)` query
-    // pattern, already proven earlier this session to return real data.
+    // Also introspect the Condition type (Function.condition) - the object
+    // that holds the actual configured parameter condition, if any.
+    const conditionIntrospection = await graphql(
+      '{ conditionType: __type(name: "Condition") { fields { name type { name kind ofType { name kind ofType { name kind ofType { name kind } } } } } } }',
+    );
+    steps.conditionIntrospection = conditionIntrospection;
+    const conditionFields = (conditionIntrospection.body as any)?.data?.conditionType?.fields as
+      | Array<{ name: string; type: any }>
+      | undefined;
+    const scalarLikeConditionFields = (conditionFields ?? [])
+      .filter((f) => f.type?.kind === "SCALAR" || f.type?.kind === "ENUM" || f.type?.ofType?.kind === "SCALAR" || f.type?.ofType?.kind === "ENUM")
+      .map((f) => f.name);
+    steps.conditionFieldClassification = { scalarLikeConditionFields, allConditionFields: (conditionFields ?? []).map((f) => f.name) };
+
+    // Introspection showed `rolesModifiers` takes a required `avatar: String!`
+    // argument directly (not a `where` filter) - fixing the prior attempt's
+    // 400 error.
     const safeLower = CONTROLLED_SAFE.toLowerCase();
     const targetSelection = scalarLikeTargetFields.length > 0 ? scalarLikeTargetFields.join(" ") : "id";
     const functionSelection = scalarLikeFunctionFields.length > 0 ? scalarLikeFunctionFields.join(" ") : "id";
-    const query = `{ rolesModifiers(where: { avatar: "${safeLower}" }) { id avatar roles { id key targets { ${targetSelection} functions { ${functionSelection} } } } } }`;
+    const conditionSelection = scalarLikeConditionFields.length > 0 ? scalarLikeConditionFields.join(" ") : "id";
+    const query = `{ rolesModifiers(avatar: "${safeLower}") { id avatar roles { id key targets { ${targetSelection} functions { ${functionSelection} condition { ${conditionSelection} } } } } } }`;
     const dataResult = await graphql(query);
     steps.dataQuery = { query, result: dataResult };
-
-    // Fallback: also try without a `where` filter, in case the subgraph's
-    // filter argument name/shape differs, just listing rolesModifiers for
-    // this avatar via a plain top-level query with no arguments filtered
-    // client-side - purely additional read-only evidence, no assumptions
-    // acted upon.
-    const fallbackQuery = `{ rolesModifiers(first: 50) { id avatar } }`;
-    const fallbackResult = await graphql(fallbackQuery);
-    steps.fallbackListQuery = { query: fallbackQuery, result: fallbackResult };
 
     res.status(200).json({
       roleKey: CONTROLLED_ROLE_KEY,
