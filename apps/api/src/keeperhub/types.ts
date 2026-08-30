@@ -196,3 +196,32 @@ export interface ContractCallFunctionNotFoundError {
   error: string;
   field: "functionName";
 }
+
+/**
+ * POST /execute/contract-call response shape for `execTransactionWithRole`
+ * calls specifically - a different, richer shape than the plain
+ * ContractCallResult above. LIVE-VERIFIED twice this session: once against
+ * a foreign Roles instance (docs/zodiac-verification-evidence.md, the
+ * "NotAuthorized" round) and once against this project's own controlled
+ * Roles Modifier (ConditionViolation(2,...) on a scoped-out target). Both
+ * captures agree on this shape for a REVERTING simulated call.
+ *
+ * NOT verified: the exact shape for a simulated call that WOULD succeed
+ * (wouldRevert: false), or for a real broadcast (simulate: false). Treat
+ * `transactionHash` on a broadcast response as unconfirmed until it has
+ * been independently validated as a real, minable 66-character hash - see
+ * execution/executor.ts, which never trusts an unvalidated hash.
+ */
+export interface ExecTransactionWithRoleResult {
+  success: boolean;
+  status: string;
+  from?: string;
+  to?: string;
+  value?: string;
+  wouldRevert: boolean;
+  failureKind?: string;
+  revertReason?: string;
+  error?: string;
+  transactionHash?: string;
+  [key: string]: unknown;
+}

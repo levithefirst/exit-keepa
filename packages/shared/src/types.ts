@@ -17,6 +17,8 @@ export interface SafeAccount {
   safeAddress: string;
   /** Address of the Zodiac Roles Modifier enabled on this Safe, if any. */
   rolesModifierAddress: string | null;
+  /** The bytes32 role key Exit Keepa executes under, once Roles is configured. */
+  rolesKey: string | null;
   createdAt: string;
 }
 
@@ -29,11 +31,31 @@ export interface ExitStrategy {
   status: ExitStrategyStatus;
   /** Human-readable description of the rate condition, e.g. "borrow APR > 8%". */
   condition: RateCondition;
+  /** The exact on-chain action Exit Keepa executes when the condition fires. */
+  action: ExitAction;
   /** KeeperHub workflow backing this strategy, once created. */
   keeperhubWorkflowId: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * The one protocol/action Exit Keepa v1 supports: withdrawing a Base USDC
+ * supply position from Aave v3 back to the Safe. Deliberately not a broad
+ * union — see docs/keeperhub-integration.md for why v1 is scoped to a
+ * single, fully-verified action rather than a generic "call any protocol"
+ * system.
+ */
+export interface AaveV3BaseWithdrawAction {
+  protocol: "aave-v3-base";
+  action: "withdraw";
+  /** Reserve underlying address; must be Base USDC in v1. */
+  asset: string;
+  /** "max" withdraws the Safe's full aToken balance; otherwise smallest-unit string. */
+  amount: "max" | string;
+}
+
+export type ExitAction = AaveV3BaseWithdrawAction;
 
 export type RateComparator = "gt" | "gte" | "lt" | "lte";
 
