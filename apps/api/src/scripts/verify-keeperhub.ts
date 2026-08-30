@@ -161,9 +161,26 @@ async function main() {
       return;
     }
 
+    if (mode === "execute-disambiguation-probe") {
+      // Disambiguates: is isValidSignature's "not found in ABI" caused by
+      // an EIP-1271 overload/naming quirk, or does KeeperHub genuinely
+      // not resolve non-ERC20 functions at all? getThreshold() is a
+      // real, unambiguous, zero-argument, Safe-specific view getter with
+      // no overloads - on the same contract address already accepted.
+      const probeBody = {
+        contractAddress: SAFE_SINGLETON_V141,
+        chainId: env.BASE_CHAIN_ID,
+        functionName: "getThreshold",
+        simulate: true,
+      };
+      const result = await postJson("/execute/contract-call", probeBody);
+      console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: mode, request: probeBody, ...result })}`);
+      return;
+    }
+
     console.log(
       `KEEPERHUB_VERIFY_ERROR ${JSON.stringify({
-        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe", "execute-bytes-probe"].join(", ")}`,
+        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe", "execute-bytes-probe", "execute-disambiguation-probe"].join(", ")}`,
         given: mode,
       })}`,
     );
