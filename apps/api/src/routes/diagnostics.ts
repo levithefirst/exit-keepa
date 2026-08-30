@@ -36,6 +36,14 @@ const ALLOWED_RESOURCES: Record<string, string> = {
   keys: "/keys",
 };
 
+// Hardcoded to the specific, independently-verified controlled Safe +
+// Roles Modifier setup - not query-driven. One-shot simulate-only probe,
+// never a general contract-call proxy.
+const CONTROLLED_ROLES_MODIFIER = "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE";
+const CONTROLLED_SAFE = "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9";
+const CONTROLLED_ROLE_KEY =
+  "0x657869745f6b6565706100000000000000000000000000000000000000000000";
+
 // Registered before the generic ":resource" route below: Express matches
 // routes in registration order, and ":resource" matches any single path
 // segment literally (including "zodiac-instance-check"), so the specific
@@ -162,6 +170,60 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/zodiac-instance-check", a
     logger.error({ err }, "Zodiac instance diagnostics check failed");
     res.status(502).json({ error: "diagnostics_check_failed", message: (err as Error).message });
   }
+});
+
+/**
+ * TEMPORARY - one-shot simulate-only execTransactionWithRole probe against
+ * a controlled Safe + Roles Modifier setup (independently verified onchain
+ * separately from this route). Never broadcasts: simulate is hardcoded
+ * true and cannot be overridden by the caller. Addresses/args are
+ * hardcoded, not query-driven.
+ */
+diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-safe-exec-check", async (req, res) => {
+  if (!env.DIAGNOSTIC_SECRET) {
+    res.status(503).json({ error: "diagnostics_disabled" });
+    return;
+  }
+
+  const provided = req.header("x-diagnostic-secret") ?? "";
+  const expected = env.DIAGNOSTIC_SECRET;
+  const authorized =
+    provided.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+
+  if (!authorized) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+
+  const request = {
+    contractAddress: CONTROLLED_ROLES_MODIFIER,
+    chainId: env.BASE_CHAIN_ID,
+    functionName: "execTransactionWithRole",
+    functionArgs: JSON.stringify([CONTROLLED_SAFE, "0", "0x", "0", CONTROLLED_ROLE_KEY, true]),
+    simulate: true,
+  };
+
+  let result: unknown;
+  try {
+    const raw = await keeperHubClient.callContractFunction(request);
+    result = { request, status: 200, rawResult: raw };
+  } catch (err) {
+    result = { request, error: (err as Error).message };
+  }
+
+  try {
+    await db.insert(auditEvents).values({
+      entityType: "keeperhub_execution",
+      entityId: crypto.randomUUID(),
+      eventType: "keeperhub.diagnostics.controlled_safe_exec_checked",
+      payload: { result },
+    });
+  } catch (dbErr) {
+    logger.warn({ dbErr }, "Diagnostics audit event insert failed (non-fatal)");
+  }
+
+  res.status(200).json(result);
 });
 
 diagnosticsRouter.get("/internal/diagnostics/keeperhub/:resource", async (req, res) => {
