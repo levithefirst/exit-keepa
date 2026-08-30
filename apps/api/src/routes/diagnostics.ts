@@ -359,15 +359,57 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-role-config-ch
       .map((f) => f.name);
     steps.targetFieldClassification = { scalarLikeTargetFields, nestedTargetFields };
 
-    const rmIdLower = CONTROLLED_ROLES_MODIFIER.toLowerCase();
+    // Introspect the Function type (nested under Target.functions) - this is
+    // where the actual per-selector parameter condition data lives.
+    const functionsFieldType = targetFields?.find((f) => f.name === "functions")?.type;
+    const functionTypeName =
+      functionsFieldType?.ofType?.name ??
+      functionsFieldType?.ofType?.ofType?.name ??
+      functionsFieldType?.ofType?.ofType?.ofType?.name ??
+      functionsFieldType?.name ??
+      null;
+
+    let functionFields: Array<{ name: string; type: any }> | undefined;
+    if (functionTypeName) {
+      const introspection4 = await graphql(
+        `{ functionType: __type(name: "${functionTypeName}") { fields { name type { name kind ofType { name kind ofType { name kind ofType { name kind } } } } } } }`,
+      );
+      steps.introspection4 = { functionTypeName, result: introspection4 };
+      functionFields = (introspection4.body as any)?.data?.functionType?.fields;
+    }
+
+    const scalarLikeFunctionFields = (functionFields ?? [])
+      .filter((f) => f.type?.kind === "SCALAR" || f.type?.kind === "ENUM" || f.type?.ofType?.kind === "SCALAR" || f.type?.ofType?.kind === "ENUM")
+      .map((f) => f.name);
+    const nestedFunctionFields = (functionFields ?? [])
+      .filter((f) => !scalarLikeFunctionFields.includes(f.name))
+      .map((f) => f.name);
+    steps.functionFieldClassification = { scalarLikeFunctionFields, nestedFunctionFields };
+
+    // The singular `rolesModifier(id:...)` query returned null in a prior
+    // attempt. Switch to the top-level `rolesModifiers(avatar:...)` query
+    // pattern, already proven earlier this session to return real data.
+    const safeLower = CONTROLLED_SAFE.toLowerCase();
     const targetSelection = scalarLikeTargetFields.length > 0 ? scalarLikeTargetFields.join(" ") : "id";
-    const query = `{ rolesModifier(id: "${rmIdLower}") { id roles { id key targets { ${targetSelection} } } } }`;
+    const functionSelection = scalarLikeFunctionFields.length > 0 ? scalarLikeFunctionFields.join(" ") : "id";
+    const query = `{ rolesModifiers(where: { avatar: "${safeLower}" }) { id avatar roles { id key targets { ${targetSelection} functions { ${functionSelection} } } } } }`;
     const dataResult = await graphql(query);
     steps.dataQuery = { query, result: dataResult };
+
+    // Fallback: also try without a `where` filter, in case the subgraph's
+    // filter argument name/shape differs, just listing rolesModifiers for
+    // this avatar via a plain top-level query with no arguments filtered
+    // client-side - purely additional read-only evidence, no assumptions
+    // acted upon.
+    const fallbackQuery = `{ rolesModifiers(first: 50) { id avatar } }`;
+    const fallbackResult = await graphql(fallbackQuery);
+    steps.fallbackListQuery = { query: fallbackQuery, result: fallbackResult };
 
     res.status(200).json({
       roleKey: CONTROLLED_ROLE_KEY,
       targetOfInterest: USDC_BASE,
+      rolesModifierAddress: CONTROLLED_ROLES_MODIFIER,
+      safeAddress: CONTROLLED_SAFE,
       steps,
     });
   } catch (err) {
