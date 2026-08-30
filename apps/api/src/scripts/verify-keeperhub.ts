@@ -100,6 +100,7 @@ async function main() {
       // harmless WETH9 decimals() case anyway.
       const probeBody = {
         contractAddress: "0x4200000000000000000000000000000000000006",
+        chainId: env.BASE_CHAIN_ID,
       };
       const result = await postJson("/execute/contract-call", probeBody);
       console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: mode, request: probeBody, ...result })}`);
