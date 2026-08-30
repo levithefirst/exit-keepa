@@ -314,6 +314,66 @@ current evidence says KeeperHub's contract-call primitive is scoped to a
 curated, limited set of contract types and functions, and Zodiac has
 not been shown to be one of them.
 
+## Live-verified (2026-08-30): Zodiac Roles Modifier ABI resolution — the one remaining blocker from the hard verdict above
+
+Ran the exact next test the hard verdict above called for: `GET
+/chains/8453/abi?address=0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5`
+(Base's Zodiac Roles Modifier v2 mastercopy — confirmed against
+`gnosisguild/zodiac-modifier-roles`'s own deployments list, not
+guessed), run from Railway via
+`apps/api/src/scripts/verify-keeperhub.ts zodiac-abi-probe`.
+
+**Result: HTTP 200, `success: true`.** KeeperHub returned the real,
+complete Roles Modifier v2 ABI — `owner()`, `avatar()`, `target()`,
+`execTransactionFromModule`, `execTransactionWithRole(address,uint256,
+bytes,uint8,bytes32,bool) returns (bool)`, `execTransactionWithRoleReturnData`,
+`assignRoles`, `allowFunction`, `scopeFunction`, and the rest of the
+mastercopy's surface — with `explorerUrl:
+"https://basescan.org/address/0xF2964...283D5#code"` in the response.
+
+**This meaningfully updates the earlier verdict.** The ABI-lookup
+endpoint is not bounded by the same curated per-contract-type registry
+that `POST /execute/contract-call` appears to use (the one that
+excluded Safe's `isValidSignature`) — it resolves via the target
+contract's real verified source on Basescan, for a contract type
+(Zodiac) with no special-cased support anywhere in KeeperHub's docs.
+The blocking question from the hard verdict — "is Zodiac recognized at
+all" — is answered **yes, at least for ABI resolution.**
+
+**What this does NOT yet establish:**
+- Whether `POST /execute/contract-call` itself will accept
+  `functionName: "execTransactionWithRole"` on a Zodiac contract, given
+  that endpoint has already been shown (Safe `isValidSignature`) to use
+  a narrower registry than the ABI-lookup endpoint uses. ABI resolution
+  and call-execution resolution are evidently two different code paths.
+- Whether the `bytes` (calldata) and nested-struct-shaped arguments
+  `execTransactionWithRole` needs encode correctly through
+  `functionArgs`'s JSON-stringified-array convention — real risk,
+  unverified, and this is a materially more complex argument shape than
+  anything tested so far (a single `address`, and a rejected `bytes32`+
+  `bytes` pair).
+- Whether a **deployed instance** of the Roles Modifier (not the
+  mastercopy) behaves the same way through KeeperHub. Attempted this
+  next: Gnosis Guild's own public Roles subgraph
+  (`gnosisguild.squids.live/roles:production/api/graphql`, discovered
+  via `gnosisguild/zodiac-modifier-roles`'s own docs, not guessed) turns
+  out to key its `rolesModifiers` query by a known `avatar` (Safe)
+  address rather than exposing a "list all deployed instances"
+  query — confirmed via GraphQL introspection, not assumed. Without
+  already knowing a specific Base project's Safe address that has Roles
+  enabled, no instance address can be obtained from this source. Not
+  attempted via any other channel this round (no guessed address used).
+
+**Updated verdict: the ABI-resolution gate is GREEN.** The hard "do not
+build the executor" verdict above is downgraded from "leaning NO" to
+"open, pending the two items above" — specifically whether
+`POST /execute/contract-call` recognizes `execTransactionWithRole`'s
+functionName and encodes its arguments correctly. That is the next and
+now the only remaining gate before any executor work, and it still
+requires a real deployed instance address (not the mastercopy) to test
+safely, since calling a state-changing function's resolution/encoding
+path should not be done against the mastercopy itself.
+
 ## Still not verified — do not build on these yet
 
 1. `GET /api/keys` (or `/api/api-keys`) — not yet called live. Not
@@ -416,24 +476,23 @@ as ground truth on their own.
 
 ## Safe / Zodiac architecture for the Ratehopper Auto-Exit concept
 
-**Status: HARD VERDICT - likely NOT viable as KeeperHub's contract-call
-API currently behaves, pending one final direct test on the real Zodiac
-contract (not yet run).** See "Answering the 'can KeeperHub call an
-arbitrary target' question - hard verdict" above for the full reasoning.
-In short: KeeperHub's contract-call primitive resolves functions against
-an internal, curated, per-contract-type ABI - not the target's real ABI
-and not dynamic on-chain resolution. Confirmed-supported contract types:
-generic ERC-20 tokens and Safe wallets - and even Safe's own curated ABI
-excludes a real, standard EIP-1271 function (`isValidSignature`). There
-is no evidence Zodiac's Roles Modifier is a recognized contract type at
-all, and given that even mainstream Safe/EIP-1271 support is incomplete,
-there's no basis to assume a Zodiac-specific function would be
-supported. **Do not build the executor side.** The one remaining
-open question - whether the Roles Modifier itself is recognized at
-all - requires directly testing it (starting with a harmless read on
-one of its own public getters, never `execTransactionWithRole`), which
-has not been done yet per the explicit constraint against touching
-Zodiac this round.
+**Status: UPDATED 2026-08-30 - ABI-resolution gate is GREEN, execution
+gate still open.** See "Live-verified (2026-08-30): Zodiac Roles
+Modifier ABI resolution" above. `GET /chains/8453/abi` resolved the
+Roles Modifier v2 mastercopy's real ABI in full (owner/avatar/target/
+execTransactionWithRole all present, sourced from Basescan's verified
+code) - the "is Zodiac recognized at all" question from the hard
+verdict below is answered yes, for ABI lookup. Still unresolved and
+still blocking any executor work: whether `POST
+/execute/contract-call` (a separately-scoped, more narrowly curated
+registry - see the Safe `isValidSignature` finding) accepts
+`execTransactionWithRole` by name and encodes its `bytes`/struct
+arguments correctly, and doing that test safely requires a real
+deployed instance address (not the mastercopy), which was not found
+this round - see the ABI-resolution section above for why. **Do not
+build the executor side yet.** The original hard-verdict reasoning
+below is preserved for context; treat the "Status" line above as
+superseding it.
 
 The "Ratehopper Auto-Exit" idea is: a user's position (e.g. a
 borrow/lend position on a money market) sits behind a **Safe**, and
