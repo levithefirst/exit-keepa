@@ -33,6 +33,25 @@ import { env } from "../env";
  *                               approvals, or transfers involved
  *                               regardless of argument shape or whether
  *                               `simulate` gates broadcast.
+ *   execute-bytes-probe      - Now probing a `bytes`-typed argument and
+ *                               whether KeeperHub resolves a
+ *                               non-ERC20-getter function's ABI:
+ *                               isValidSignature(bytes32,bytes) on Safe's
+ *                               own canonical v1.4.1 singleton contract
+ *                               (0x41675C09...C7461a, published in
+ *                               Safe's safe-deployments GitHub repo,
+ *                               deployed identically across EVM chains
+ *                               including Base via CREATE2 - this
+ *                               address is from memory and unverified
+ *                               against a live source; if KeeperHub
+ *                               rejects it as invalid the same way an
+ *                               earlier from-memory USDC address was
+ *                               rejected, that itself is the result).
+ *                               Throwaway inputs: a zero bytes32 hash and
+ *                               a 2-byte garbage "signature". This is a
+ *                               `view` function - it can only read/
+ *                               revert, never move funds, change state,
+ *                               or touch Zodiac/execution.
  *
  * Temporary - remove once docs/keeperhub-integration.md records confirmed
  * live behavior and the preDeployCommand has been cleared.
@@ -41,6 +60,8 @@ const GET_RESOURCES = ["chains", "keys"] as const;
 
 const WETH_BASE = "0x4200000000000000000000000000000000000006";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const ZERO_BYTES32 = `0x${"00".repeat(32)}`;
+const SAFE_SINGLETON_V141 = "0x41675C099F32341bf84BFc5382aF534df5C7461a";
 
 async function postJson(path: string, body: unknown) {
   const url = `${env.KEEPERHUB_API_BASE_URL.replace(/\/$/, "")}${path}`;
@@ -127,9 +148,22 @@ async function main() {
       return;
     }
 
+    if (mode === "execute-bytes-probe") {
+      const probeBody = {
+        contractAddress: SAFE_SINGLETON_V141,
+        chainId: env.BASE_CHAIN_ID,
+        functionName: "isValidSignature",
+        functionArgs: JSON.stringify([ZERO_BYTES32, "0x1234"]),
+        simulate: true,
+      };
+      const result = await postJson("/execute/contract-call", probeBody);
+      console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: mode, request: probeBody, ...result })}`);
+      return;
+    }
+
     console.log(
       `KEEPERHUB_VERIFY_ERROR ${JSON.stringify({
-        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe"].join(", ")}`,
+        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe", "execute-bytes-probe"].join(", ")}`,
         given: mode,
       })}`,
     );
