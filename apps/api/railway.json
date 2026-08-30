@@ -5,7 +5,7 @@
     "buildCommand": "npm install && npm run build:api"
   },
   "deploy": {
-    "startCommand": "npm run start --workspace apps/api",
+    "startCommand": "npm run db:migrate --workspace apps/api && npm run start --workspace apps/api",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
