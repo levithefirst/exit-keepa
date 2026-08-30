@@ -102,6 +102,7 @@ async function main() {
         contractAddress: "0x4200000000000000000000000000000000000006",
         chainId: env.BASE_CHAIN_ID,
         functionName: "decimals",
+        simulate: true,
       };
       const result = await postJson("/execute/contract-call", probeBody);
       console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: mode, request: probeBody, ...result })}`);
