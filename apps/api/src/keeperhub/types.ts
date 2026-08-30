@@ -62,3 +62,61 @@ export interface KeeperHubChain {
   isEnabled: boolean;
   usePrivateMempoolRpc: boolean;
 }
+
+/**
+ * POST /execute/contract-call request body.
+ *
+ * LIVE-VERIFIED on 2026-08-30, but ONLY for this exact case: a
+ * zero-argument, pure/view function (decimals() on Base's WETH9
+ * predeploy). Verified by iteratively probing KeeperHub's own field-by-
+ * field validation errors (never by guessing), from a Railway-hosted
+ * deployment - see docs/keeperhub-integration.md for the full
+ * round-by-round record and the exact captured requests/responses.
+ *
+ * Confirmed required fields: contractAddress, chainId, functionName.
+ * `simulate` is accepted but had NO observable effect on this call (same
+ * response with or without it) - its effect on a state-changing call is
+ * UNVERIFIED.
+ *
+ * NOT verified and intentionally not modeled here:
+ * - How to pass arguments to a function that takes any (no `args`/
+ *   `params`/similar field name has been confirmed).
+ * - `value` (sending native currency) - never sent, never required.
+ * - Any field controlling which account/wallet executes the call.
+ * - Idempotency-key behavior - no such header was sent or needed for
+ *   this read-only call.
+ * - The request/response shape for an actual state-changing call, or
+ *   whether one goes through this same endpoint at all.
+ *
+ * Do not extend this type or the client method that uses it to support
+ * arguments or state-changing calls without live-verifying the real
+ * field names the same way - guessing here is exactly what this project
+ * forbids.
+ */
+export interface ContractCallRequest {
+  contractAddress: string;
+  chainId: number;
+  functionName: string;
+  simulate?: boolean;
+}
+
+/**
+ * POST /execute/contract-call response body for the verified case above:
+ * a flat, synchronous result - no execution ID, no status field, no
+ * envelope. Whether a state-changing call returns this same shape (vs.
+ * an execution ID requiring polling) is UNVERIFIED.
+ */
+export interface ContractCallResult {
+  result: string;
+}
+
+/**
+ * POST /execute/contract-call validation error shape, live-verified
+ * across four separate missing-field responses on 2026-08-30. The API
+ * reports exactly one missing/invalid field per response.
+ */
+export interface ContractCallValidationError {
+  error: string;
+  field: string;
+  details: string;
+}

@@ -113,4 +113,60 @@ describe("KeeperHubClient", () => {
   it("simulateSafeTransaction() throws rather than fabricating an unverified endpoint", () => {
     expect(() => client.simulateSafeTransaction()).toThrow(/not implemented/i);
   });
+
+  describe("callContractFunction()", () => {
+    /**
+     * Exact request/response captured on 2026-08-30 from a real call to
+     * POST /execute/contract-call: decimals() on Base's WETH9 predeploy,
+     * with Authorization: Bearer <real key> from a Railway-hosted
+     * deployment. See docs/keeperhub-integration.md for the full
+     * round-by-round record (this was the 4th of 5 probes; each earlier
+     * probe hit a 400 revealing the next missing required field).
+     */
+    const LIVE_REQUEST = {
+      contractAddress: "0x4200000000000000000000000000000000000006",
+      chainId: 8453,
+      functionName: "decimals",
+    };
+    const LIVE_RESPONSE = { result: "18" };
+
+    it("posts the verified minimal request shape and returns the flat result", async () => {
+      const fetchMock = mockFetchOnce(200, LIVE_RESPONSE);
+
+      const result = await client.callContractFunction(LIVE_REQUEST);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://app.keeperhub.com/api/execute/contract-call",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify(LIVE_REQUEST),
+          headers: expect.objectContaining({ Authorization: "Bearer kh_test_key" }),
+        }),
+      );
+      expect(result).toEqual(LIVE_RESPONSE);
+    });
+
+    it("adding simulate: true to the same request has no effect on the response shape (live-observed)", async () => {
+      mockFetchOnce(200, LIVE_RESPONSE);
+      const result = await client.callContractFunction({ ...LIVE_REQUEST, simulate: true });
+      expect(result).toEqual(LIVE_RESPONSE);
+    });
+
+    it.each([
+      { body: {}, field: "contractAddress" },
+      { body: { contractAddress: "0x4200000000000000000000000000000000000006" }, field: "chainId" },
+      {
+        body: { contractAddress: "0x4200000000000000000000000000000000000006", chainId: 8453 },
+        field: "functionName",
+      },
+    ])("surfaces the real per-field validation error for an incomplete request (missing $field)", async ({ body, field }) => {
+      mockFetchOnce(400, {
+        error: "Missing required field",
+        field,
+        details: `${field} is required`,
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await expect(client.callContractFunction(body as any)).rejects.toThrow(/400/);
+    });
+  });
 });

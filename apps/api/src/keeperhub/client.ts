@@ -1,6 +1,13 @@
 import { env } from "../env";
 import { logger } from "../logger";
-import type { CreateWorkflowRequest, KeeperHubChain, KeeperHubExecution, KeeperHubWorkflow } from "./types";
+import type {
+  ContractCallRequest,
+  ContractCallResult,
+  CreateWorkflowRequest,
+  KeeperHubChain,
+  KeeperHubExecution,
+  KeeperHubWorkflow,
+} from "./types";
 
 /**
  * Thin client for KeeperHub's REST API (https://docs.keeperhub.com/api).
@@ -20,11 +27,16 @@ import type { CreateWorkflowRequest, KeeperHubChain, KeeperHubExecution, KeeperH
  * (chainId 8453) is present with isEnabled: true. Full request/response
  * record: docs/keeperhub-integration.md.
  *
+ * `callContractFunction()` (POST /execute/contract-call) is LIVE-VERIFIED
+ * on 2026-08-30, but ONLY for a zero-argument, pure/view function call -
+ * see the ContractCallRequest doc comment in ./types.ts before using it
+ * for anything else.
+ *
  * KeeperHub also advertises first-class Safe support (pending-transaction
  * monitoring, signature tracking, simulation) and an MCP server, but the
  * exact endpoint paths / MCP tool names / request-response shapes for the
- * Safe-specific flows, and for POST /execute/contract-call, are NOT yet
- * live-verified - see docs/keeperhub-integration.md.
+ * Safe-specific flows are NOT yet live-verified - see
+ * docs/keeperhub-integration.md.
  *
  * Rather than guessing at those shapes, the Safe-specific methods below are
  * intentionally left unimplemented. Wire them up once each contract has
@@ -98,6 +110,29 @@ export class KeeperHubClient {
   async isChainSupported(chainId: number): Promise<boolean> {
     const chains = await this.listChains();
     return chains.some((chain) => chain.chainId === chainId && chain.isEnabled);
+  }
+
+  /**
+   * Calls a contract function via POST /execute/contract-call.
+   *
+   * LIVE-VERIFIED 2026-08-30 ONLY for a zero-argument, pure/view function
+   * (decimals() on Base's WETH9 predeploy) - see the ContractCallRequest
+   * doc comment and docs/keeperhub-integration.md for the full
+   * round-by-round verification record.
+   *
+   * DO NOT call this with a function that takes arguments or that
+   * mutates state: how to pass arguments is unverified, and whether
+   * `simulate: true` actually prevents a real state-changing broadcast
+   * is unverified (it had zero observable effect on the read-only call
+   * this was tested with). Using this for anything beyond a confirmed
+   * read-only, zero-argument call would be exactly the kind of
+   * unverified execution this project forbids.
+   */
+  callContractFunction(request: ContractCallRequest): Promise<ContractCallResult> {
+    return this.request<ContractCallResult>("/execute/contract-call", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
   }
 
   /**
