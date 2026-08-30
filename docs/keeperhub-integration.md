@@ -130,10 +130,9 @@ an accurate simulation of it) rather than returning a stub.
 
 **What this does NOT confirm - do not assume these:**
 
-- How to pass **arguments** to a function that takes any. No
-  `args`/`params`/`functionArgs`/similar field has been tested or
-  observed. `functionName: "decimals"` takes zero arguments, so this
-  case never needed one.
+- How to pass **arguments** to a function that takes any -
+  **now confirmed for a plain `address` argument, see the next section**.
+  Still unconfirmed for any other argument type (in particular `bytes`).
 - Whether **`value`** (sending native currency) uses that field name -
   never sent, never required, because `decimals()` isn't payable.
 - Whether or how a **state-changing call** differs: request shape,
@@ -147,45 +146,121 @@ an accurate simulation of it) rather than returning a stub.
   write call.
 
 `apps/api/src/keeperhub/client.ts` now has `callContractFunction()`,
-live-verified strictly for the zero-argument read-only case above, with
-its doc comment and `ContractCallRequest`'s doc comment (in
+live-verified for both the zero-argument and single-argument read-only
+cases, with its doc comment and `ContractCallRequest`'s doc comment (in
 `apps/api/src/keeperhub/types.ts`) both stating this scope explicitly.
 Real unit tests in `apps/api/src/keeperhub/client.test.ts` are built
 from this exact captured request/response data, including the three
 validation-error shapes.
 
+## Live-verified (2026-08-30): passing function arguments (`functionArgs`)
+
+Same technique again: intentionally incomplete/wrong bodies, real
+responses read back, nothing guessed. Target: `balanceOf(address)` on
+the same Base WETH9 contract (`0x4200...0006`, already proven valid),
+queried against the zero address (`0x0000...0000`) - still a pure/view
+read, no funds/state/approvals/transfers/Safe/Zodiac involved regardless
+of argument encoding or `simulate` behavior. (An initial attempt used a
+from-memory Base USDC address, which KeeperHub rejected outright as
+`"Invalid contract address"` - likely a checksum transcription error on
+my part - so the already-proven WETH9 address was used instead rather
+than guess-correcting the USDC one.)
+
+| # | Request body sent (relevant fields) | Response |
+|---|---|---|
+| 1 | `functionName: "balanceOf"`, no argument field at all | `400` `{"error":"Contract call failed: RPC failed on both endpoints. Primary: no matching fragment (operation=\"fragment\", info={ \"args\": [ ], \"key\": \"balanceOf\" }, code=UNSUPPORTED_OPERATION). Fallback: ..."}` |
+| 2 | `args: ["0x000...000"]` (native array, natural-seeming field name) | Same error, `args` silently ignored - `info.args` in the error is still `[ ]` |
+| 3 | `functionArgs: ["0x000...000"]` (native array) | `400` `{"error":"Invalid field type","field":"functionArgs","details":"functionArgs must be a JSON string when provided"}` |
+| 4 | `functionArgs: JSON.stringify(["0x000...000"])` (JSON-**stringified**) | **`200`** `{"result":"3328703018194595557"}` |
+| 5 | `functionArgs: JSON.stringify(["0x000...000", "0x000...000"])` (2 args for a 1-arg function) | `400` - same `"no matching fragment"` shape as round 1, now showing both args in `info.args`, confirming they were correctly parsed from the JSON string this time |
+
+**What this confirms:**
+
+- **The real field name is `functionArgs`, and it is a JSON-*stringified*
+  array**, not a native JSON array nested in the request body. This is
+  genuinely counterintuitive - `args` (a very reasonable first guess) is
+  silently accepted and silently ignored rather than rejected, which
+  would have produced a confusing false negative if round 1's error
+  hadn't been read carefully (`info.args: []` in the error, even though
+  `args` had a value in the request).
+- **KeeperHub uses ethers.js internally**, with primary + fallback RPC
+  endpoints per call - the literal error text (`no matching fragment`,
+  `operation="fragment"`, `code=UNSUPPORTED_OPERATION`) is ethers.js
+  v6's own `Interface` fragment-lookup error format, not a KeeperHub
+  wrapper message.
+- **Two distinct error shapes exist**: a pre-flight
+  `{error, field, details}` validation shape (missing/wrong-typed
+  top-level fields - rounds prior to this table, and round 3 above), and
+  a downstream `{error: "Contract call failed: ..."}` execution-error
+  shape (ABI/fragment mismatch, rounds 1, 2, 5 above) - both at HTTP
+  `400`.
+- **A single `address`-typed argument works** and returns the real
+  on-chain value (`3328703018194595557` wei of WETH at the zero address
+  - a genuine value, not a stub).
+- **The malformed-argument case (wrong count) is safely observable**
+  and produces the fragment-mismatch error, not a crash or a silent
+  wrong answer.
+
+**What this does NOT confirm:**
+
+- Encoding for any other argument type - **especially `bytes`** (a
+  variable-length hex string), which is exactly what a nested call's
+  calldata would need to be for the Zodiac question below. Only a
+  20-byte `address` value inside the JSON-stringified array has been
+  verified.
+- Whether multiple arguments of mixed types serialize correctly (only
+  two identical `address` values were tested, deliberately, to isolate
+  the count-mismatch error rather than a type-mismatch error).
+- Anything about `value`, execution IDs, polling, real `429` bodies, or
+  idempotency - unchanged from the previous section.
+
 ### Answering the "can KeeperHub call an arbitrary target" question
 
-This is the key finding for the Ratehopper/Zodiac question: **KeeperHub's
-contract-call primitive is NOT a raw `to`/`data` executor.** It takes an
-ABI-aware, function-name-based interface (`contractAddress` +
-`functionName`, presumably `+` some not-yet-verified way to pass
-arguments) rather than accepting arbitrary encoded calldata directly.
-This is a meaningfully different (and safer-by-default) design than the
-generic "any contract, any calldata" primitive the earlier architecture
-section assumed.
+**Still: plausible, not yet confirmed - but the remaining blocker is now
+precisely identified, not a vague "haven't tried it."**
 
-Practical effect on the Zodiac Roles Modifier plan: calling the Roles
-Modifier's `execTransactionWithRole(address to, uint256 value, bytes
-data, uint8 operation, bytes32 roleKey, bool shouldRevert)` through this
-endpoint would need to work by setting `contractAddress` to the Roles
-Modifier's address, `functionName: "execTransactionWithRole"`, and
-somehow supplying the six typed arguments (including the nested `data`
-as a hex-string `bytes` value) - which requires:
-1. KeeperHub being able to resolve the Roles Modifier's ABI (plausible
-   if it works off block-explorer source verification, per the
-   `explorerApiUrl` correlation above, since Zodiac's Roles Modifier is
-   commonly verified on explorers - **not confirmed**).
-2. A confirmed way to pass multiple typed arguments to `functionName`,
-   including a `bytes` value for the nested call's calldata - **not
-   confirmed; this is exactly what item "arguments" above still needs**.
+KeeperHub's contract-call primitive is **not** a raw `to`/`data`
+executor - confirmed twice over now. It takes `contractAddress` +
+`functionName` + `functionArgs` (a JSON-stringified array), resolving
+the ABI/fragment itself via what is now confirmed to be an ethers.js
+`Interface` under the hood.
 
-So: **plausible, not yet confirmed either way.** The next verification
-round should test argument-passing on a harmless *parameterized*
-read-only call (e.g. `balanceOf(address)` on a well-known ERC-20, or
-`allowance(address,address)` - still zero state change) to learn the
-real arguments field name/shape before attempting anything Zodiac- or
-Safe-related.
+Calling the Zodiac Roles Modifier's `execTransactionWithRole(address to,
+uint256 value, bytes data, uint8 operation, bytes32 roleKey, bool
+shouldRevert)` through this endpoint would mean: `contractAddress` = the
+Roles Modifier's address, `functionName: "execTransactionWithRole"`,
+`functionArgs: JSON.stringify([to, value, data, operation, roleKey,
+shouldRevert])`. Two things stand between "plausible" and "confirmed":
+
+1. **KeeperHub must be able to resolve the Roles Modifier's ABI/fragment
+   for `execTransactionWithRole`.** Every function tested so far
+   (`decimals`, `balanceOf`) is a universally-known ERC-20/standard
+   signature - it's still unconfirmed whether KeeperHub's ethers
+   `Interface` is built from a hardcoded set of common signatures, from
+   on-chain source verification (plausible given the `explorerApiUrl`/
+   `explorerApiType` fields on every `/chains` entry), or something
+   else. A custom, less-common function like `execTransactionWithRole`
+   is a materially different test than any of the well-known ERC-20
+   getters tried so far.
+2. **Whether a `bytes` argument (the nested call's calldata) serializes
+   correctly inside the JSON-stringified `functionArgs` array.** Not
+   tested. A hex string is the natural encoding and would likely work
+   given ethers.js's own conventions, but "likely" is exactly the kind
+   of assumption this project's rules forbid presenting as confirmed.
+
+**The exact next verification step**, still entirely with harmless
+read-only calls: call a function that takes a `bytes` argument on a
+**publicly known, source-verified, non-trivial contract** (not a
+universally-hardcoded ERC-20 getter) to test both open questions at
+once - for example calling `isValidSignature(bytes32,bytes)` on a
+deployed Safe (a `view` function, cannot mutate anything) with a
+throwaway hash and empty/garbage signature bytes, which would fail
+gracefully (a revert or a `false`-equivalent - Safe's own view function,
+not a write) while proving whether (a) KeeperHub resolves a
+less-common/custom function's ABI at all, and (b) how a `bytes` argument
+serializes. This is still not `execTransactionWithRole` and still not
+state-changing, so it stays within the constraints already given for
+this round.
 
 ## Still not verified — do not build on these yet
 
@@ -193,17 +268,20 @@ Safe-related.
    required to confirm credential validity (the 200 on `/chains` already
    proves the key is valid), but its exact response shape (used for
    identifying the org/key) is unconfirmed.
-2. `POST /api/execute/contract-call` — endpoint, base auth, and the
-   minimal request shape for a zero-argument read-only call ARE now
-   live-verified (see "Live-verified (2026-08-30)" above). Still
-   unverified: how to pass function **arguments**, the `value` field,
+2. `POST /api/execute/contract-call` — endpoint, base auth, minimal
+   request shape, and single-`address`-argument passing (`functionArgs`
+   as a JSON-stringified array) ARE now live-verified (see the two
+   "Live-verified (2026-08-30)" sections above). Still unverified: a
+   `bytes`-typed argument (the load-bearing unknown for the Zodiac
+   question), whether KeeperHub resolves a custom/uncommon contract's
+   ABI (vs. only well-known ERC-20-style signatures), the `value` field,
    whether/how `simulate: true` affects a **state-changing** call
-   (observed to do nothing on a read-only one), the response shape for a
-   state-changing call (execution ID? status field?), whether a separate
-   status/polling endpoint exists at all, the real `429` shape, and
-   idempotency-key behavior for a write. **Do not implement anything
-   beyond the verified read-only, zero-argument case against assumed
-   shapes.**
+   (observed to do nothing on either read-only call tested), the
+   response shape for a state-changing call (execution ID? status
+   field?), whether a separate status/polling endpoint exists at all,
+   the real `429` shape, and idempotency-key behavior for a write. **Do
+   not implement anything beyond the two verified read-only cases
+   against assumed shapes.**
 3. Exact endpoint path(s) and payload shape for **simulating a Safe
    transaction** via KeeperHub, if that is even a distinct endpoint from
    (2) — see the Safe/Zodiac section below.
@@ -285,14 +363,16 @@ as ground truth on their own.
 ## Safe / Zodiac architecture for the Ratehopper Auto-Exit concept
 
 **Status: architecture proposed; `POST /execute/contract-call` is now
-partially live-verified (see above), and that verification changed the
-picture.** The endpoint is ABI-aware/function-name-based, not a raw
-`to`/`data` executor as originally assumed - see "Answering the 'can
-KeeperHub call an arbitrary target' question" above for the current,
-more precise assessment: plausible, not yet confirmed, and blocked on
-verifying how arguments (specifically a `bytes`-typed argument) are
-passed. Do not treat this section as a green light to build the executor
-side yet.
+live-verified for read-only calls with zero or one `address` argument
+(see above), and that verification narrowed the picture to two specific
+remaining blockers.** The endpoint is ABI-aware/function-name-based, not
+a raw `to`/`data` executor as originally assumed - see "Answering the
+'can KeeperHub call an arbitrary target' question" above. Blocked on:
+(1) whether KeeperHub can resolve the ABI of a less-common/custom
+function like `execTransactionWithRole` (only universally-known ERC-20
+signatures have been tested), and (2) whether a `bytes`-typed argument
+(the nested calldata) serializes correctly inside `functionArgs`. Do not
+treat this section as a green light to build the executor side yet.
 
 The "Ratehopper Auto-Exit" idea is: a user's position (e.g. a
 borrow/lend position on a money market) sits behind a **Safe**, and
@@ -342,11 +422,17 @@ implementing the trigger side.
       (`contractAddress`, `chainId`, `functionName`), response shape for
       this case, and that `simulate: true` has no observable effect on a
       read-only call.
-- [ ] Verify how to pass **function arguments** using a harmless
-      *parameterized* read-only call (e.g. `balanceOf(address)` on a
-      well-known ERC-20 on Base) - this is the load-bearing unknown for
-      the Zodiac question below. Still using the same
-      Railway-preDeployCommand technique.
+- [x] Verify how to pass **function arguments** using a harmless
+      *parameterized* read-only call (done 2026-08-30, see "Live-verified
+      (2026-08-30): passing function arguments" above). Confirmed:
+      `functionArgs` as a JSON-*stringified* array; verified for a plain
+      `address` argument only.
+- [ ] Verify a `bytes`-typed argument and whether KeeperHub resolves a
+      less-common/custom contract's ABI, using a harmless read-only call
+      on a real, source-verified contract (e.g. a Safe's own
+      `isValidSignature(bytes32,bytes)` view function with throwaway
+      inputs - see "The exact next verification step" above). This is
+      the last blocker for the Zodiac question.
 - [ ] Verify the request/response shape for a genuinely state-changing
       call (execution ID? status/polling endpoint? does `simulate: true`
       actually gate broadcast?) - requires careful scoping to avoid any

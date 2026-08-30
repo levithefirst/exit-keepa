@@ -66,21 +66,36 @@ export interface KeeperHubChain {
 /**
  * POST /execute/contract-call request body.
  *
- * LIVE-VERIFIED on 2026-08-30, but ONLY for this exact case: a
- * zero-argument, pure/view function (decimals() on Base's WETH9
- * predeploy). Verified by iteratively probing KeeperHub's own field-by-
- * field validation errors (never by guessing), from a Railway-hosted
- * deployment - see docs/keeperhub-integration.md for the full
- * round-by-round record and the exact captured requests/responses.
+ * LIVE-VERIFIED on 2026-08-30 for two cases only:
+ * 1. A zero-argument, pure/view function (decimals() on Base's WETH9
+ *    predeploy).
+ * 2. A single-argument, pure/view function (balanceOf(address), same
+ *    contract, queried against the zero address).
+ *
+ * Verified by iteratively probing KeeperHub's own validation/execution
+ * errors (never by guessing) from a Railway-hosted deployment - see
+ * docs/keeperhub-integration.md for the full round-by-round record and
+ * the exact captured requests/responses.
  *
  * Confirmed required fields: contractAddress, chainId, functionName.
- * `simulate` is accepted but had NO observable effect on this call (same
- * response with or without it) - its effect on a state-changing call is
- * UNVERIFIED.
+ * Confirmed for passing arguments: `functionArgs` - and this is the
+ * counterintuitive part - MUST be a JSON-*stringified* array
+ * (`JSON.stringify([...])`), not a native JSON array nested in the
+ * request body. Sending a native array under `functionArgs` is silently
+ * ignored (KeeperHub falls back to treating the call as zero-argument
+ * and the underlying ethers.js Interface lookup then fails to match a
+ * fragment); sending it under `args` is also silently ignored the same
+ * way. Only the JSON-string-under-`functionArgs` form was accepted.
+ *
+ * `simulate` is accepted but had NO observable effect on either verified
+ * call (same response with or without it) - its effect on a
+ * state-changing call is UNVERIFIED.
  *
  * NOT verified and intentionally not modeled here:
- * - How to pass arguments to a function that takes any (no `args`/
- *   `params`/similar field name has been confirmed).
+ * - Argument encoding for non-address, non-fixed-size types - in
+ *   particular a `bytes` (variable-length calldata) argument, which the
+ *   Zodiac Roles Modifier's execTransactionWithRole would require. Only
+ *   a plain `address` value has been verified inside `functionArgs`.
  * - `value` (sending native currency) - never sent, never required.
  * - Any field controlling which account/wallet executes the call.
  * - Idempotency-key behavior - no such header was sent or needed for
@@ -89,34 +104,59 @@ export interface KeeperHubChain {
  *   whether one goes through this same endpoint at all.
  *
  * Do not extend this type or the client method that uses it to support
- * arguments or state-changing calls without live-verifying the real
- * field names the same way - guessing here is exactly what this project
- * forbids.
+ * a `bytes` argument or state-changing calls without live-verifying the
+ * real behavior the same way - guessing here is exactly what this
+ * project forbids.
  */
 export interface ContractCallRequest {
   contractAddress: string;
   chainId: number;
   functionName: string;
+  /**
+   * A JSON-*stringified* array of argument values, e.g.
+   * `JSON.stringify(["0x000...000"])`. Live-verified only for a single
+   * `address`-typed argument passed as a hex string. Do not assume this
+   * works for a `bytes` argument without live-verifying it the same way.
+   */
+  functionArgs?: string;
   simulate?: boolean;
 }
 
 /**
- * POST /execute/contract-call response body for the verified case above:
- * a flat, synchronous result - no execution ID, no status field, no
- * envelope. Whether a state-changing call returns this same shape (vs.
- * an execution ID requiring polling) is UNVERIFIED.
+ * POST /execute/contract-call response body for the verified cases
+ * above: a flat, synchronous result - no execution ID, no status field,
+ * no envelope. Whether a state-changing call returns this same shape
+ * (vs. an execution ID requiring polling) is UNVERIFIED.
  */
 export interface ContractCallResult {
   result: string;
 }
 
 /**
- * POST /execute/contract-call validation error shape, live-verified
- * across four separate missing-field responses on 2026-08-30. The API
- * reports exactly one missing/invalid field per response.
+ * POST /execute/contract-call pre-flight validation error shape,
+ * live-verified across five separate responses on 2026-08-30. The API
+ * reports exactly one missing/invalid field per response, distinct from
+ * ContractCallExecutionError below.
  */
 export interface ContractCallValidationError {
   error: string;
   field: string;
   details: string;
+}
+
+/**
+ * POST /execute/contract-call execution-time error shape, live-verified
+ * on 2026-08-30 by calling balanceOf with zero and then two arguments
+ * (it takes exactly one). This is a DIFFERENT shape from
+ * ContractCallValidationError: it fires after the request passes
+ * pre-flight field validation, when KeeperHub's underlying ethers.js
+ * Interface can't match a function fragment for the given name + args
+ * (or, presumably, when the RPC call itself fails for another reason -
+ * unverified). The literal message format ("no matching fragment",
+ * "code=UNSUPPORTED_OPERATION", "Primary: ... Fallback: ...") is
+ * ethers.js's own error format, confirming KeeperHub uses ethers.js
+ * internally with primary+fallback RPC endpoints per chain.
+ */
+export interface ContractCallExecutionError {
+  error: string;
 }

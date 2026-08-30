@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KeeperHubClient } from "./client";
-import type { KeeperHubChain } from "./types";
+import type { ContractCallRequest, KeeperHubChain } from "./types";
 
 /**
  * These fixtures are trimmed from the REAL response captured on 2026-08-29
@@ -167,6 +167,68 @@ describe("KeeperHubClient", () => {
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await expect(client.callContractFunction(body as any)).rejects.toThrow(/400/);
+    });
+
+    describe("with a single argument (functionArgs)", () => {
+      /**
+       * Exact request/response captured on 2026-08-30: balanceOf(address)
+       * on the same WETH9 contract, queried against the zero address.
+       * The real value returned (WETH held at 0x0 on Base) - not a stub.
+       * See docs/keeperhub-integration.md for the full round-by-round
+       * record, including the two rejected encodings before this one.
+       */
+      const LIVE_ARGS_REQUEST = {
+        contractAddress: "0x4200000000000000000000000000000000000006",
+        chainId: 8453,
+        functionName: "balanceOf",
+        functionArgs: JSON.stringify(["0x0000000000000000000000000000000000000000"]),
+        simulate: true,
+      };
+      const LIVE_ARGS_RESPONSE = { result: "3328703018194595557" };
+
+      it("accepts functionArgs as a JSON-stringified array and returns the real result", async () => {
+        const fetchMock = mockFetchOnce(200, LIVE_ARGS_RESPONSE);
+
+        const result = await client.callContractFunction(LIVE_ARGS_REQUEST);
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          "https://app.keeperhub.com/api/execute/contract-call",
+          expect.objectContaining({ body: JSON.stringify(LIVE_ARGS_REQUEST) }),
+        );
+        expect(result).toEqual(LIVE_ARGS_RESPONSE);
+      });
+
+      it("documents that a native array under functionArgs is REJECTED - must be JSON.stringify()'d", () => {
+        // TypeScript itself enforces this: functionArgs is typed as
+        // `string`, so passing a native array is a compile error. This
+        // test exists to make that constraint visible/searchable, not to
+        // exercise runtime behavior.
+        // @ts-expect-error functionArgs must be a JSON string, not an array - live-verified 2026-08-30
+        const invalid: ContractCallRequest = { ...LIVE_ARGS_REQUEST, functionArgs: ["0x0"] };
+        expect(invalid).toBeDefined();
+      });
+
+      it("surfaces KeeperHub's real execution-error shape for a mismatched argument count (distinct from the pre-flight validation error)", async () => {
+        // Live-captured: passing 2 args to balanceOf (which takes 1)
+        // produces an ethers.js "no matching fragment" error via
+        // KeeperHub's RPC layer, at 400, NOT the
+        // {error, field, details} pre-flight validation shape used for
+        // missing top-level fields.
+        mockFetchOnce(400, {
+          error:
+            'Contract call failed: RPC failed on both endpoints. Primary: no matching fragment (operation="fragment", info={ "args": [ "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000" ], "key": "balanceOf" }, code=UNSUPPORTED_OPERATION). Fallback: no matching fragment (operation="fragment", info={ "args": [ "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000" ], "key": "balanceOf" }, code=UNSUPPORTED_OPERATION)',
+        });
+
+        await expect(
+          client.callContractFunction({
+            ...LIVE_ARGS_REQUEST,
+            functionArgs: JSON.stringify([
+              "0x0000000000000000000000000000000000000000",
+              "0x0000000000000000000000000000000000000000",
+            ]),
+          }),
+        ).rejects.toThrow(/400/);
+      });
     });
   });
 });

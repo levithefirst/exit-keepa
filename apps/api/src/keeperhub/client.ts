@@ -28,9 +28,12 @@ import type {
  * record: docs/keeperhub-integration.md.
  *
  * `callContractFunction()` (POST /execute/contract-call) is LIVE-VERIFIED
- * on 2026-08-30, but ONLY for a zero-argument, pure/view function call -
- * see the ContractCallRequest doc comment in ./types.ts before using it
- * for anything else.
+ * on 2026-08-30 for a zero-argument AND a single-address-argument
+ * pure/view function call (the latter requires `functionArgs` to be a
+ * JSON-*stringified* array, a genuinely counterintuitive encoding this
+ * session would never have guessed) - see the ContractCallRequest doc
+ * comment in ./types.ts before using it for anything else, especially a
+ * `bytes` argument or a state-changing call.
  *
  * KeeperHub also advertises first-class Safe support (pending-transaction
  * monitoring, signature tracking, simulation) and an MCP server, but the
@@ -115,17 +118,24 @@ export class KeeperHubClient {
   /**
    * Calls a contract function via POST /execute/contract-call.
    *
-   * LIVE-VERIFIED 2026-08-30 ONLY for a zero-argument, pure/view function
-   * (decimals() on Base's WETH9 predeploy) - see the ContractCallRequest
-   * doc comment and docs/keeperhub-integration.md for the full
-   * round-by-round verification record.
+   * LIVE-VERIFIED 2026-08-30 for:
+   * - A zero-argument, pure/view function (decimals() on Base's WETH9
+   *   predeploy).
+   * - A single-argument, pure/view function (balanceOf(address), same
+   *   contract) - requires `functionArgs` to be a JSON-stringified array
+   *   (`JSON.stringify([...])`), NOT a native array. Only an `address`
+   *   argument has been verified this way.
    *
-   * DO NOT call this with a function that takes arguments or that
-   * mutates state: how to pass arguments is unverified, and whether
-   * `simulate: true` actually prevents a real state-changing broadcast
-   * is unverified (it had zero observable effect on the read-only call
-   * this was tested with). Using this for anything beyond a confirmed
-   * read-only, zero-argument call would be exactly the kind of
+   * See the ContractCallRequest doc comment and
+   * docs/keeperhub-integration.md for the full round-by-round
+   * verification record, including the exact error shapes for missing
+   * fields and for malformed/mismatched arguments.
+   *
+   * DO NOT call this with a `bytes`-typed argument or a state-changing
+   * function: neither has been verified, and whether `simulate: true`
+   * actually prevents a real state-changing broadcast is unverified (it
+   * had zero observable effect on either read-only call tested). Using
+   * this beyond the two confirmed cases would be exactly the kind of
    * unverified execution this project forbids.
    */
   callContractFunction(request: ContractCallRequest): Promise<ContractCallResult> {
