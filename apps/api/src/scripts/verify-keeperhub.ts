@@ -116,7 +116,10 @@ async function main() {
         contractAddress: WETH_BASE,
         chainId: env.BASE_CHAIN_ID,
         functionName: "balanceOf",
-        functionArgs: JSON.stringify([ZERO_ADDRESS]),
+        // Intentionally wrong arg count (balanceOf takes exactly 1) to
+        // capture the malformed-argument error shape - still read-only,
+        // still cannot execute or change anything.
+        functionArgs: JSON.stringify([ZERO_ADDRESS, ZERO_ADDRESS]),
         simulate: true,
       };
       const result = await postJson("/execute/contract-call", probeBody);
