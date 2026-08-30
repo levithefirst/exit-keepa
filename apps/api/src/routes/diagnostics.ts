@@ -173,13 +173,17 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/zodiac-instance-check", a
 });
 
 /**
- * TEMPORARY - one-shot simulate-only execTransactionWithRole probe against
- * a controlled Safe + Roles Modifier setup (independently verified onchain
- * separately from this route). Never broadcasts: simulate is hardcoded
- * true and cannot be overridden by the caller. Addresses/args are
- * hardcoded, not query-driven.
+ * TEMPORARY, SINGLE-USE - REAL BROADCAST. Same execTransactionWithRole
+ * call as the (removed) simulate-only controlled-safe-exec-check probe,
+ * which passed simulation (success: true, wouldRevert: false) before this
+ * route was ever deployed. simulate is hardcoded false and cannot be
+ * overridden by the caller. The call is a self-call from the Roles
+ * Modifier to the controlled Safe itself, value 0, empty calldata -
+ * the harmless verification transaction explicitly authorized after
+ * reviewing the simulation result. Delete this route immediately after
+ * the one authorized call.
  */
-diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-safe-exec-check", async (req, res) => {
+diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-safe-exec-broadcast", async (req, res) => {
   if (!env.DIAGNOSTIC_SECRET) {
     res.status(503).json({ error: "diagnostics_disabled" });
     return;
@@ -201,7 +205,7 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-safe-exec-chec
     chainId: env.BASE_CHAIN_ID,
     functionName: "execTransactionWithRole",
     functionArgs: JSON.stringify([CONTROLLED_SAFE, "0", "0x", "0", CONTROLLED_ROLE_KEY, true]),
-    simulate: true,
+    simulate: false,
   };
 
   let result: unknown;
@@ -216,7 +220,7 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-safe-exec-chec
     await db.insert(auditEvents).values({
       entityType: "keeperhub_execution",
       entityId: crypto.randomUUID(),
-      eventType: "keeperhub.diagnostics.controlled_safe_exec_checked",
+      eventType: "keeperhub.diagnostics.controlled_safe_exec_broadcast",
       payload: { result },
     });
   } catch (dbErr) {
