@@ -164,10 +164,8 @@ export class KeeperHubClient {
   /**
    * Performs a raw, unauthenticated-response-shape-agnostic GET against the
    * KeeperHub API and returns status + response headers + parsed body
-   * verbatim, without throwing on non-2xx. Used exclusively by the
-   * temporary diagnostics route (see routes/diagnostics.ts) to capture and
-   * verify real API behavior - not intended for application logic, which
-   * should use the typed methods above once their shapes are confirmed.
+   * verbatim, without throwing on non-2xx. Not intended for application
+   * logic - prefer the typed methods above once a shape is confirmed.
    *
    * Never logs or returns the request Authorization header.
    */

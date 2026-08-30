@@ -55,6 +55,23 @@ executionsRouter.post("/exit-strategies/:id/executions", async (req, res) => {
     throw new HttpError(422, "Trigger condition is not currently satisfied");
   }
 
+  // Idempotency at the trigger-occurrence level, not just per-row: if an
+  // attempt for this strategy is already in flight (not yet succeeded or
+  // failed), return it instead of opening a second one. Without this, a
+  // duplicate/double-clicked request could create two independently
+  // simulatable-and-broadcastable executions for the same withdrawal.
+  const existing = await db
+    .select()
+    .from(keeperhubExecutions)
+    .where(eq(keeperhubExecutions.exitStrategyId, strategy.id));
+  const inFlight = existing.find((e) =>
+    (["pending", "simulating", "simulated", "executing"] as string[]).includes(e.status),
+  );
+  if (inFlight) {
+    res.status(200).json(inFlight);
+    return;
+  }
+
   const tx = buildExitTransaction(strategy.action as ExitAction, safe);
 
   // The execution's own id doubles as its idempotency key - every later

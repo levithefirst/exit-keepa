@@ -14,7 +14,6 @@ import { exitStrategiesRouter } from "./routes/exitStrategies";
 import { safeAccountsRouter } from "./routes/safeAccounts";
 import { executionsRouter } from "./routes/executions";
 import { webhooksRouter } from "./routes/webhooks";
-import { diagnosticsRouter } from "./routes/diagnostics";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 
 export function createApp() {
@@ -33,7 +32,6 @@ export function createApp() {
   app.use("/api", safeAccountsRouter);
   app.use("/api", executionsRouter);
   app.use("/api", webhooksRouter);
-  app.use(diagnosticsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

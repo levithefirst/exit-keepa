@@ -158,4 +158,41 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     expect(broadcastRes.status).toBe(409);
     expect(callContractFunction).toHaveBeenCalledTimes(1); // simulate only, never broadcast
   });
+
+  it("returns the same in-flight execution instead of opening a second one on a duplicate create request", async () => {
+    const safeRes = await request(app)
+      .post("/api/safe-accounts")
+      .send({
+        chainId: 8453,
+        safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
+        rolesModifierAddress: "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE",
+        rolesKey: "0x657869745f6b6565706100000000000000000000000000000000000000000000",
+      });
+    const strategyRes = await request(app)
+      .post("/api/exit-strategies")
+      .send({
+        safeId: safeRes.body.id,
+        name: "Duplicate-create-guard strategy",
+        condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
+        action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "max" },
+      });
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`);
+
+    const first = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .send({ currentRateBps: 100 });
+    expect(first.status).toBe(201);
+
+    // A double-click / retried request while the first attempt is still
+    // pending must return the SAME execution, not create a second one
+    // that could independently be simulated and broadcast.
+    const duplicate = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .send({ currentRateBps: 100 });
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.id).toBe(first.body.id);
+
+    const listRes = await request(app).get(`/api/exit-strategies/${strategyRes.body.id}/executions`);
+    expect(listRes.body.length).toBe(1);
+  });
 });

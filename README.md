@@ -207,7 +207,6 @@ to boot with missing/malformed required configuration.
 | `KEEPERHUB_API_KEY` | API | Never logged or exposed to the client |
 | `KEEPERHUB_WEBHOOK_SECRET` | API | HMAC secret for `/api/webhooks/keeperhub` |
 | `BASE_CHAIN_ID` / `BASE_RPC_URL` | API | Default to Base mainnet |
-| `DIAGNOSTIC_SECRET` | API | Optional; gates the temporary `/internal/diagnostics/*` routes used during this project's KeeperHub/Roles verification work — see `docs/` |
 | `NEXT_PUBLIC_API_URL` | Web | Must point at the deployed API's public URL |
 
 ## Database
