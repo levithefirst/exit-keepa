@@ -374,6 +374,63 @@ requires a real deployed instance address (not the mastercopy) to test
 safely, since calling a state-changing function's resolution/encoding
 path should not be done against the mastercopy itself.
 
+## Live-verified (2026-08-30): a real deployed Roles instance on Base — REAL INSTANCE READS: GREEN
+
+A candidate Roles instance address (`0x856dD89c7925977119b5C7330186B5238aD355a0`,
+avatar/Safe claimed as `0x0274a328e584cb43bf40b9a34fdc03b84dd9d02d`) was
+supplied externally (not discovered by this session). Rather than trust
+it, it was independently verified from Railway via a new gated
+diagnostic route (`GET /internal/diagnostics/keeperhub/zodiac-instance-check`,
+`apps/api/src/routes/diagnostics.ts`, same `DIAGNOSTIC_SECRET` gate as
+the existing diagnostics route — addresses hardcoded, not query-driven):
+
+1. **Deployed, and distinct from the mastercopy tested earlier.**
+   `eth_getCode` via `BASE_RPC_URL` returned 45 bytes of real bytecode
+   (not empty) at this address — a different address from
+   `0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5` (the mastercopy tested
+   in the ABI-resolution round above).
+2. **Genuinely a Roles Modifier, not just something that shares
+   avatar/owner/target getters.** The bytecode is a standard EIP-1167
+   minimal proxy. Parsing it (generically — not assuming which
+   implementation it points at) extracts the real implementation
+   address it delegates to: `0x9646fdad06d3e24444381f44362a3b0eb343d337`
+   — **not** the same mastercopy address verified earlier. Fetching
+   *that* address's ABI via the same live-verified `/chains/8453/abi`
+   endpoint returned the full canonical Roles v2 function set —
+   `allowFunction`, `assignRoles`, `scopeFunction`,
+   `execTransactionWithRole`, `execTransactionWithRoleReturnData`, etc.
+   — confirming it is a real, complete Roles v2 implementation (a
+   different deployed mastercopy version/instance than the one tested
+   first, not a Delay modifier or other Zodiac module type that would
+   only coincidentally share the base `avatar()`/`owner()`/`target()`
+   getters).
+3. **All three read-only getters, called on the instance itself (not
+   the mastercopy) via `POST /execute/contract-call`
+   (`simulate: true`), decoded correctly and matched the claimed
+   avatar exactly:**
+
+   | Call | Decoded result |
+   |---|---|
+   | `avatar()` | `0x0274a328e584cb43bf40b9a34fdc03b84dd9d02d` |
+   | `owner()` | `0x0274a328e584cb43bf40b9a34fdc03b84dd9d02d` |
+   | `target()` | `0x0274a328e584cb43bf40b9a34fdc03b84dd9d02d` |
+
+   All three match the expected Safe address exactly. This is treated
+   as a pass because the *decoded* values match, not merely because the
+   HTTP calls returned 200.
+
+**Updated verdict: REAL INSTANCE READS: GREEN.** KeeperHub's
+contract-call path works correctly against a real, independently
+verified, deployed Zodiac Roles instance on Base — not just its
+mastercopy's ABI. The only remaining gate before any executor work is
+whether `POST /execute/contract-call` correctly resolves and encodes
+`execTransactionWithRole` itself (a state-changing function with
+`bytes`/nested-struct arguments) via `simulate: true` — **not yet
+attempted**, per instruction, until this round's three getter results
+were independently confirmed. No write, no Safe/Roles configuration
+change, and no `execTransactionWithRole` call has been made at any
+point in this investigation.
+
 ## Still not verified — do not build on these yet
 
 1. `GET /api/keys` (or `/api/api-keys`) — not yet called live. Not
