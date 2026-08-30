@@ -36,70 +36,11 @@ const ALLOWED_RESOURCES: Record<string, string> = {
   keys: "/keys",
 };
 
-diagnosticsRouter.get("/internal/diagnostics/keeperhub/:resource", async (req, res) => {
-  if (!env.DIAGNOSTIC_SECRET) {
-    res.status(503).json({ error: "diagnostics_disabled" });
-    return;
-  }
-
-  const provided = req.header("x-diagnostic-secret") ?? "";
-  const expected = env.DIAGNOSTIC_SECRET;
-  const authorized =
-    provided.length === expected.length &&
-    crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
-
-  if (!authorized) {
-    res.status(401).json({ error: "unauthorized" });
-    return;
-  }
-
-  const path = ALLOWED_RESOURCES[req.params.resource];
-  if (!path) {
-    res.status(404).json({ error: "unknown_resource", allowed: Object.keys(ALLOWED_RESOURCES) });
-    return;
-  }
-
-  try {
-    const result = await keeperHubClient.rawGet(path);
-
-    try {
-      await db.insert(auditEvents).values({
-        entityType: "keeperhub_execution",
-        entityId: crypto.randomUUID(),
-        eventType: `keeperhub.diagnostics.${req.params.resource}_checked`,
-        payload: { status: result.status, path },
-      });
-    } catch (dbErr) {
-      logger.warn({ dbErr }, "Diagnostics audit event insert failed (non-fatal)");
-    }
-
-    res.status(200).json(result);
-  } catch (err) {
-    logger.error({ err, path }, "KeeperHub diagnostics call failed");
-    res.status(502).json({ error: "keeperhub_unreachable", message: (err as Error).message });
-  }
-});
-
-/**
- * TEMPORARY - one-shot verification of an externally-claimed Zodiac Roles
- * Modifier instance on Base, per docs/keeperhub-integration.md's
- * ABI-resolution gate follow-up.
- *
- * Does two independent things, neither a write:
- * 1. Reads the instance's on-chain bytecode via BASE_RPC_URL (eth_getCode)
- *    and checks whether it is a standard EIP-1167 minimal proxy pointing
- *    at the known Roles Modifier mastercopy - this is cryptographic proof
- *    the address is (a) an actually-deployed contract, (b) distinct from
- *    the mastercopy itself, and (c) genuinely a clone of it, independent
- *    of any subgraph or third-party claim.
- * 2. Calls avatar(), owner(), and target() on the instance via KeeperHub's
- *    POST /execute/contract-call (simulate: true), and reports whether
- *    each decoded result matches the expected Safe address.
- *
- * Same DIAGNOSTIC_SECRET gate as above. Addresses are hardcoded, not
- * query-driven, so this can only ever be used to test the one specific
- * instance under investigation - never an arbitrary contract-call proxy.
- */
+// Registered before the generic ":resource" route below: Express matches
+// routes in registration order, and ":resource" matches any single path
+// segment literally (including "zodiac-instance-check"), so the specific
+// route must come first or the generic one intercepts it as an
+// "unknown_resource" 404 before it's ever reached.
 diagnosticsRouter.get("/internal/diagnostics/keeperhub/zodiac-instance-check", async (req, res) => {
   if (!env.DIAGNOSTIC_SECRET) {
     res.status(503).json({ error: "diagnostics_disabled" });
@@ -184,5 +125,49 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/zodiac-instance-check", a
   } catch (err) {
     logger.error({ err }, "Zodiac instance diagnostics check failed");
     res.status(502).json({ error: "diagnostics_check_failed", message: (err as Error).message });
+  }
+});
+
+diagnosticsRouter.get("/internal/diagnostics/keeperhub/:resource", async (req, res) => {
+  if (!env.DIAGNOSTIC_SECRET) {
+    res.status(503).json({ error: "diagnostics_disabled" });
+    return;
+  }
+
+  const provided = req.header("x-diagnostic-secret") ?? "";
+  const expected = env.DIAGNOSTIC_SECRET;
+  const authorized =
+    provided.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+
+  if (!authorized) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+
+  const path = ALLOWED_RESOURCES[req.params.resource];
+  if (!path) {
+    res.status(404).json({ error: "unknown_resource", allowed: Object.keys(ALLOWED_RESOURCES) });
+    return;
+  }
+
+  try {
+    const result = await keeperHubClient.rawGet(path);
+
+    try {
+      await db.insert(auditEvents).values({
+        entityType: "keeperhub_execution",
+        entityId: crypto.randomUUID(),
+        eventType: `keeperhub.diagnostics.${req.params.resource}_checked`,
+        payload: { status: result.status, path },
+      });
+    } catch (dbErr) {
+      logger.warn({ dbErr }, "Diagnostics audit event insert failed (non-fatal)");
+    }
+
+    res.status(200).json(result);
+  } catch (err) {
+    logger.error({ err, path }, "KeeperHub diagnostics call failed");
+    res.status(502).json({ error: "keeperhub_unreachable", message: (err as Error).message });
   }
 });
