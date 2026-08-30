@@ -92,8 +92,17 @@ async function main() {
     }
 
     if (mode === "execute-probe") {
-      const result = await postJson("/execute/contract-call", {});
-      console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: mode, request: {}, ...result })}`);
+      // Progressively built from KeeperHub's own validation errors, one
+      // required field at a time - see docs/keeperhub-integration.md for
+      // the round-by-round record. Not a real call: cannot execute
+      // anything until every required field (including a real
+      // contractAddress) is present, and this target contract is the
+      // harmless WETH9 decimals() case anyway.
+      const probeBody = {
+        contractAddress: "0x4200000000000000000000000000000000000006",
+      };
+      const result = await postJson("/execute/contract-call", probeBody);
+      console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: mode, request: probeBody, ...result })}`);
       return;
     }
 
