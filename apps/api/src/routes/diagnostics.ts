@@ -300,7 +300,7 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-role-config-ch
     // Step 1: introspect RolesModifier.roles element type and Role.targets
     // element type - do not assume names, resolve them from the schema.
     const introspection1 = await graphql(
-      '{ rmType: __type(name: "RolesModifier") { fields { name type { name kind ofType { name kind ofType { name kind } } } } } }',
+      '{ rmType: __type(name: "RolesModifier") { fields { name type { name kind ofType { name kind ofType { name kind ofType { name kind } } } } } } }',
     );
     steps.introspection1 = introspection1;
 
@@ -309,7 +309,11 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-role-config-ch
       | undefined;
     const rolesFieldType = rmFields?.find((f) => f.name === "roles")?.type;
     const roleTypeName =
-      rolesFieldType?.ofType?.name ?? rolesFieldType?.ofType?.ofType?.name ?? rolesFieldType?.name ?? null;
+      rolesFieldType?.ofType?.name ??
+      rolesFieldType?.ofType?.ofType?.name ??
+      rolesFieldType?.ofType?.ofType?.ofType?.name ??
+      rolesFieldType?.name ??
+      null;
 
     if (!roleTypeName) {
       res.status(200).json({
@@ -320,7 +324,7 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-role-config-ch
     }
 
     const introspection2 = await graphql(
-      `{ roleType: __type(name: "${roleTypeName}") { fields { name type { name kind ofType { name kind ofType { name kind } } } } } }`,
+      `{ roleType: __type(name: "${roleTypeName}") { fields { name type { name kind ofType { name kind ofType { name kind ofType { name kind } } } } } } }`,
     );
     steps.introspection2 = { roleTypeName, result: introspection2 };
 
@@ -329,12 +333,16 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-role-config-ch
       | undefined;
     const targetsFieldType = roleFields?.find((f) => f.name === "targets")?.type;
     const targetTypeName =
-      targetsFieldType?.ofType?.name ?? targetsFieldType?.ofType?.ofType?.name ?? targetsFieldType?.name ?? null;
+      targetsFieldType?.ofType?.name ??
+      targetsFieldType?.ofType?.ofType?.name ??
+      targetsFieldType?.ofType?.ofType?.ofType?.name ??
+      targetsFieldType?.name ??
+      null;
 
     let targetFields: Array<{ name: string; type: any }> | undefined;
     if (targetTypeName) {
       const introspection3 = await graphql(
-        `{ targetType: __type(name: "${targetTypeName}") { fields { name type { name kind ofType { name kind ofType { name kind } } } } } }`,
+        `{ targetType: __type(name: "${targetTypeName}") { fields { name type { name kind ofType { name kind ofType { name kind ofType { name kind } } } } } } }`,
       );
       steps.introspection3 = { targetTypeName, result: introspection3 };
       targetFields = (introspection3.body as any)?.data?.targetType?.fields;
