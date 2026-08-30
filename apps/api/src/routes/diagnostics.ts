@@ -8,6 +8,13 @@ import { logger } from "../logger";
 
 export const diagnosticsRouter = Router();
 
+// Hardcoded, not query-param-driven: this diagnostic exists to test one
+// specific, externally-supplied claim (a real Zodiac Roles Modifier
+// instance on Base), not to proxy arbitrary contract-call requests.
+const ZODIAC_ROLES_MASTERCOPY_BASE = "0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5";
+const ZODIAC_ROLES_INSTANCE_CANDIDATE = "0x856dD89c7925977119b5C7330186B5238aD355a0";
+const EXPECTED_AVATAR_SAFE = "0x0274a328e584cb43bf40b9a34fdc03b84dd9d02d";
+
 /**
  * TEMPORARY - KeeperHub live-API verification only.
  *
@@ -70,5 +77,112 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/:resource", async (req, r
   } catch (err) {
     logger.error({ err, path }, "KeeperHub diagnostics call failed");
     res.status(502).json({ error: "keeperhub_unreachable", message: (err as Error).message });
+  }
+});
+
+/**
+ * TEMPORARY - one-shot verification of an externally-claimed Zodiac Roles
+ * Modifier instance on Base, per docs/keeperhub-integration.md's
+ * ABI-resolution gate follow-up.
+ *
+ * Does two independent things, neither a write:
+ * 1. Reads the instance's on-chain bytecode via BASE_RPC_URL (eth_getCode)
+ *    and checks whether it is a standard EIP-1167 minimal proxy pointing
+ *    at the known Roles Modifier mastercopy - this is cryptographic proof
+ *    the address is (a) an actually-deployed contract, (b) distinct from
+ *    the mastercopy itself, and (c) genuinely a clone of it, independent
+ *    of any subgraph or third-party claim.
+ * 2. Calls avatar(), owner(), and target() on the instance via KeeperHub's
+ *    POST /execute/contract-call (simulate: true), and reports whether
+ *    each decoded result matches the expected Safe address.
+ *
+ * Same DIAGNOSTIC_SECRET gate as above. Addresses are hardcoded, not
+ * query-driven, so this can only ever be used to test the one specific
+ * instance under investigation - never an arbitrary contract-call proxy.
+ */
+diagnosticsRouter.get("/internal/diagnostics/keeperhub/zodiac-instance-check", async (req, res) => {
+  if (!env.DIAGNOSTIC_SECRET) {
+    res.status(503).json({ error: "diagnostics_disabled" });
+    return;
+  }
+
+  const provided = req.header("x-diagnostic-secret") ?? "";
+  const expected = env.DIAGNOSTIC_SECRET;
+  const authorized =
+    provided.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+
+  if (!authorized) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+
+  try {
+    const rpcResponse = await fetch(env.BASE_RPC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_getCode",
+        params: [ZODIAC_ROLES_INSTANCE_CANDIDATE, "latest"],
+      }),
+    });
+    const rpcBody = (await rpcResponse.json()) as { result?: string; error?: unknown };
+    const code = (rpcBody.result ?? "").toLowerCase();
+
+    const mastercopyNoPrefix = ZODIAC_ROLES_MASTERCOPY_BASE.slice(2).toLowerCase();
+    const eip1167Pattern = `363d3d373d3d3d363d73${mastercopyNoPrefix}5af43d82803e903d91602b57fd5bf3`;
+    const isDeployed = code.length > 2;
+    const isMinimalProxyOfMastercopy = code === `0x${eip1167Pattern}`;
+
+    const bytecodeProof = {
+      instanceAddress: ZODIAC_ROLES_INSTANCE_CANDIDATE,
+      mastercopyAddress: ZODIAC_ROLES_MASTERCOPY_BASE,
+      distinctFromMastercopy: ZODIAC_ROLES_INSTANCE_CANDIDATE.toLowerCase() !== ZODIAC_ROLES_MASTERCOPY_BASE.toLowerCase(),
+      isDeployed,
+      codeLength: code.length,
+      isEip1167MinimalProxyOfMastercopy: isMinimalProxyOfMastercopy,
+      rawCode: code,
+    };
+
+    const getterResults: Record<string, unknown> = {};
+    for (const getter of ["avatar", "owner", "target"]) {
+      const request = {
+        contractAddress: ZODIAC_ROLES_INSTANCE_CANDIDATE,
+        chainId: env.BASE_CHAIN_ID,
+        functionName: getter,
+        simulate: true,
+      };
+      try {
+        const result = await keeperHubClient.callContractFunction(request);
+        const decoded = typeof result.result === "string" ? result.result : null;
+        const normalizedDecoded = decoded ? `0x${decoded.replace(/^0x/, "").slice(-40).toLowerCase()}` : null;
+        getterResults[getter] = {
+          request,
+          rawResult: result,
+          decodedAddress: normalizedDecoded,
+          matchesExpectedSafe: normalizedDecoded === EXPECTED_AVATAR_SAFE.toLowerCase(),
+        };
+      } catch (err) {
+        getterResults[getter] = { request, error: (err as Error).message };
+      }
+    }
+
+    try {
+      await db.insert(auditEvents).values({
+        entityType: "keeperhub_execution",
+        entityId: crypto.randomUUID(),
+        eventType: "keeperhub.diagnostics.zodiac_instance_checked",
+        payload: { bytecodeProof, getterResults },
+      });
+    } catch (dbErr) {
+      logger.warn({ dbErr }, "Diagnostics audit event insert failed (non-fatal)");
+    }
+
+    res.status(200).json({ expectedAvatarSafe: EXPECTED_AVATAR_SAFE, bytecodeProof, getterResults });
+  } catch (err) {
+    logger.error({ err }, "Zodiac instance diagnostics check failed");
+    res.status(502).json({ error: "diagnostics_check_failed", message: (err as Error).message });
   }
 });
