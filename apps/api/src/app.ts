@@ -19,9 +19,16 @@ import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 export function createApp() {
   const app = express();
 
+  // "*" in CORS_ORIGINS means "allow any browser origin" - this API has no
+  // cookies/session auth to protect, so that's safe, but it must be passed
+  // to the `cors` package as `origin: true` (reflect the request's own
+  // Origin), not as the literal array ["*"] - the package only treats "*"
+  // specially when `origin` itself is the bare string "*", not an entry
+  // inside an array, so ["*"] would silently allow nothing.
+  const allowAllOrigins = env.CORS_ORIGINS.includes("*");
   app.use(
     cors({
-      origin: env.CORS_ORIGINS.length > 0 ? env.CORS_ORIGINS : false,
+      origin: allowAllOrigins ? true : env.CORS_ORIGINS.length > 0 ? env.CORS_ORIGINS : false,
     }),
   );
   app.use(express.json());
