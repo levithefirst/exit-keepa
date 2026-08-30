@@ -146,51 +146,18 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/zodiac-instance-check", a
       }
     }
 
-    // execTransactionWithRole simulate-only probe, run only after the three
-    // getters above already confirmed this instance is real and readable.
-    // simulate MUST stay true - this never broadcasts. Retried exactly once
-    // on a timeout/network error or a 5xx from KeeperHub; not retried for
-    // any other outcome (including a 4xx rejecting the call).
-    const execTransactionWithRoleRequest = {
-      contractAddress: ZODIAC_ROLES_INSTANCE_CANDIDATE,
-      chainId: env.BASE_CHAIN_ID,
-      functionName: "execTransactionWithRole",
-      functionArgs:
-        '["0x0000000000000000000000000000000000000001","0","0x","0","0x0000000000000000000000000000000000000000000000000000000000000000",true]',
-      simulate: true,
-    };
-    let execTransactionWithRoleResult: unknown;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const result = await keeperHubClient.callContractFunction(execTransactionWithRoleRequest);
-        execTransactionWithRoleResult = { request: execTransactionWithRoleRequest, status: 200, rawResult: result };
-        break;
-      } catch (err) {
-        const message = (err as Error).message;
-        const is5xx = /KeeperHub API error (5\d\d):/.test(message);
-        const isNetworkError = !/KeeperHub API error \d{3}:/.test(message);
-        if (attempt === 1 && (is5xx || isNetworkError)) {
-          continue;
-        }
-        execTransactionWithRoleResult = { request: execTransactionWithRoleRequest, error: message };
-        break;
-      }
-    }
-
     try {
       await db.insert(auditEvents).values({
         entityType: "keeperhub_execution",
         entityId: crypto.randomUUID(),
         eventType: "keeperhub.diagnostics.zodiac_instance_checked",
-        payload: { bytecodeProof, getterResults, execTransactionWithRoleResult },
+        payload: { bytecodeProof, getterResults },
       });
     } catch (dbErr) {
       logger.warn({ dbErr }, "Diagnostics audit event insert failed (non-fatal)");
     }
 
-    res
-      .status(200)
-      .json({ expectedAvatarSafe: EXPECTED_AVATAR_SAFE, bytecodeProof, getterResults, execTransactionWithRoleResult });
+    res.status(200).json({ expectedAvatarSafe: EXPECTED_AVATAR_SAFE, bytecodeProof, getterResults });
   } catch (err) {
     logger.error({ err }, "Zodiac instance diagnostics check failed");
     res.status(502).json({ error: "diagnostics_check_failed", message: (err as Error).message });
