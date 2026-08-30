@@ -9,8 +9,11 @@ import { buildExitTransaction } from "../execution/buildTransaction";
 
 export const exitStrategiesRouter = Router();
 
-exitStrategiesRouter.get("/exit-strategies", async (_req, res) => {
-  const rows = await db.select().from(exitStrategies);
+exitStrategiesRouter.get("/exit-strategies", async (req, res) => {
+  const safeId = typeof req.query.safeId === "string" ? req.query.safeId : undefined;
+  const rows = safeId
+    ? await db.select().from(exitStrategies).where(eq(exitStrategies.safeId, safeId))
+    : await db.select().from(exitStrategies);
   res.json(rows);
 });
 
