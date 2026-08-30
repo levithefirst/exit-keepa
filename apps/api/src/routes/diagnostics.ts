@@ -77,6 +77,40 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/zodiac-instance-check", a
     const isDeployed = code.length > 2;
     const isMinimalProxyOfMastercopy = code === `0x${eip1167Pattern}`;
 
+    // Generic EIP-1167 parse (independent of which implementation it points
+    // to): prefix(20 bytes) + implementation address(20 bytes) + suffix(15
+    // bytes) = 45 bytes runtime code. Extracts the real implementation
+    // address this instance delegates to, whatever it turns out to be -
+    // does not assume it matches ZODIAC_ROLES_MASTERCOPY_BASE.
+    const eip1167Prefix = "363d3d373d3d3d363d73";
+    const eip1167Suffix = "5af43d82803e903d91602b57fd5bf3";
+    const bodyHex = code.slice(2);
+    const isGenericEip1167 =
+      bodyHex.length === 90 && bodyHex.startsWith(eip1167Prefix) && bodyHex.endsWith(eip1167Suffix);
+    const parsedImplementation = isGenericEip1167 ? `0x${bodyHex.slice(20, 60)}` : null;
+
+    let implementationAbiCheck: unknown = null;
+    if (parsedImplementation) {
+      try {
+        const abiResult = await keeperHubClient.rawGet(
+          `/chains/${env.BASE_CHAIN_ID}/abi?address=${parsedImplementation}`,
+        );
+        const abiFns: string[] =
+          Array.isArray((abiResult.body as any)?.abi) &&
+          (abiResult.body as any).abi
+            .filter((entry: any) => entry?.type === "function")
+            .map((entry: any) => entry.name);
+        implementationAbiCheck = {
+          address: parsedImplementation,
+          status: abiResult.status,
+          functionNames: abiFns ?? null,
+          hasExecTransactionWithRole: Array.isArray(abiFns) ? abiFns.includes("execTransactionWithRole") : null,
+        };
+      } catch (err) {
+        implementationAbiCheck = { address: parsedImplementation, error: (err as Error).message };
+      }
+    }
+
     const bytecodeProof = {
       instanceAddress: ZODIAC_ROLES_INSTANCE_CANDIDATE,
       mastercopyAddress: ZODIAC_ROLES_MASTERCOPY_BASE,
@@ -84,6 +118,8 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/zodiac-instance-check", a
       isDeployed,
       codeLength: code.length,
       isEip1167MinimalProxyOfMastercopy: isMinimalProxyOfMastercopy,
+      parsedImplementationAddress: parsedImplementation,
+      implementationAbiCheck,
       rawCode: code,
     };
 
