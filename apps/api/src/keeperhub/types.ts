@@ -66,11 +66,22 @@ export interface KeeperHubChain {
 /**
  * POST /execute/contract-call request body.
  *
- * LIVE-VERIFIED on 2026-08-30 for two cases only:
+ * LIVE-VERIFIED on 2026-08-30 for these cases only:
  * 1. A zero-argument, pure/view function (decimals() on Base's WETH9
  *    predeploy).
  * 2. A single-argument, pure/view function (balanceOf(address), same
  *    contract, queried against the zero address).
+ * 3. A zero-argument, Safe-specific view function (getThreshold() on
+ *    Safe's own canonical v1.4.1 singleton contract on Base).
+ *
+ * And confirmed NOT to work for:
+ * 4. isValidSignature(bytes32,bytes) on that same Safe singleton -
+ *    rejected with `{"error":"Function 'isValidSignature' not found in
+ *    ABI","field":"functionName"}`. Since (3) succeeded on the identical
+ *    contract address, this rules out "the address wasn't recognized" -
+ *    KeeperHub resolves function calls against some internal, apparently
+ *    per-contract-type ABI that is NOT the contract's full real ABI, and
+ *    does not include every function real Safe contracts implement.
  *
  * Verified by iteratively probing KeeperHub's own validation/execution
  * errors (never by guessing) from a Railway-hosted deployment - see
@@ -87,15 +98,22 @@ export interface KeeperHubChain {
  * fragment); sending it under `args` is also silently ignored the same
  * way. Only the JSON-string-under-`functionArgs` form was accepted.
  *
- * `simulate` is accepted but had NO observable effect on either verified
+ * `simulate` is accepted but had NO observable effect on any verified
  * call (same response with or without it) - its effect on a
  * state-changing call is UNVERIFIED.
  *
  * NOT verified and intentionally not modeled here:
- * - Argument encoding for non-address, non-fixed-size types - in
- *   particular a `bytes` (variable-length calldata) argument, which the
- *   Zodiac Roles Modifier's execTransactionWithRole would require. Only
- *   a plain `address` value has been verified inside `functionArgs`.
+ * - Argument encoding for a `bytes` (variable-length calldata) argument
+ *   - untested, because isValidSignature (the case that would have
+ *     tested it) failed at ABI resolution before argument encoding was
+ *     ever exercised. Only a plain `address` value has been verified
+ *     inside `functionArgs`.
+ * - Whether the Zodiac Roles Modifier contract/interface is recognized
+ *   at all - untested (explicitly out of scope for this round). Given
+ *   that even isValidSignature (a real EIP-1271 standard function) isn't
+ *   in whatever ABI KeeperHub uses for a recognized Safe contract, there
+ *   is no basis to assume a Zodiac-specific function like
+ *   execTransactionWithRole would be.
  * - `value` (sending native currency) - never sent, never required.
  * - Any field controlling which account/wallet executes the call.
  * - Idempotency-key behavior - no such header was sent or needed for
@@ -159,4 +177,22 @@ export interface ContractCallValidationError {
  */
 export interface ContractCallExecutionError {
   error: string;
+}
+
+/**
+ * POST /execute/contract-call "function not recognized" error shape,
+ * live-verified on 2026-08-30 by calling isValidSignature(bytes32,bytes)
+ * on Safe's own v1.4.1 singleton contract - a contract KeeperHub DOES
+ * otherwise recognize (getThreshold() on the identical address
+ * succeeded in the same session). This is a THIRD distinct error shape,
+ * different from both ContractCallValidationError (missing/invalid
+ * top-level field) and ContractCallExecutionError (ethers.js fragment
+ * mismatch after an argument-count/type error): it fires when
+ * KeeperHub's internal, apparently per-contract-type ABI simply does not
+ * define the requested function name at all, even for an
+ * otherwise-recognized contract.
+ */
+export interface ContractCallFunctionNotFoundError {
+  error: string;
+  field: "functionName";
 }

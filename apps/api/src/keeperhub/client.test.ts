@@ -230,5 +230,47 @@ describe("KeeperHubClient", () => {
         ).rejects.toThrow(/400/);
       });
     });
+
+    describe("on Safe's own canonical singleton contract", () => {
+      const SAFE_SINGLETON_V141 = "0x41675C099F32341bf84BFc5382aF534df5C7461a";
+
+      it("getThreshold() succeeds - a real Safe-specific view function is recognized", async () => {
+        const request = {
+          contractAddress: SAFE_SINGLETON_V141,
+          chainId: 8453,
+          functionName: "getThreshold",
+          simulate: true,
+        };
+        mockFetchOnce(200, { result: "1" });
+
+        const result = await client.callContractFunction(request);
+
+        expect(result).toEqual({ result: "1" });
+      });
+
+      it("isValidSignature(bytes32,bytes) FAILS with a distinct 'not found in ABI' error, even on the same contract getThreshold() succeeded on", async () => {
+        // Live-captured 2026-08-30: this is the key finding for the
+        // Zodiac question - KeeperHub's function resolution is bounded
+        // by an internal per-contract-type ABI, not the contract's real
+        // full ABI. Distinct error shape from both
+        // ContractCallValidationError (has a `details` field) and
+        // ContractCallExecutionError (wraps an ethers fragment-mismatch
+        // message) - this one is `{error, field: "functionName"}` with
+        // no `details`.
+        const request = {
+          contractAddress: SAFE_SINGLETON_V141,
+          chainId: 8453,
+          functionName: "isValidSignature",
+          functionArgs: JSON.stringify([`0x${"00".repeat(32)}`, "0x1234"]),
+          simulate: true,
+        };
+        mockFetchOnce(400, {
+          error: "Function 'isValidSignature' not found in ABI",
+          field: "functionName",
+        });
+
+        await expect(client.callContractFunction(request)).rejects.toThrow(/400/);
+      });
+    });
   });
 });

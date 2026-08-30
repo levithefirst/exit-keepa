@@ -28,12 +28,17 @@ import type {
  * record: docs/keeperhub-integration.md.
  *
  * `callContractFunction()` (POST /execute/contract-call) is LIVE-VERIFIED
- * on 2026-08-30 for a zero-argument AND a single-address-argument
- * pure/view function call (the latter requires `functionArgs` to be a
- * JSON-*stringified* array, a genuinely counterintuitive encoding this
- * session would never have guessed) - see the ContractCallRequest doc
- * comment in ./types.ts before using it for anything else, especially a
- * `bytes` argument or a state-changing call.
+ * on 2026-08-30 for a zero-argument, a single-address-argument, and a
+ * Safe-specific zero-argument pure/view function call (the address-arg
+ * case requires `functionArgs` to be a JSON-*stringified* array, a
+ * genuinely counterintuitive encoding this session would never have
+ * guessed). Also live-verified: KeeperHub resolves function calls
+ * against some internal per-contract-type ABI that is NOT necessarily
+ * the contract's full real ABI - isValidSignature(bytes32,bytes) FAILED
+ * with "not found in ABI" on a Safe contract where getThreshold()
+ * SUCCEEDED. See the ContractCallRequest doc comment in ./types.ts
+ * before using this for anything else, especially a `bytes` argument, a
+ * Zodiac contract, or a state-changing call.
  *
  * KeeperHub also advertises first-class Safe support (pending-transaction
  * monitoring, signature tracking, simulation) and an MCP server, but the
@@ -125,18 +130,29 @@ export class KeeperHubClient {
    *   contract) - requires `functionArgs` to be a JSON-stringified array
    *   (`JSON.stringify([...])`), NOT a native array. Only an `address`
    *   argument has been verified this way.
+   * - A zero-argument, Safe-specific view function (getThreshold() on
+   *   Safe's canonical v1.4.1 singleton on Base).
+   *
+   * LIVE-VERIFIED to FAIL: isValidSignature(bytes32,bytes) on that same
+   * Safe singleton, with `{"error":"Function 'isValidSignature' not
+   * found in ABI","field":"functionName"}` - even though getThreshold()
+   * succeeded on the identical contractAddress. This means KeeperHub's
+   * function resolution is not "any function real bytecode has" - it's
+   * bounded by some internal per-contract-type ABI that doesn't
+   * necessarily match the contract's actual full ABI. There is no
+   * evidence this extends to non-Safe, non-ERC20 contract types (e.g. a
+   * Zodiac Roles Modifier) at all.
    *
    * See the ContractCallRequest doc comment and
    * docs/keeperhub-integration.md for the full round-by-round
-   * verification record, including the exact error shapes for missing
-   * fields and for malformed/mismatched arguments.
+   * verification record, including all captured error shapes.
    *
-   * DO NOT call this with a `bytes`-typed argument or a state-changing
-   * function: neither has been verified, and whether `simulate: true`
-   * actually prevents a real state-changing broadcast is unverified (it
-   * had zero observable effect on either read-only call tested). Using
-   * this beyond the two confirmed cases would be exactly the kind of
-   * unverified execution this project forbids.
+   * DO NOT call this with a `bytes`-typed argument, a Zodiac contract, or
+   * a state-changing function: none of these has been verified, and
+   * whether `simulate: true` actually prevents a real state-changing
+   * broadcast is unverified (it had zero observable effect on any
+   * read-only call tested). Using this beyond the confirmed cases would
+   * be exactly the kind of unverified execution this project forbids.
    */
   callContractFunction(request: ContractCallRequest): Promise<ContractCallResult> {
     return this.request<ContractCallResult>("/execute/contract-call", {

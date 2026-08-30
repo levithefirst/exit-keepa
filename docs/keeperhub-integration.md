@@ -214,53 +214,105 @@ than guess-correcting the USDC one.)
 - Anything about `value`, execution IDs, polling, real `429` bodies, or
   idempotency - unchanged from the previous section.
 
-### Answering the "can KeeperHub call an arbitrary target" question
+## Live-verified (2026-08-30): Safe contract - `getThreshold()` succeeds, `isValidSignature` doesn't
 
-**Still: plausible, not yet confirmed - but the remaining blocker is now
-precisely identified, not a vague "haven't tried it."**
+Same technique again. Target: Safe's own canonical **v1.4.1 singleton
+contract**, `0x41675C099F32341bf84BFc5382aF534df5C7461a` - published in
+Safe's official `safe-deployments` GitHub repo and deployed identically
+across EVM chains including Base via deterministic CREATE2 deployment.
+(Caveat: this exact address was typed from memory, the same way an
+earlier from-memory USDC address turned out wrong. It was NOT rejected
+as an invalid contract address this round, which is itself evidence it
+resolved to a real, recognized contract - see below.)
 
-KeeperHub's contract-call primitive is **not** a raw `to`/`data`
-executor - confirmed twice over now. It takes `contractAddress` +
-`functionName` + `functionArgs` (a JSON-stringified array), resolving
-the ABI/fragment itself via what is now confirmed to be an ethers.js
-`Interface` under the hood.
+| # | Request | Response |
+|---|---|---|
+| 1 | `functionName: "isValidSignature"`, `functionArgs: JSON.stringify([zeroBytes32, "0x1234"])` (throwaway hash + 2-byte garbage signature) | `400` `{"error":"Function 'isValidSignature' not found in ABI","field":"functionName"}` |
+| 2 | `functionName: "getThreshold"` (zero-argument, Safe-specific, no overloads), same `contractAddress` | **`200`** `{"result":"1"}` |
 
-Calling the Zodiac Roles Modifier's `execTransactionWithRole(address to,
-uint256 value, bytes data, uint8 operation, bytes32 roleKey, bool
-shouldRevert)` through this endpoint would mean: `contractAddress` = the
-Roles Modifier's address, `functionName: "execTransactionWithRole"`,
-`functionArgs: JSON.stringify([to, value, data, operation, roleKey,
-shouldRevert])`. Two things stand between "plausible" and "confirmed":
+Round 2 was run specifically to disambiguate round 1: does "not found in
+ABI" mean (a) KeeperHub only recognizes generic ERC-20-style functions
+and nothing Safe-specific at all, or (b) something more specific to
+`isValidSignature` (e.g. an EIP-1271 overload/naming quirk)? Round 2
+rules out (a) decisively - `getThreshold()` is unambiguously
+Safe-specific, has no overloads, and succeeded on the **identical**
+`contractAddress` that `isValidSignature` failed on, returning `"1"` (a
+real, plausible Safe threshold value, not an obvious stub).
 
-1. **KeeperHub must be able to resolve the Roles Modifier's ABI/fragment
-   for `execTransactionWithRole`.** Every function tested so far
-   (`decimals`, `balanceOf`) is a universally-known ERC-20/standard
-   signature - it's still unconfirmed whether KeeperHub's ethers
-   `Interface` is built from a hardcoded set of common signatures, from
-   on-chain source verification (plausible given the `explorerApiUrl`/
-   `explorerApiType` fields on every `/chains` entry), or something
-   else. A custom, less-common function like `execTransactionWithRole`
-   is a materially different test than any of the well-known ERC-20
-   getters tried so far.
-2. **Whether a `bytes` argument (the nested call's calldata) serializes
-   correctly inside the JSON-stringified `functionArgs` array.** Not
-   tested. A hex string is the natural encoding and would likely work
-   given ethers.js's own conventions, but "likely" is exactly the kind
-   of assumption this project's rules forbid presenting as confirmed.
+**What this confirms:**
 
-**The exact next verification step**, still entirely with harmless
-read-only calls: call a function that takes a `bytes` argument on a
-**publicly known, source-verified, non-trivial contract** (not a
-universally-hardcoded ERC-20 getter) to test both open questions at
-once - for example calling `isValidSignature(bytes32,bytes)` on a
-deployed Safe (a `view` function, cannot mutate anything) with a
-throwaway hash and empty/garbage signature bytes, which would fail
-gracefully (a revert or a `false`-equivalent - Safe's own view function,
-not a write) while proving whether (a) KeeperHub resolves a
-less-common/custom function's ABI at all, and (b) how a `bytes` argument
-serializes. This is still not `execTransactionWithRole` and still not
-state-changing, so it stays within the constraints already given for
-this round.
+- **KeeperHub does recognize Safe as a distinct, supported contract
+  type**, beyond generic ERC-20 tokens - it has at least `getThreshold()`
+  in whatever internal ABI it uses for Safe contracts.
+- **KeeperHub's function resolution is bounded by an internal,
+  per-contract-type ABI that is NOT the contract's real, complete ABI.**
+  The real, deployed Safe v1.4.1 singleton bytecode absolutely
+  implements `isValidSignature(bytes32,bytes)` (it's a core part of
+  Safe's EIP-1271 support) - KeeperHub rejecting it while accepting
+  `getThreshold()` on the same address proves KeeperHub is matching
+  against a curated/internal function list per contract type, not
+  reading or reflecting the contract's actual on-chain ABI.
+- **A third, distinct error shape**: `{error, field: "functionName"}`
+  with no `details` key - different from both
+  `ContractCallValidationError` (has `details`, fires for missing
+  top-level fields) and `ContractCallExecutionError` (wraps an ethers.js
+  fragment-mismatch message, fires for argument-count/type problems
+  *after* the function name resolves). This one fires when the function
+  *name itself* isn't in KeeperHub's internal ABI for that contract
+  type, before argument handling is ever reached.
+
+**What this does NOT confirm:**
+
+- Whether Zodiac's Roles Modifier is a contract type KeeperHub
+  recognizes AT ALL - genuinely untested, and there is no basis to infer
+  it either way from Safe/ERC-20 being recognized, since those are
+  dramatically more common primitives.
+- `bytes`-argument encoding - **still entirely untested**. The
+  `isValidSignature` call that would have tested this failed at the ABI
+  name-resolution step, before argument encoding was ever exercised.
+- Which other Safe functions (beyond `getThreshold`) are in whatever
+  internal Safe ABI KeeperHub uses.
+
+### Answering the "can KeeperHub call an arbitrary target" question - hard verdict
+
+**Verdict: KeeperHub's current contract-call API is likely NOT sufficient
+to express the Zodiac Roles Modifier call the Ratehopper Auto-Exit
+concept needs — based on the evidence gathered, not yet 100% disproven,
+but the evidence leans clearly negative rather than "still unknown."**
+
+Reasoning: KeeperHub's contract-call primitive is confirmed to work off
+an internal, curated, per-contract-type function registry - not the
+target contract's real ABI, and not dynamic on-chain/explorer-based ABI
+resolution (that hypothesis is now effectively ruled out, since it would
+have resolved `isValidSignature` on real Safe bytecode). Two contract
+types are confirmed supported: generic ERC-20 tokens and Safe wallets -
+and even for Safe, a real, standard, EIP-1271 function that Safe
+contracts have implemented for years was **not** in whatever function
+list KeeperHub curated for "Safe." Zodiac's Roles Modifier is a
+meaningfully more niche contract than either - if KeeperHub's own
+curated Safe support doesn't cover a mainstream EIP standard, there is
+no positive evidence to expect it covers a Zodiac-specific function
+(`execTransactionWithRole`) on a Zodiac-specific contract type at all.
+
+**This is a leaning verdict, not an airtight one**, because of one thing
+this round deliberately did not test (per the constraint against
+touching Zodiac): whether KeeperHub happens to separately recognize the
+Zodiac Roles Modifier as its own supported contract type. That is the
+**exact remaining blocker**, and it can only be resolved by directly
+testing the real Roles Modifier contract - starting, still without
+touching `execTransactionWithRole` itself, with a harmless read on one
+of its own public view getters (e.g. `owner()`, `avatar()`, or `target()`
+- standard Zodiac module getters, all read-only, none capable of
+executing anything). If even those aren't recognized, the answer becomes
+a hard, confirmed NO. If they are recognized, `execTransactionWithRole`
+itself would still need direct verification (name resolution, then
+`bytes`-argument encoding) before any executor could be built - two
+more unresolved steps, not one.
+
+**Bottom line for now: do not build the Zodiac/Safe executor.** The
+current evidence says KeeperHub's contract-call primitive is scoped to a
+curated, limited set of contract types and functions, and Zodiac has
+not been shown to be one of them.
 
 ## Still not verified — do not build on these yet
 
@@ -269,19 +321,21 @@ this round.
    proves the key is valid), but its exact response shape (used for
    identifying the org/key) is unconfirmed.
 2. `POST /api/execute/contract-call` — endpoint, base auth, minimal
-   request shape, and single-`address`-argument passing (`functionArgs`
-   as a JSON-stringified array) ARE now live-verified (see the two
-   "Live-verified (2026-08-30)" sections above). Still unverified: a
-   `bytes`-typed argument (the load-bearing unknown for the Zodiac
-   question), whether KeeperHub resolves a custom/uncommon contract's
-   ABI (vs. only well-known ERC-20-style signatures), the `value` field,
-   whether/how `simulate: true` affects a **state-changing** call
-   (observed to do nothing on either read-only call tested), the
-   response shape for a state-changing call (execution ID? status
-   field?), whether a separate status/polling endpoint exists at all,
-   the real `429` shape, and idempotency-key behavior for a write. **Do
-   not implement anything beyond the two verified read-only cases
-   against assumed shapes.**
+   request shape, single-`address`-argument passing (`functionArgs` as a
+   JSON-stringified array), and that Safe is a recognized contract type
+   (though only for a curated subset of its real ABI) ARE now
+   live-verified (see the three "Live-verified (2026-08-30)" sections
+   above). Still unverified: a `bytes`-typed argument (the load-bearing
+   unknown for the Zodiac question, untestable so far because every
+   function needing one has failed at name resolution first), whether
+   Zodiac's Roles Modifier is a recognized contract type at all, the
+   `value` field, whether/how `simulate: true` affects a
+   **state-changing** call (observed to do nothing on every read-only
+   call tested), the response shape for a state-changing call (execution
+   ID? status field?), whether a separate status/polling endpoint exists
+   at all, the real `429` shape, and idempotency-key behavior for a
+   write. **Do not implement anything beyond the verified read-only
+   cases against assumed shapes.**
 3. Exact endpoint path(s) and payload shape for **simulating a Safe
    transaction** via KeeperHub, if that is even a distinct endpoint from
    (2) — see the Safe/Zodiac section below.
@@ -362,17 +416,24 @@ as ground truth on their own.
 
 ## Safe / Zodiac architecture for the Ratehopper Auto-Exit concept
 
-**Status: architecture proposed; `POST /execute/contract-call` is now
-live-verified for read-only calls with zero or one `address` argument
-(see above), and that verification narrowed the picture to two specific
-remaining blockers.** The endpoint is ABI-aware/function-name-based, not
-a raw `to`/`data` executor as originally assumed - see "Answering the
-'can KeeperHub call an arbitrary target' question" above. Blocked on:
-(1) whether KeeperHub can resolve the ABI of a less-common/custom
-function like `execTransactionWithRole` (only universally-known ERC-20
-signatures have been tested), and (2) whether a `bytes`-typed argument
-(the nested calldata) serializes correctly inside `functionArgs`. Do not
-treat this section as a green light to build the executor side yet.
+**Status: HARD VERDICT - likely NOT viable as KeeperHub's contract-call
+API currently behaves, pending one final direct test on the real Zodiac
+contract (not yet run).** See "Answering the 'can KeeperHub call an
+arbitrary target' question - hard verdict" above for the full reasoning.
+In short: KeeperHub's contract-call primitive resolves functions against
+an internal, curated, per-contract-type ABI - not the target's real ABI
+and not dynamic on-chain resolution. Confirmed-supported contract types:
+generic ERC-20 tokens and Safe wallets - and even Safe's own curated ABI
+excludes a real, standard EIP-1271 function (`isValidSignature`). There
+is no evidence Zodiac's Roles Modifier is a recognized contract type at
+all, and given that even mainstream Safe/EIP-1271 support is incomplete,
+there's no basis to assume a Zodiac-specific function would be
+supported. **Do not build the executor side.** The one remaining
+open question - whether the Roles Modifier itself is recognized at
+all - requires directly testing it (starting with a harmless read on
+one of its own public getters, never `execTransactionWithRole`), which
+has not been done yet per the explicit constraint against touching
+Zodiac this round.
 
 The "Ratehopper Auto-Exit" idea is: a user's position (e.g. a
 borrow/lend position on a money market) sits behind a **Safe**, and
@@ -427,12 +488,21 @@ implementing the trigger side.
       (2026-08-30): passing function arguments" above). Confirmed:
       `functionArgs` as a JSON-*stringified* array; verified for a plain
       `address` argument only.
-- [ ] Verify a `bytes`-typed argument and whether KeeperHub resolves a
-      less-common/custom contract's ABI, using a harmless read-only call
-      on a real, source-verified contract (e.g. a Safe's own
-      `isValidSignature(bytes32,bytes)` view function with throwaway
-      inputs - see "The exact next verification step" above). This is
-      the last blocker for the Zodiac question.
+- [x] Attempt a `bytes`-typed argument on a Safe's own
+      `isValidSignature(bytes32,bytes)` (done 2026-08-30, see
+      "Live-verified (2026-08-30): Safe contract" above). Result: FAILED
+      with `"Function 'isValidSignature' not found in ABI"` - not a
+      `bytes`-encoding problem, but KeeperHub not having this function in
+      its curated Safe ABI at all. Disambiguated with `getThreshold()`
+      (succeeded on the same contract), ruling out "address not
+      recognized" as the cause. `bytes`-argument encoding itself remains
+      untested - no function that would exercise it has resolved yet.
+- [ ] Directly test whether Zodiac's Roles Modifier is a recognized
+      contract type at all, using a harmless read on one of its own
+      public getters (`owner()`, `avatar()`, or `target()` - never
+      `execTransactionWithRole`). This is the one remaining open question
+      behind the hard verdict above - if even these aren't recognized,
+      the verdict becomes a confirmed, non-leaning NO.
 - [ ] Verify the request/response shape for a genuinely state-changing
       call (execution ID? status/polling endpoint? does `simulate: true`
       actually gate broadcast?) - requires careful scoping to avoid any
