@@ -63,6 +63,22 @@ import { env } from "../env";
  *                               and if so whether it exposes owner,
  *                               avatar, target, and
  *                               execTransactionWithRole.
+ *   zodiac-instance-probe    - Runs only after zodiac-abi-probe is green.
+ *                               Finds a REAL deployed Roles Modifier
+ *                               instance on Base (not the mastercopy) via
+ *                               Gnosis Guild's own public Roles subgraph
+ *                               (the authoritative source their own SDK
+ *                               uses), via GraphQL introspection first so
+ *                               field names are learned rather than
+ *                               guessed - this sandbox's egress proxy
+ *                               blocks that subgraph's domain directly,
+ *                               but Railway's network does not. If a real
+ *                               instance address is found, calls exactly
+ *                               one harmless getter (owner(), falling
+ *                               back to avatar() then target()) on it via
+ *                               KeeperHub's contract-call endpoint. No
+ *                               write, no execTransactionWithRole, no
+ *                               Safe interaction.
  *
  * Temporary - remove once docs/keeperhub-integration.md records confirmed
  * live behavior and the preDeployCommand has been cleared.
@@ -202,9 +218,107 @@ async function main() {
       return;
     }
 
+    if (mode === "zodiac-instance-probe") {
+      const SUBGRAPH_URL = "https://gnosisguild.squids.live/roles:production/api/graphql";
+
+      async function graphql(query: string) {
+        const response = await fetch(SUBGRAPH_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        return readBody(response);
+      }
+
+      // Step 1: learn the real field names from the schema itself - do not
+      // guess a filter/field shape.
+      const introspection = await graphql(
+        "{ __schema { queryType { fields { name } } } roleType: __type(name: \"Role\") { fields { name type { name kind ofType { name } } } } }",
+      );
+      console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: `${mode}:introspection`, ...introspection })}`);
+
+      const roleFields = (introspection.body as any)?.data?.roleType?.fields as
+        | Array<{ name: string }>
+        | undefined;
+      const queryFields = (introspection.body as any)?.data?.__schema?.queryType?.fields as
+        | Array<{ name: string }>
+        | undefined;
+
+      if (!roleFields || !queryFields) {
+        console.log(
+          `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({
+            resource: mode,
+            stopped: "introspection did not return a usable Role type or query field list - see introspection result above",
+          })}`,
+        );
+        return;
+      }
+
+      // Step 2: query using only field names introspection actually
+      // confirmed exist, filtered to Base (chainId 8453).
+      const wantedFields = ["id", "avatar", "target", "owner", "network"].filter((f) =>
+        roleFields.some((rf) => rf.name === f),
+      );
+      const listField =
+        queryFields.find((f) => f.name === "roles")?.name ?? queryFields.find((f) => f.name === "role")?.name;
+
+      if (!listField || wantedFields.length === 0) {
+        console.log(
+          `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({
+            resource: mode,
+            stopped: "no usable list query or Role fields found via introspection",
+            availableQueryFields: queryFields.map((f) => f.name),
+            availableRoleFields: roleFields.map((f) => f.name),
+          })}`,
+        );
+        return;
+      }
+
+      const listQuery = `{ ${listField}(where: { network_eq: "8453" }, limit: 3) { ${wantedFields.join(" ")} } }`;
+      const listResult = await graphql(listQuery);
+      console.log(
+        `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: `${mode}:list`, query: listQuery, ...listResult })}`,
+      );
+
+      const roles = (listResult.body as any)?.data?.[listField] as
+        | Array<{ id?: string; avatar?: string; target?: string; owner?: string }>
+        | undefined;
+      const instanceAddress = roles?.[0]?.id ?? roles?.[0]?.avatar ?? roles?.[0]?.target ?? roles?.[0]?.owner;
+
+      if (!instanceAddress) {
+        console.log(
+          `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({
+            resource: mode,
+            stopped: "subgraph query returned no Base instance - no independently-verified instance address available, not proceeding to a getter call",
+          })}`,
+        );
+        return;
+      }
+
+      // Step 3: exactly one harmless getter call via KeeperHub on the
+      // discovered real instance. Preference order per task spec:
+      // owner() -> avatar() -> target().
+      for (const getter of ["owner", "avatar", "target"]) {
+        const probeBody = {
+          contractAddress: instanceAddress,
+          chainId: env.BASE_CHAIN_ID,
+          functionName: getter,
+          simulate: true,
+        };
+        const result = await postJson("/execute/contract-call", probeBody);
+        console.log(
+          `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: `${mode}:getter`, request: probeBody, ...result })}`,
+        );
+        if (result.status >= 200 && result.status < 300) {
+          break;
+        }
+      }
+      return;
+    }
+
     console.log(
       `KEEPERHUB_VERIFY_ERROR ${JSON.stringify({
-        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe", "execute-bytes-probe", "execute-disambiguation-probe", "zodiac-abi-probe"].join(", ")}`,
+        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe", "execute-bytes-probe", "execute-disambiguation-probe", "zodiac-abi-probe", "zodiac-instance-probe"].join(", ")}`,
         given: mode,
       })}`,
     );
