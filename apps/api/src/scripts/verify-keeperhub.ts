@@ -52,6 +52,17 @@ import { env } from "../env";
  *                               `view` function - it can only read/
  *                               revert, never move funds, change state,
  *                               or touch Zodiac/execution.
+ *   zodiac-abi-probe         - Answers the ABI-resolution gate ahead of any
+ *                               Zodiac contract-call attempt: GET
+ *                               /chains/8453/abi?address=<Zodiac Roles
+ *                               Modifier mastercopy address on Base>. Pure
+ *                               metadata lookup - no contract-call,
+ *                               execution, or Safe interaction of any
+ *                               kind. Checks only whether KeeperHub can
+ *                               resolve an ABI for this address at all,
+ *                               and if so whether it exposes owner,
+ *                               avatar, target, and
+ *                               execTransactionWithRole.
  *
  * Temporary - remove once docs/keeperhub-integration.md records confirmed
  * live behavior and the preDeployCommand has been cleared.
@@ -62,6 +73,11 @@ const WETH_BASE = "0x4200000000000000000000000000000000000006";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const ZERO_BYTES32 = `0x${"00".repeat(32)}`;
 const SAFE_SINGLETON_V141 = "0x41675C099F32341bf84BFc5382aF534df5C7461a";
+// Proposed Zodiac Roles Modifier mastercopy address on Base, supplied for
+// this verification round. Not yet independently confirmed against a
+// public deployment registry - that is exactly what this probe is
+// checking (ABI resolution only, not deployment validity).
+const ZODIAC_ROLES_MASTERCOPY_BASE = "0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5";
 
 async function postJson(path: string, body: unknown) {
   const url = `${env.KEEPERHUB_API_BASE_URL.replace(/\/$/, "")}${path}`;
@@ -178,9 +194,17 @@ async function main() {
       return;
     }
 
+    if (mode === "zodiac-abi-probe") {
+      const result = await getJson(`/chains/${env.BASE_CHAIN_ID}/abi?address=${ZODIAC_ROLES_MASTERCOPY_BASE}`);
+      console.log(
+        `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: mode, address: ZODIAC_ROLES_MASTERCOPY_BASE, ...result })}`,
+      );
+      return;
+    }
+
     console.log(
       `KEEPERHUB_VERIFY_ERROR ${JSON.stringify({
-        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe", "execute-bytes-probe", "execute-disambiguation-probe"].join(", ")}`,
+        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe", "execute-bytes-probe", "execute-disambiguation-probe", "zodiac-abi-probe"].join(", ")}`,
         given: mode,
       })}`,
     );
