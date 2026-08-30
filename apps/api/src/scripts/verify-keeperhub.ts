@@ -231,59 +231,72 @@ async function main() {
       }
 
       // Step 1: learn the real field names from the schema itself - do not
-      // guess a filter/field shape.
+      // guess a filter/field shape. Round 1 of this probe learned the
+      // Query type exposes rolesModifier/role/rolesModifiers/memberOf
+      // (not "roles"), and that Role has no "network"/avatar/target/owner
+      // fields directly - those live on the related RolesModifier entity.
+      // This round introspects RolesModifier directly instead of guessing.
       const introspection = await graphql(
-        "{ __schema { queryType { fields { name } } } roleType: __type(name: \"Role\") { fields { name type { name kind ofType { name } } } } }",
+        '{ __schema { queryType { fields { name args { name } } } } rmType: __type(name: "RolesModifier") { fields { name type { name kind ofType { name } } } } }',
       );
-      console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: `${mode}:introspection`, ...introspection })}`);
+      console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: `${mode}:introspection2`, ...introspection })}`);
 
-      const roleFields = (introspection.body as any)?.data?.roleType?.fields as
+      const rmFields = (introspection.body as any)?.data?.rmType?.fields as
         | Array<{ name: string }>
         | undefined;
       const queryFields = (introspection.body as any)?.data?.__schema?.queryType?.fields as
-        | Array<{ name: string }>
+        | Array<{ name: string; args: Array<{ name: string }> }>
         | undefined;
 
-      if (!roleFields || !queryFields) {
+      if (!rmFields || !queryFields) {
         console.log(
           `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({
             resource: mode,
-            stopped: "introspection did not return a usable Role type or query field list - see introspection result above",
+            stopped: "introspection did not return a usable RolesModifier type or query field list - see introspection2 result above",
           })}`,
         );
         return;
       }
 
-      // Step 2: query using only field names introspection actually
-      // confirmed exist, filtered to Base (chainId 8453).
-      const wantedFields = ["id", "avatar", "target", "owner", "network"].filter((f) =>
-        roleFields.some((rf) => rf.name === f),
+      const listFieldMeta = queryFields.find((f) => f.name === "rolesModifiers");
+      const wantedFields = ["id", "chainId", "avatar", "target", "owner"].filter((f) =>
+        rmFields.some((rf) => rf.name === f),
       );
-      const listField =
-        queryFields.find((f) => f.name === "roles")?.name ?? queryFields.find((f) => f.name === "role")?.name;
 
-      if (!listField || wantedFields.length === 0) {
+      if (!listFieldMeta || wantedFields.length === 0) {
         console.log(
           `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({
             resource: mode,
-            stopped: "no usable list query or Role fields found via introspection",
+            stopped: "no usable rolesModifiers list query or RolesModifier fields found via introspection",
             availableQueryFields: queryFields.map((f) => f.name),
-            availableRoleFields: roleFields.map((f) => f.name),
+            availableRolesModifierFields: rmFields.map((f) => f.name),
           })}`,
         );
         return;
       }
 
-      const listQuery = `{ ${listField}(where: { network_eq: "8453" }, limit: 3) { ${wantedFields.join(" ")} } }`;
+      // Fetch without a where-filter (its exact argument syntax is
+      // unconfirmed) and filter client-side by chainId - avoids guessing
+      // filter-argument shape while still only using confirmed field names.
+      const listQuery = `{ rolesModifiers { ${wantedFields.join(" ")} } }`;
       const listResult = await graphql(listQuery);
       console.log(
         `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: `${mode}:list`, query: listQuery, ...listResult })}`,
       );
 
-      const roles = (listResult.body as any)?.data?.[listField] as
-        | Array<{ id?: string; avatar?: string; target?: string; owner?: string }>
+      const allModifiers = (listResult.body as any)?.data?.rolesModifiers as
+        | Array<{ id?: string; chainId?: number; avatar?: string; target?: string; owner?: string }>
         | undefined;
-      const instanceAddress = roles?.[0]?.id ?? roles?.[0]?.avatar ?? roles?.[0]?.target ?? roles?.[0]?.owner;
+      const baseModifiers = allModifiers?.filter((m) => m.chainId === env.BASE_CHAIN_ID) ?? [];
+      console.log(
+        `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({
+          resource: `${mode}:filtered`,
+          totalReturned: allModifiers?.length ?? 0,
+          baseMatches: baseModifiers.length,
+          baseModifiers,
+        })}`,
+      );
+      const instanceAddress = baseModifiers[0]?.id ?? baseModifiers[0]?.avatar ?? baseModifiers[0]?.target;
 
       if (!instanceAddress) {
         console.log(
