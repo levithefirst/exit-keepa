@@ -172,18 +172,27 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/zodiac-instance-check", a
   }
 });
 
+// Placeholder protective action for the Exit Keepa demo: approve(spender,
+// 0) on Base USDC, spender = the controlled Safe itself. Not a real
+// protocol interaction - a stand-in until a real target/function is
+// chosen for the actual exit-strategy execution path.
+const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+// approve(address,uint256) selector (0x095ea7b3) + spender (CONTROLLED_SAFE,
+// left-padded to 32 bytes) + amount 0 (32 zero bytes). Computed, not
+// hand-assembled, to avoid a padding/offset error.
+const APPROVE_ZERO_CALLDATA =
+  "0x095ea7b3" +
+  CONTROLLED_SAFE.slice(2).toLowerCase().padStart(64, "0") +
+  "0".padStart(64, "0");
+
 /**
- * TEMPORARY, SINGLE-USE - REAL BROADCAST. Same execTransactionWithRole
- * call as the (removed) simulate-only controlled-safe-exec-check probe,
- * which passed simulation (success: true, wouldRevert: false) before this
- * route was ever deployed. simulate is hardcoded false and cannot be
- * overridden by the caller. The call is a self-call from the Roles
- * Modifier to the controlled Safe itself, value 0, empty calldata -
- * the harmless verification transaction explicitly authorized after
- * reviewing the simulation result. Delete this route immediately after
- * the one authorized call.
+ * TEMPORARY, SIMULATE-ONLY - execTransactionWithRole for the placeholder
+ * Exit Keepa protective action: approve(CONTROLLED_SAFE, 0) on Base USDC,
+ * called from the controlled Roles Modifier against the controlled Safe.
+ * simulate is hardcoded true and cannot be overridden by the caller -
+ * this route can never broadcast.
  */
-diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-safe-exec-broadcast", async (req, res) => {
+diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-safe-approve-zero-check", async (req, res) => {
   if (!env.DIAGNOSTIC_SECRET) {
     res.status(503).json({ error: "diagnostics_disabled" });
     return;
@@ -204,8 +213,8 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-safe-exec-broa
     contractAddress: CONTROLLED_ROLES_MODIFIER,
     chainId: env.BASE_CHAIN_ID,
     functionName: "execTransactionWithRole",
-    functionArgs: JSON.stringify([CONTROLLED_SAFE, "0", "0x", "0", CONTROLLED_ROLE_KEY, true]),
-    simulate: false,
+    functionArgs: JSON.stringify([USDC_BASE, "0", APPROVE_ZERO_CALLDATA, "0", CONTROLLED_ROLE_KEY, true]),
+    simulate: true,
   };
 
   let result: unknown;
@@ -220,14 +229,26 @@ diagnosticsRouter.get("/internal/diagnostics/keeperhub/controlled-safe-exec-broa
     await db.insert(auditEvents).values({
       entityType: "keeperhub_execution",
       entityId: crypto.randomUUID(),
-      eventType: "keeperhub.diagnostics.controlled_safe_exec_broadcast",
-      payload: { result },
+      eventType: "keeperhub.diagnostics.controlled_safe_approve_zero_checked",
+      payload: {
+        target: USDC_BASE,
+        decodedFunction: "approve(address spender, uint256 amount)",
+        decodedArgs: { spender: CONTROLLED_SAFE, amount: "0" },
+        calldata: APPROVE_ZERO_CALLDATA,
+        result,
+      },
     });
   } catch (dbErr) {
     logger.warn({ dbErr }, "Diagnostics audit event insert failed (non-fatal)");
   }
 
-  res.status(200).json(result);
+  res.status(200).json({
+    target: USDC_BASE,
+    decodedFunction: "approve(address spender, uint256 amount)",
+    decodedArgs: { spender: CONTROLLED_SAFE, amount: "0" },
+    calldata: APPROVE_ZERO_CALLDATA,
+    result,
+  });
 });
 
 diagnosticsRouter.get("/internal/diagnostics/keeperhub/:resource", async (req, res) => {
