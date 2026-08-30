@@ -9,39 +9,32 @@ import { env } from "../env";
  *
  * Modes (process.argv[2]):
  *   chains | keys            - GET /<resource>
- *   execute-probe            - POST /execute/contract-call with an EMPTY
- *                               body, purely to read back KeeperHub's own
- *                               validation error and learn the required
- *                               request fields without guessing a schema.
- *                               Cannot execute anything (no to/data).
- *   execute-harmless         - POST /execute/contract-call with
- *                               simulate: true against a canonical,
- *                               immutable, pure/view function
- *                               (decimals() on Base's WETH9 predeploy,
- *                               0x4200...0006) - cannot move funds, change
- *                               state, approve, transfer, or touch
- *                               Safe/Zodiac, regardless of whether
- *                               simulate actually prevents broadcast.
+ *   execute-probe            - POST /execute/contract-call, progressively
+ *                               built from KeeperHub's own validation
+ *                               errors, one required field at a time. See
+ *                               docs/keeperhub-integration.md for the
+ *                               round-by-round record. Currently at the
+ *                               zero-argument case: contractAddress,
+ *                               chainId, functionName ("decimals" on
+ *                               Base's WETH9 predeploy - a pure/view
+ *                               getter, no state change possible).
+ *   execute-args-probe       - Same technique, now probing how to pass
+ *                               function ARGUMENTS: balanceOf(address)
+ *                               on Base's canonical USDC contract
+ *                               (0x8335...29913, per Circle's published
+ *                               Base deployment), queried against the
+ *                               zero address. Still a pure/view read -
+ *                               no funds, state, approvals, or transfers
+ *                               involved regardless of argument shape or
+ *                               whether `simulate` gates broadcast.
  *
  * Temporary - remove once docs/keeperhub-integration.md records confirmed
  * live behavior and the preDeployCommand has been cleared.
  */
 const GET_RESOURCES = ["chains", "keys"] as const;
 
-/**
- * decimals() on Base's WETH9 predeploy - a well-known, immutable, public
- * contract (https://docs.base.org). Selector 0x313ce567 is `decimals()`,
- * a pure/view getter: it cannot move funds, mutate state, approve, or
- * transfer anything, and has nothing to do with any Safe or Zodiac
- * module.
- */
-const HARMLESS_CONTRACT_CALL = {
-  chainId: env.BASE_CHAIN_ID,
-  to: "0x4200000000000000000000000000000000000006",
-  data: "0x313ce567",
-  value: "0",
-  simulate: true,
-};
+const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bda02913";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 async function postJson(path: string, body: unknown) {
   const url = `${env.KEEPERHUB_API_BASE_URL.replace(/\/$/, "")}${path}`;
@@ -109,17 +102,24 @@ async function main() {
       return;
     }
 
-    if (mode === "execute-harmless") {
-      const result = await postJson("/execute/contract-call", HARMLESS_CONTRACT_CALL);
-      console.log(
-        `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: mode, request: HARMLESS_CONTRACT_CALL, ...result })}`,
-      );
+    if (mode === "execute-args-probe") {
+      // Round 1: no argument field at all, to learn its name/shape from
+      // KeeperHub's own validation error rather than guessing. Still
+      // cannot execute anything real: balanceOf is a pure/view read.
+      const probeBody = {
+        contractAddress: USDC_BASE,
+        chainId: env.BASE_CHAIN_ID,
+        functionName: "balanceOf",
+        simulate: true,
+      };
+      const result = await postJson("/execute/contract-call", probeBody);
+      console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: mode, request: probeBody, ...result })}`);
       return;
     }
 
     console.log(
       `KEEPERHUB_VERIFY_ERROR ${JSON.stringify({
-        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-harmless"].join(", ")}`,
+        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe"].join(", ")}`,
         given: mode,
       })}`,
     );
