@@ -116,7 +116,7 @@ async function main() {
         contractAddress: WETH_BASE,
         chainId: env.BASE_CHAIN_ID,
         functionName: "balanceOf",
-        functionArgs: [ZERO_ADDRESS],
+        functionArgs: JSON.stringify([ZERO_ADDRESS]),
         simulate: true,
       };
       const result = await postJson("/execute/contract-call", probeBody);
