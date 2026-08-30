@@ -6,6 +6,7 @@ import { auditEvents, exitStrategies, safeAccounts } from "../db/schema";
 import { HttpError } from "../middleware/errorHandler";
 import { logger } from "../logger";
 import { buildExitTransaction } from "../execution/buildTransaction";
+import { buildRolesPermissionSpec } from "../execution/rolesPermission";
 
 export const exitStrategiesRouter = Router();
 
@@ -77,8 +78,25 @@ async function loadStrategyAndSafe(strategyId: string) {
  */
 exitStrategiesRouter.get("/exit-strategies/:id/preview", async (req, res) => {
   const { strategy, safe } = await loadStrategyAndSafe(req.params.id);
-  const tx = buildExitTransaction(strategy.action as ExitAction, safe);
-  res.status(200).json({ strategy, tx });
+
+  const rolesPermission = buildRolesPermissionSpec({
+    chainId: safe.chainId,
+    safeAddress: safe.safeAddress,
+    rolesModifierAddress: safe.rolesModifierAddress,
+    roleKey: safe.rolesKey,
+  });
+
+  let tx = null;
+  let txError: string | null = null;
+  try {
+    tx = buildExitTransaction(strategy.action as ExitAction, safe);
+  } catch (err) {
+    // Missing Roles config isn't a request error here - the preview still
+    // has something useful to show (the permission that's needed).
+    txError = (err as Error).message;
+  }
+
+  res.status(200).json({ strategy, tx, txError, rolesPermission });
 });
 
 /**

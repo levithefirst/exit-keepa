@@ -93,7 +93,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
         </p>
       </div>
 
-      {preview && (
+      {preview?.tx && (
         <div className="rounded-lg border border-white/10 p-4">
           <h2 className="mb-2 font-semibold text-white">Configured transaction</h2>
           <div className="space-y-1 font-mono text-xs text-gray-300">
@@ -102,6 +102,38 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
             <p>Args: {JSON.stringify(preview.tx.decodedArgs)}</p>
             <p className="break-all">Calldata: {preview.tx.data}</p>
           </div>
+        </div>
+      )}
+
+      {preview && !preview.tx && (
+        <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 space-y-2">
+          <h2 className="font-semibold text-yellow-300">Roles permission not yet granted</h2>
+          <p className="text-xs text-gray-400">{preview.txError}</p>
+          {preview.rolesPermission && (
+            <>
+              <div className="space-y-1 font-mono text-xs text-gray-300">
+                <p>
+                  Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})
+                </p>
+                <p>
+                  Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})
+                </p>
+                {preview.rolesPermission.conditions.map((c: any) => (
+                  <p key={c.param}>
+                    · {c.param} ({c.type}): {c.rule}
+                  </p>
+                ))}
+              </div>
+              <a
+                href={preview.rolesPermission.safeAppUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block rounded border border-accent/40 px-3 py-1.5 text-xs font-medium text-accent"
+              >
+                Open Zodiac Roles app for this Safe →
+              </a>
+            </>
+          )}
         </div>
       )}
 

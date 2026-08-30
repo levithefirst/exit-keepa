@@ -97,37 +97,73 @@ export default function CreateStrategyPage() {
   }
 
   if (step === "review" && preview) {
+    const canActivate = Boolean(preview.tx);
     return (
       <div className="max-w-xl space-y-5">
         <h1 className="text-2xl font-bold text-white">Review the exact transaction</h1>
         <p className="text-sm text-gray-400">
           This is deterministically rebuilt from your strategy — nothing here is user-suppliable calldata.
         </p>
-        <div className="space-y-2 rounded-lg border border-white/10 p-4 font-mono text-xs">
-          <p>
-            <span className="text-gray-500">Target: </span>
-            {preview.tx.to}
+
+        {preview.tx ? (
+          <div className="space-y-2 rounded-lg border border-white/10 p-4 font-mono text-xs">
+            <p>
+              <span className="text-gray-500">Target: </span>
+              {preview.tx.to}
+            </p>
+            <p>
+              <span className="text-gray-500">Function: </span>
+              {preview.tx.decodedFunction}
+            </p>
+            <p>
+              <span className="text-gray-500">Args: </span>
+              {JSON.stringify(preview.tx.decodedArgs)}
+            </p>
+            <p>
+              <span className="text-gray-500">Calldata: </span>
+              <span className="break-all">{preview.tx.data}</span>
+            </p>
+            <p>
+              <span className="text-gray-500">Via Roles Modifier: </span>
+              {preview.tx.rolesModifierAddress}
+            </p>
+          </div>
+        ) : (
+          <p className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 text-sm text-yellow-300">
+            {preview.txError}
           </p>
-          <p>
-            <span className="text-gray-500">Function: </span>
-            {preview.tx.decodedFunction}
-          </p>
-          <p>
-            <span className="text-gray-500">Args: </span>
-            {JSON.stringify(preview.tx.decodedArgs)}
-          </p>
-          <p>
-            <span className="text-gray-500">Calldata: </span>
-            <span className="break-all">{preview.tx.data}</span>
-          </p>
-          <p>
-            <span className="text-gray-500">Via Roles Modifier: </span>
-            {preview.tx.rolesModifierAddress}
-          </p>
-        </div>
+        )}
+
+        {preview.rolesPermission && (
+          <div className="rounded-lg border border-white/10 p-4 space-y-2">
+            <h2 className="font-semibold text-white">Roles permission required</h2>
+            <p className="text-xs text-gray-500">{preview.rolesPermission.note}</p>
+            <div className="space-y-1 font-mono text-xs text-gray-300">
+              <p>Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})</p>
+              <p>Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})</p>
+              {preview.rolesPermission.conditions.map((c: any) => (
+                <p key={c.param}>· {c.param} ({c.type}): {c.rule}</p>
+              ))}
+              <p>Execution options: {preview.rolesPermission.executionOptions}</p>
+            </div>
+            <a
+              href={preview.rolesPermission.safeAppUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block rounded border border-accent/40 px-3 py-1.5 text-xs font-medium text-accent"
+            >
+              Open Zodiac Roles app for this Safe →
+            </a>
+          </div>
+        )}
+
         {error && <p className="text-sm text-red-400">{error}</p>}
         <div className="flex gap-3">
-          <button onClick={activate} className="rounded bg-accent px-4 py-2 text-sm font-medium text-black">
+          <button
+            onClick={activate}
+            disabled={!canActivate}
+            className="rounded bg-accent px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
+          >
             Activate Strategy
           </button>
           <button
