@@ -20,20 +20,26 @@ import { env } from "../env";
  *                               getter, no state change possible).
  *   execute-args-probe       - Same technique, now probing how to pass
  *                               function ARGUMENTS: balanceOf(address)
- *                               on Base's canonical USDC contract
- *                               (0x8335...29913, per Circle's published
- *                               Base deployment), queried against the
- *                               zero address. Still a pure/view read -
- *                               no funds, state, approvals, or transfers
- *                               involved regardless of argument shape or
- *                               whether `simulate` gates broadcast.
+ *                               on Base's WETH9 predeploy (0x4200...0006,
+ *                               already confirmed a valid contractAddress
+ *                               by KeeperHub in the execute-probe round -
+ *                               an arbitrary from-memory USDC address was
+ *                               tried first and rejected as
+ *                               "Invalid contract address", so this
+ *                               reuses the address already proven
+ *                               correct rather than guess-fixing that
+ *                               one), queried against the zero address.
+ *                               Still a pure/view read - no funds, state,
+ *                               approvals, or transfers involved
+ *                               regardless of argument shape or whether
+ *                               `simulate` gates broadcast.
  *
  * Temporary - remove once docs/keeperhub-integration.md records confirmed
  * live behavior and the preDeployCommand has been cleared.
  */
 const GET_RESOURCES = ["chains", "keys"] as const;
 
-const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bda02913";
+const WETH_BASE = "0x4200000000000000000000000000000000000006";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 async function postJson(path: string, body: unknown) {
@@ -107,7 +113,7 @@ async function main() {
       // KeeperHub's own validation error rather than guessing. Still
       // cannot execute anything real: balanceOf is a pure/view read.
       const probeBody = {
-        contractAddress: USDC_BASE,
+        contractAddress: WETH_BASE,
         chainId: env.BASE_CHAIN_ID,
         functionName: "balanceOf",
         simulate: true,
