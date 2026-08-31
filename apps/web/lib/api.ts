@@ -26,6 +26,8 @@ export const api = {
   activateStrategy: (id: string) => request(`/api/exit-strategies/${id}/activate`, { method: "POST" }),
   pauseStrategy: (id: string) => request(`/api/exit-strategies/${id}/pause`, { method: "POST" }),
 
+  evaluateAgent: (strategyId: string) =>
+    request<any>(`/api/exit-strategies/${strategyId}/agent/evaluate`, { method: "POST" }),
   listExecutions: (strategyId: string) => request<any[]>(`/api/exit-strategies/${strategyId}/executions`),
   createExecution: (strategyId: string, currentRateBps: number) =>
     request(`/api/exit-strategies/${strategyId}/executions`, {
