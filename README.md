@@ -14,6 +14,11 @@ issue, see that section), or run it locally in a couple of minutes (see
 [Local setup](#local-setup)). The API is live at
 `https://api-production-2e11.up.railway.app`.
 
+**Hackathon judges:** see [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for
+the pitch, live evidence (on-chain Roles config + a real simulation
+response, re-verified against production right before submission), and
+the exact judge path.
+
 ## What it actually does (v1 scope)
 
 Exit Keepa v1 supports exactly **one** protocol and **one** action,
