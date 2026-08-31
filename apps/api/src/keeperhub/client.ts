@@ -153,12 +153,47 @@ export class KeeperHubClient {
    * broadcast is unverified (it had zero observable effect on any
    * read-only call tested). Using this beyond the confirmed cases would
    * be exactly the kind of unverified execution this project forbids.
+   *
+   * HTTP 400 handling: KeeperHub uses HTTP 400 for two genuinely different
+   * things (verified in docs/zodiac-verification-evidence.md) - a
+   * pre-flight validation error (missing/invalid field, function not
+   * found in its ABI), and "the simulated call would revert" for
+   * execTransactionWithRole, which is a normal, informative result
+   * (`{success:false, wouldRevert:true, revertReason:"..."}`), not a
+   * request failure. Only the shape without `wouldRevert` is a real
+   * error and still throws; a `wouldRevert`-shaped 400 body is returned
+   * as data so callers (see execution/executor.ts) can tell "the
+   * permission doesn't allow this yet" apart from "KeeperHub is down."
    */
-  callContractFunction(request: ContractCallRequest): Promise<ContractCallResult> {
-    return this.request<ContractCallResult>("/execute/contract-call", {
+  async callContractFunction(request: ContractCallRequest): Promise<ContractCallResult> {
+    const url = `${this.baseUrl.replace(/\/$/, "")}/execute/contract-call`;
+    const response = await fetch(url, {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
       body: JSON.stringify(request),
     });
+
+    const text = await response.text();
+    let body: unknown;
+    try {
+      body = text ? JSON.parse(text) : undefined;
+    } catch {
+      body = undefined;
+    }
+
+    if (!response.ok) {
+      const isSimulatedRevertResult =
+        response.status === 400 && body !== null && typeof body === "object" && "wouldRevert" in body;
+      if (!isSimulatedRevertResult) {
+        logger.error({ url, status: response.status, body: text }, "KeeperHub API request failed");
+        throw new Error(`KeeperHub API error ${response.status}: ${text}`);
+      }
+    }
+
+    return body as ContractCallResult;
   }
 
   /**

@@ -272,5 +272,48 @@ describe("KeeperHubClient", () => {
         await expect(client.callContractFunction(request)).rejects.toThrow(/400/);
       });
     });
+
+    describe("HTTP 400 that represents a simulated revert (not a request error)", () => {
+      /**
+       * Live-captured 2026-08-30 (docs/zodiac-verification-evidence.md):
+       * execTransactionWithRole simulated against an address with no role
+       * membership returns HTTP 400 with this exact shape - KeeperHub's
+       * status code for "the simulated call would revert", not a
+       * validation failure. Regression test for the bug where this was
+       * being converted into a thrown error (surfaced as a 502 at the
+       * route level) instead of a normal simulation result.
+       */
+      const SIMULATED_REVERT_BODY = {
+        success: false,
+        status: "simulated",
+        from: "0xc68f0e22dc6ed7e883873b36f23ddbbc1b3968ac",
+        to: "0x856dD89c7925977119b5C7330186B5238aD355a0",
+        value: "0",
+        failureKind: "revert",
+        wouldRevert: true,
+        revertReason: "NotAuthorized(0xc68f0E22Dc6eD7e883873B36f23DdBBC1b3968Ac)",
+        error: "NotAuthorized(0xc68f0E22Dc6eD7e883873B36f23DdBBC1b3968Ac)",
+      };
+
+      it("resolves with the parsed body instead of throwing", async () => {
+        mockFetchOnce(400, SIMULATED_REVERT_BODY);
+
+        const result = await client.callContractFunction({
+          contractAddress: "0x856dD89c7925977119b5C7330186B5238aD355a0",
+          chainId: 8453,
+          functionName: "execTransactionWithRole",
+          simulate: true,
+        });
+
+        expect(result).toEqual(SIMULATED_REVERT_BODY);
+      });
+
+      it("still throws for a genuine 400 that has no wouldRevert field", async () => {
+        mockFetchOnce(400, { error: "Missing required field", field: "contractAddress", details: "x" });
+        await expect(
+          client.callContractFunction({ contractAddress: "", chainId: 8453, functionName: "x" }),
+        ).rejects.toThrow(/400/);
+      });
+    });
   });
 });
