@@ -52,7 +52,7 @@ export const STATUS_META: Record<string, { label: string; dot: string; text: str
   archived: { label: "Archived", dot: "bg-cream-400", text: "text-cream-400", bg: "bg-cream-100/10" },
   pending: { label: "Pending", dot: "bg-cream-400", text: "text-cream-300", bg: "bg-cream-100/10" },
   simulating: { label: "Simulating…", dot: "bg-info animate-pulse", text: "text-info", bg: "bg-info/10" },
-  simulated: { label: "Simulated — not broadcast", dot: "bg-info", text: "text-info", bg: "bg-info/10" },
+  simulated: { label: "Simulated, not sent", dot: "bg-info", text: "text-info", bg: "bg-info/10" },
   executing: { label: "Broadcasting…", dot: "bg-warning animate-pulse", text: "text-warning", bg: "bg-warning/10" },
   succeeded: { label: "Confirmed onchain", dot: "bg-mint-400", text: "text-mint-300", bg: "bg-mint-400/15" },
   failed: { label: "Failed", dot: "bg-danger", text: "text-danger", bg: "bg-danger/15" },

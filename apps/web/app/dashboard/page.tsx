@@ -85,8 +85,8 @@ export default function DashboardPage() {
       <div className="max-w-md space-y-4">
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Connect your Safe</h1>
         <p className="text-pretty text-sm text-cream-300">
-          Enter the Safe you want Exit Keepa to protect. If it already has a Zodiac Roles Modifier enabled, add its
-          address and role key so strategies can be activated immediately.
+          Enter the Safe you want Exit Keepa to protect. If it already has a Zodiac Roles Modifier set up, add its
+          address and role key below so your strategies can go live right away.
         </p>
         <div>
           <label htmlFor="safe-address" className="mb-1 block text-sm text-cream-300">
@@ -166,7 +166,7 @@ export default function DashboardPage() {
           </p>
           {balances && (
             <p className="mt-2 text-sm tabular-nums text-cream-200">
-              Balances — ETH: {(Number(balances.eth) / 1e18).toFixed(5)} · USDC: {(Number(balances.usdc) / 1e6).toFixed(2)}
+              Balances: ETH {(Number(balances.eth) / 1e18).toFixed(5)} · USDC {(Number(balances.usdc) / 1e6).toFixed(2)}
             </p>
           )}
         </div>
@@ -189,7 +189,7 @@ export default function DashboardPage() {
       )}
       {!loading && strategies.length === 0 && (
         <div className="rounded-xl border border-dashed border-cream-100/15 p-6 text-center">
-          <p className="text-pretty mb-3 text-sm text-cream-300">No strategies yet — create one to get started.</p>
+          <p className="text-pretty mb-3 text-sm text-cream-300">No strategies yet. Create one to get started.</p>
           <Link href="/create" className={`inline-flex ${btnPrimary}`}>
             + New strategy
           </Link>

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useWallet } from "../lib/wallet";
 import { btnPrimarySmall, btnGhost, linkFocus } from "../lib/ui";
+import { Logo } from "./Logo";
 
 function short(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -14,17 +15,6 @@ const NAV_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/create", label: "Create strategy" },
 ];
-
-function Logo() {
-  return (
-    <Link href="/" className={`flex shrink-0 items-center gap-2 ${linkFocus}`}>
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-mint-400 font-display text-sm font-bold text-forest-950">
-        EK
-      </span>
-      <span className="font-display text-lg font-bold tracking-tight text-cream-50">Exit Keepa</span>
-    </Link>
-  );
-}
 
 export function Nav() {
   const { address, connecting, error, connect, disconnect, chainId, switchToBase, isDemo, enterDemoMode } =
@@ -65,7 +55,7 @@ export function Nav() {
           onClick={switchToBase}
           className={`min-h-11 rounded-lg bg-warning/15 px-2 text-xs text-warning ${linkFocus}`}
         >
-          Wrong network — switch to Base
+          Wrong network. Switch to Base
         </button>
       )}
       {isDemo ? (
@@ -93,7 +83,9 @@ export function Nav() {
   return (
     <nav className="sticky top-0 z-40 border-b border-cream-100/10 bg-forest-900/90 backdrop-blur">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3.5">
-        <Logo />
+        <Link href="/" className={`shrink-0 ${linkFocus}`}>
+          <Logo />
+        </Link>
 
         {/* Desktop nav */}
         <div className="hidden items-center gap-6 text-sm md:flex">

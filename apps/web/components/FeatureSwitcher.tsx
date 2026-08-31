@@ -15,11 +15,11 @@ const FEATURES = [
     panelVisible: "hidden group-has-[#feature-exit:checked]:grid",
     tab: "Set your exit",
     heading: "Set your exit",
-    body: "Define the rate condition that should trigger a withdrawal — once. No dashboard to babysit.",
+    body: "Choose the rate that should trigger a withdrawal. Set it once. No dashboard to babysit.",
     bullets: [
-      "Pick the market (Aave v3 USDC on Base in v1) and the exact rate condition — e.g. supply APR below 2%.",
-      "Choose the amount: your entire position, or an exact smallest-unit amount.",
-      "The transaction is rebuilt deterministically from your strategy every time — never from anything typed at trigger time.",
+      "Works with Aave USDC on Base today, e.g. exit when supply APR drops below 2%.",
+      "Choose to withdraw your entire position or an exact amount.",
+      "The transaction is rebuilt from your saved strategy every time, never from anything typed in the moment.",
     ],
     media: (
       <div className="space-y-2">
@@ -36,22 +36,22 @@ const FEATURES = [
     pillActive: "group-has-[#feature-simulate:checked]:bg-mint-400 group-has-[#feature-simulate:checked]:text-forest-950",
     panelVisible: "hidden group-has-[#feature-simulate:checked]:grid",
     tab: "Simulate first",
-    heading: "Simulate before execution",
-    body: "Every strategy can be checked against the real chain before anything moves — a genuine dry run, not a mock.",
+    heading: "Test it before it's real",
+    body: "Every strategy is checked against the live chain before anything moves. This is a genuine dry run, not a guess.",
     bullets: [
-      "Runs the exact call through KeeperHub with simulate: true — the real Roles Modifier, the real Aave Pool.",
-      "Shows whether it would succeed, or the exact revert reason if it wouldn't.",
-      "Broadcasting is only ever enabled after a simulation just came back clean.",
+      "Runs the exact call through KeeperHub in simulation mode, against the real Roles Modifier and the real Aave Pool.",
+      "Tells you if it would succeed, or shows the exact reason it would fail.",
+      "Sending is only ever unlocked after a simulation comes back clean.",
     ],
     media: (
       <div className="space-y-2">
         <p className="text-xs font-medium uppercase tracking-wide text-cream-400">Simulation result</p>
         <div className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-mint-400" />
-          <span className="text-sm text-mint-300">wouldRevert: false</span>
+          <span className="text-sm text-mint-300">Would revert: no</span>
         </div>
         <p className="text-pretty text-xs text-cream-400">
-          Simulated only — nothing has been broadcast to the chain yet.
+          Simulated only. Nothing has been sent to the chain yet.
         </p>
       </div>
     ),
@@ -61,12 +61,12 @@ const FEATURES = [
     pillActive: "group-has-[#feature-execute:checked]:bg-mint-400 group-has-[#feature-execute:checked]:text-forest-950",
     panelVisible: "hidden group-has-[#feature-execute:checked]:grid",
     tab: "Protected execution",
-    heading: "Protected onchain execution",
-    body: "Execution never touches your keys. It's routed through KeeperHub and constrained by a Zodiac Roles permission before it ever reaches your Safe.",
+    heading: "Your keys never leave your hands",
+    body: "Execution is routed through KeeperHub, but it's boxed in by a Zodiac Roles permission before it ever reaches your Safe.",
     bullets: [
-      "KeeperHub calls execTransactionWithRole — it can never call anything else.",
-      "Your Safe's Roles Modifier only permits what's explicitly scoped to that role — nothing by default.",
-      "Funds can only land back in the Safe that owns them, never anywhere else.",
+      "KeeperHub can only call one function, execTransactionWithRole. Nothing else.",
+      "Your Safe's Roles Modifier allows exactly one action. Everything else is blocked by default.",
+      "Funds can only return to the Safe that owns them, never anywhere else.",
     ],
     media: (
       <div className="flex flex-col gap-1.5 font-mono text-xs text-cream-300">

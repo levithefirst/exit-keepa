@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { linkFocus } from "../lib/ui";
+import { Logo } from "./Logo";
 
 const REPO = "https://github.com/levithefirst/exit-keepa";
 const PROOF_TX = "https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b";
@@ -26,14 +27,9 @@ export function Footer() {
       <div className="mx-auto max-w-5xl px-6 py-12">
         <div className="grid gap-10 sm:grid-cols-2 md:grid-cols-4">
           <div className="sm:col-span-2 md:col-span-1">
-            <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-mint-400 font-display text-xs font-bold text-forest-950">
-                EK
-              </span>
-              <span className="font-display text-base font-bold text-cream-50">Exit Keepa</span>
-            </div>
+            <Logo iconClassName="h-5 w-5" textClassName="text-base" />
             <p className="text-pretty mt-3 max-w-xs text-sm text-cream-300">
-              Protective exits for onchain positions, executed through your own Safe — never held by us.
+              Protective exits for your DeFi positions, run through your own Safe. We never hold your funds.
             </p>
           </div>
 
@@ -68,9 +64,9 @@ export function Footer() {
         <div className="mt-10 flex flex-col gap-2 border-t border-cream-100/10 pt-6 text-xs text-cream-400 sm:flex-row sm:items-center sm:justify-between">
           <p>© {new Date().getFullYear()} Exit Keepa. Built on Base.</p>
           <p>
-            Execution is real, permission-scoped, and verifiable —{" "}
+            Execution is real, permission-scoped, and verifiable.{" "}
             <a href={PROOF_TX} target="_blank" rel="noreferrer" className={`underline hover:text-mint-300 ${linkFocus}`}>
-              see the proof
+              See the proof
             </a>
             .
           </p>

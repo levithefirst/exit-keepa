@@ -105,7 +105,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
       <div className={card}>
         <h2 className="mb-2 font-semibold text-cream-50">Condition</h2>
         <p className="text-pretty text-sm tabular-nums text-cream-200">
-          {strategy.condition.market} — {strategy.condition.metric} {strategy.condition.comparator}{" "}
+          {strategy.condition.market}: {strategy.condition.metric} {strategy.condition.comparator}{" "}
           {strategy.condition.thresholdBps / 100}%
         </p>
       </div>
@@ -162,8 +162,8 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
       <div className={`${card} space-y-3`}>
         <h2 className="font-semibold text-cream-50">Manual trigger (demo)</h2>
         <p className="text-pretty text-xs text-cream-400">
-          Exit Keepa v1 doesn&apos;t yet run a live on-chain rate oracle (see README limitations) — enter the current rate
-          to check against the condition, exactly as a real monitor would.
+          Exit Keepa doesn&apos;t run a live rate oracle yet. Enter the current rate below to check it against your
+          condition, exactly as a real monitor would.
         </p>
         <div className="flex flex-wrap items-end gap-2">
           <div>
@@ -191,8 +191,8 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
       <div>
         <h2 className="mb-3 font-semibold text-cream-50">Execution history</h2>
         <p className="mb-3 text-pretty text-xs text-cream-400">
-          Simulated means checked, not broadcast. Confirmed onchain is the only status backed by a real transaction —
-          verify any of them directly on BaseScan.
+          Simulated means checked, not sent. Confirmed onchain is the only status backed by a real transaction.
+          Verify any of them directly on BaseScan.
         </p>
         {executions.length === 0 && <p className="text-pretty text-sm text-cream-400">No executions yet.</p>}
         <div className="space-y-3">

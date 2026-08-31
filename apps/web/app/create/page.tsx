@@ -92,7 +92,7 @@ export default function CreateStrategyPage() {
       <div className="max-w-lg space-y-4">
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Strategy activated</h1>
         <p className="text-pretty text-sm text-cream-300">
-          Exit Keepa will execute this transaction through your Safe once the condition is met.
+          Exit Keepa will run this transaction through your Safe the moment your condition is met.
         </p>
         <button onClick={() => router.push(`/strategy/${strategyId}`)} className={btnPrimary}>
           View strategy
@@ -105,9 +105,10 @@ export default function CreateStrategyPage() {
     const canActivate = Boolean(preview.tx);
     return (
       <div className="max-w-xl space-y-5">
-        <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Review the exact transaction</h1>
+        <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Review before you activate</h1>
         <p className="text-pretty text-sm text-cream-300">
-          This is deterministically rebuilt from your strategy — nothing here is user-suppliable calldata.
+          This transaction is rebuilt directly from your strategy every time. Nothing here comes from anything
+          typed by hand.
         </p>
 
         <div className={card}>
@@ -188,8 +189,8 @@ export default function CreateStrategyPage() {
           </button>
         </div>
         <p className="text-pretty text-xs text-cream-500">
-          Activating only turns monitoring on — it does not simulate or broadcast anything. Do that from the strategy
-          detail page.
+          Activating only turns monitoring on. It doesn&apos;t simulate or send anything, you&apos;ll do that from
+          the strategy page.
         </p>
       </div>
     );
@@ -213,26 +214,26 @@ export default function CreateStrategyPage() {
       </div>
 
       <div>
-        <label className="mb-1 block text-sm text-cream-300">Protocol / market</label>
+        <label className="mb-1 block text-sm text-cream-300">Market</label>
         <div className="rounded-lg border border-cream-100/20 px-3 py-2 text-sm text-cream-200">
-          Aave v3 on Base — USDC supply (only supported protocol in v1)
+          Aave v3 on Base, USDC supply. The only market Exit Keepa supports right now.
         </div>
       </div>
 
       <div>
-        <label className="mb-1 block text-sm text-cream-300">Exit action</label>
+        <label className="mb-1 block text-sm text-cream-300">What happens when it triggers</label>
         <div className="space-y-2 rounded-lg border border-cream-100/20 p-3 text-sm">
           <p className="text-pretty text-cream-200">
-            Withdraw USDC from Aave back to your Safe (<code>withdraw(asset, amount, to)</code>)
+            Withdraw USDC from Aave straight back to your Safe (<code>withdraw(asset, amount, to)</code>)
           </p>
           <div className="flex flex-wrap gap-4">
             <label className="flex items-center gap-1.5 text-xs text-cream-300">
               <input type="radio" checked={amountMode === "max"} onChange={() => setAmountMode("max")} className="accent-mint-400" />
-              Withdraw entire position
+              Withdraw everything
             </label>
             <label className="flex items-center gap-1.5 text-xs text-cream-300">
               <input type="radio" checked={amountMode === "exact"} onChange={() => setAmountMode("exact")} className="accent-mint-400" />
-              Exact amount (smallest units)
+              Withdraw an exact amount
             </label>
           </div>
           {amountMode === "exact" && (
@@ -253,7 +254,7 @@ export default function CreateStrategyPage() {
       </div>
 
       <div>
-        <label className="mb-1 block text-sm text-cream-300">Trigger condition</label>
+        <label className="mb-1 block text-sm text-cream-300">When should this run?</label>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="text-cream-300">Exit when USDC supply APR</span>
           <select

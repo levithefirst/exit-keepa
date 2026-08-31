@@ -55,7 +55,7 @@ export function AnalyticsChart() {
   const { max, currentTotal, prevTotal, deltaPct } = useMemo(() => {
     const max = Math.max(...points.map((p) => p.simulated + p.confirmed), 1);
     const currentTotal = total(points);
-    // Delta compares this range's total to a synthetic "previous period" —
+    // Delta compares this range's total to a synthetic "previous period":
     // 90% of current, for demo purposes only (see fixture note above).
     const prevTotal = Math.round(currentTotal * 0.9) || 1;
     const deltaPct = Math.round(((currentTotal - prevTotal) / prevTotal) * 100);

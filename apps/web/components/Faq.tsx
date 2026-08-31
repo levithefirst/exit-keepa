@@ -5,43 +5,43 @@ import { useEffect, useRef } from "react";
 const FAQ_ITEMS = [
   {
     q: "What is Exit Keepa?",
-    a: "A way to protect a DeFi position from an adverse rate move: you define an exit condition once, and when it's crossed, a pre-authorized exit transaction runs through your own Safe. Exit Keepa never holds your keys or your funds.",
+    a: "A way to protect a DeFi position from a bad rate move. You set an exit condition once, and when it's crossed, a pre-approved transaction runs through your own Safe. Exit Keepa never holds your keys or your funds.",
   },
   {
-    q: "How does an automated exit actually work?",
-    a: "You create a strategy (the condition and the exact withdraw action), activate it, and Exit Keepa monitors for the condition. When it's met, it prepares an execution, simulates it, and only then can it be broadcast — every step recorded.",
+    q: "How does it actually work?",
+    a: "You create a strategy: the condition and the exact withdrawal it should trigger. Once it's active, Exit Keepa watches for that condition. When it's met, it prepares the transaction, simulates it, and only then can it be sent. Every step is recorded.",
   },
   {
     q: "Why does Exit Keepa use KeeperHub?",
-    a: "KeeperHub is the executor that calls into your Safe on your behalf. It can only ever call one function — execTransactionWithRole — on your Roles Modifier. It never has a way to call anything else, on any other contract.",
+    a: "KeeperHub is what actually calls your Safe on your behalf. It can only call one function, execTransactionWithRole, through your Roles Modifier. It has no way to call anything else, on any other contract.",
   },
   {
-    q: "What happens before execution?",
-    a: "Exit Keepa deterministically rebuilds the exact transaction from your stored strategy, runs it as a simulation, and only enables a real broadcast once that simulation comes back clean. Nothing is ever built from data supplied at trigger time.",
+    q: "What happens before an exit is sent?",
+    a: "Exit Keepa rebuilds the exact transaction from your saved strategy every time, runs it as a simulation, and only allows a real send once that simulation comes back clean. Nothing is ever built from data entered at the last second.",
   },
   {
     q: "How does simulation work?",
-    a: "The same execTransactionWithRole call is sent to KeeperHub with simulate: true. It's checked against the real Roles Modifier and the real Aave Pool on Base — a genuine dry run, not a mocked response — and returns either a clean result or the exact revert reason.",
+    a: "The same transaction is sent to KeeperHub in simulation mode. It's checked against the real Roles Modifier and the real Aave Pool on Base, a genuine test, not a guess, and returns either a clean result or the exact reason it would fail.",
   },
   {
-    q: "What protects the Safe?",
-    a: "A Zodiac Roles Modifier. By default a role can do nothing. Exit Keepa's role is scoped to withdraw() on Aave's Pool, with the recipient fixed to the Safe itself — funds can never be routed anywhere else, and no other Aave action is reachable.",
+    q: "What protects my Safe?",
+    a: "A Zodiac Roles Modifier. By default it can do nothing. Exit Keepa's role is limited to one action, withdrawing from Aave's Pool, with the funds always returned to your Safe. Nothing else is reachable.",
   },
   {
     q: "Does Exit Keepa control my funds?",
-    a: "No. Your Safe holds the funds at all times. Exit Keepa (via KeeperHub) can only trigger the one narrow, pre-approved action your Roles permission allows — it can't move funds outside that scope, and it never takes custody.",
+    a: "No. Your Safe holds your funds at all times. Exit Keepa, through KeeperHub, can only trigger the one narrow action your Roles permission allows. It can't move funds outside that scope, and it never takes custody.",
   },
   {
-    q: "Can I test this without a live position?",
-    a: "Yes — demo mode registers a fixed demo identity with no wallet extension required, so you can create a strategy, review the exact transaction, and simulate it without any funds at risk.",
+    q: "Can I try this without a real position?",
+    a: "Yes. Demo mode gives you a fixed identity with no wallet extension required, so you can create a strategy, review the exact transaction, and simulate it with nothing at risk.",
   },
   {
-    q: "What happens when execution fails?",
-    a: "A failed simulation is recorded as failed with the real revert reason — it's never broadcast. If a broadcast attempt fails with a network/timeout error rather than a confirmed rejection from KeeperHub, that's recorded distinctly too, so a real, unconfirmed attempt is never silently treated as either a success or a clean failure.",
+    q: "What happens if an execution fails?",
+    a: "A failed simulation is recorded as failed, with the real reason, and it's never sent. If a real broadcast fails from a network or timeout issue rather than a clear rejection, that's recorded differently too, so an uncertain attempt is never mistaken for a success or a clean failure.",
   },
   {
-    q: "How can I verify an execution actually happened?",
-    a: "Every real broadcast's transaction hash is only ever stored if it's a well-formed, validated hash — never fabricated. Check it directly on BaseScan; the chain, not Exit Keepa's own database, is the source of truth.",
+    q: "How do I know an exit actually happened?",
+    a: "We only store a transaction hash if it's real and well-formed, never invented. Check it yourself on BaseScan. The blockchain, not our database, is what actually proves it happened.",
   },
 ];
 
