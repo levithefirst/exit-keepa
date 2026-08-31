@@ -5,9 +5,16 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
 import { getStoredSafeId } from "../../lib/storage";
-import { btnPrimary, btnSecondary, inputBase } from "../../lib/ui";
+import { btnPrimary, btnSecondary, inputBase, card, linkFocus } from "../../lib/ui";
 
 const AAVE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+const COMPARATOR_WORDS: Record<string, string> = {
+  lt: "drops below",
+  lte: "drops to or below",
+  gt: "rises above",
+  gte: "rises to or above",
+};
 
 export default function CreateStrategyPage() {
   const { address } = useWallet();
@@ -29,12 +36,12 @@ export default function CreateStrategyPage() {
     if (address) setSafeId(getStoredSafeId(address));
   }, [address]);
 
-  if (!address) return <p className="text-pretty text-gray-400">Connect your wallet first.</p>;
+  if (!address) return <p className="text-pretty text-cream-300">Connect your wallet first.</p>;
   if (!safeId)
     return (
-      <p className="text-pretty text-gray-400">
+      <p className="text-pretty text-cream-300">
         You need to connect a Safe on the{" "}
-        <a href="/dashboard" className="underline">
+        <a href="/dashboard" className={`underline ${linkFocus}`}>
           Dashboard
         </a>{" "}
         before creating a strategy.
@@ -83,8 +90,8 @@ export default function CreateStrategyPage() {
   if (step === "activated") {
     return (
       <div className="max-w-lg space-y-4">
-        <h1 className="text-balance text-2xl font-bold text-white">Strategy activated</h1>
-        <p className="text-pretty text-sm text-gray-400">
+        <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Strategy activated</h1>
+        <p className="text-pretty text-sm text-cream-300">
           Exit Keepa will execute this transaction through your Safe once the condition is met.
         </p>
         <button onClick={() => router.push(`/strategy/${strategyId}`)} className={btnPrimary}>
@@ -98,45 +105,61 @@ export default function CreateStrategyPage() {
     const canActivate = Boolean(preview.tx);
     return (
       <div className="max-w-xl space-y-5">
-        <h1 className="text-balance text-2xl font-bold text-white">Review the exact transaction</h1>
-        <p className="text-pretty text-sm text-gray-400">
+        <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Review the exact transaction</h1>
+        <p className="text-pretty text-sm text-cream-300">
           This is deterministically rebuilt from your strategy — nothing here is user-suppliable calldata.
         </p>
 
+        <div className={card}>
+          <p className="text-pretty text-sm text-cream-100">
+            Exit when USDC supply APR {COMPARATOR_WORDS[comparator]} {thresholdPct}%. Withdraws{" "}
+            {amountMode === "max" ? "your entire position" : `${exactAmount || "0"} (smallest units)`} from Aave
+            straight back to your own Safe.
+          </p>
+        </div>
+
         {preview.tx ? (
-          <div className="space-y-2 rounded-lg border border-white/10 p-4 font-mono text-xs">
-            <p>
-              <span className="text-gray-500">Target: </span>
-              {preview.tx.to}
-            </p>
-            <p>
-              <span className="text-gray-500">Function: </span>
-              {preview.tx.decodedFunction}
-            </p>
-            <p>
-              <span className="text-gray-500">Args: </span>
-              {JSON.stringify(preview.tx.decodedArgs)}
-            </p>
-            <p>
-              <span className="text-gray-500">Calldata: </span>
-              <span className="break-all">{preview.tx.data}</span>
-            </p>
-            <p>
-              <span className="text-gray-500">Via Roles Modifier: </span>
-              {preview.tx.rolesModifierAddress}
-            </p>
-          </div>
+          <details className="group rounded-xl border border-cream-100/10 p-4">
+            <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-cream-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
+              Technical details
+              <svg className="faq-chevron h-4 w-4 text-mint-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+              </svg>
+            </summary>
+            <div className="data-mono mt-3 space-y-2 font-mono text-xs text-cream-300">
+              <p>
+                <span className="text-cream-500">Target: </span>
+                {preview.tx.to}
+              </p>
+              <p>
+                <span className="text-cream-500">Function: </span>
+                {preview.tx.decodedFunction}
+              </p>
+              <p>
+                <span className="text-cream-500">Args: </span>
+                {JSON.stringify(preview.tx.decodedArgs)}
+              </p>
+              <p>
+                <span className="text-cream-500">Calldata: </span>
+                <span className="break-all">{preview.tx.data}</span>
+              </p>
+              <p>
+                <span className="text-cream-500">Via Roles Modifier: </span>
+                {preview.tx.rolesModifierAddress}
+              </p>
+            </div>
+          </details>
         ) : (
-          <p className="text-pretty rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 text-sm text-yellow-300">
+          <p className="text-pretty rounded-xl border border-warning/30 bg-warning/5 p-4 text-sm text-warning">
             {preview.txError}
           </p>
         )}
 
         {preview.rolesPermission && (
-          <div className="rounded-lg border border-white/10 p-4 space-y-2">
-            <h2 className="font-semibold text-white">Roles permission required</h2>
-            <p className="text-pretty text-xs text-gray-500">{preview.rolesPermission.note}</p>
-            <div className="space-y-1 font-mono text-xs text-gray-300">
+          <div className={`${card} space-y-2`}>
+            <h2 className="font-semibold text-cream-50">Roles permission required</h2>
+            <p className="text-pretty text-xs text-cream-400">{preview.rolesPermission.note}</p>
+            <div className="data-mono space-y-1 font-mono text-xs text-cream-300">
               <p>Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})</p>
               <p>Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})</p>
               {preview.rolesPermission.conditions.map((c: any) => (
@@ -148,14 +171,14 @@ export default function CreateStrategyPage() {
               href={preview.rolesPermission.safeAppUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex min-h-11 items-center rounded border border-white/20 px-3 text-xs font-medium text-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
+              className={`inline-flex ${btnSecondary}`}
             >
               Open Zodiac Roles app for this Safe →
             </a>
           </div>
         )}
 
-        {error && <p className="text-pretty text-sm text-red-400">{error}</p>}
+        {error && <p className="text-pretty text-sm text-danger">{error}</p>}
         <div className="flex flex-wrap gap-3">
           <button onClick={activate} disabled={!canActivate} className={btnPrimary}>
             Activate strategy
@@ -164,7 +187,7 @@ export default function CreateStrategyPage() {
             Back
           </button>
         </div>
-        <p className="text-pretty text-xs text-gray-500">
+        <p className="text-pretty text-xs text-cream-500">
           Activating only turns monitoring on — it does not simulate or broadcast anything. Do that from the strategy
           detail page.
         </p>
@@ -174,10 +197,10 @@ export default function CreateStrategyPage() {
 
   return (
     <div className="max-w-lg space-y-5">
-      <h1 className="text-balance text-2xl font-bold text-white">Create exit strategy</h1>
+      <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Create exit strategy</h1>
 
       <div>
-        <label htmlFor="strategy-name" className="mb-1 block text-sm text-gray-400">
+        <label htmlFor="strategy-name" className="mb-1 block text-sm text-cream-300">
           Name
         </label>
         <input
@@ -190,31 +213,31 @@ export default function CreateStrategyPage() {
       </div>
 
       <div>
-        <label className="mb-1 block text-sm text-gray-400">Protocol / market</label>
-        <div className="rounded border border-white/20 px-3 py-2 text-sm text-gray-300">
+        <label className="mb-1 block text-sm text-cream-300">Protocol / market</label>
+        <div className="rounded-lg border border-cream-100/20 px-3 py-2 text-sm text-cream-200">
           Aave v3 on Base — USDC supply (only supported protocol in v1)
         </div>
       </div>
 
       <div>
-        <label className="mb-1 block text-sm text-gray-400">Exit action</label>
-        <div className="space-y-2 rounded border border-white/20 p-3 text-sm">
-          <p className="text-pretty text-gray-300">
+        <label className="mb-1 block text-sm text-cream-300">Exit action</label>
+        <div className="space-y-2 rounded-lg border border-cream-100/20 p-3 text-sm">
+          <p className="text-pretty text-cream-200">
             Withdraw USDC from Aave back to your Safe (<code>withdraw(asset, amount, to)</code>)
           </p>
           <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-1.5 text-xs text-gray-400">
-              <input type="radio" checked={amountMode === "max"} onChange={() => setAmountMode("max")} />
+            <label className="flex items-center gap-1.5 text-xs text-cream-300">
+              <input type="radio" checked={amountMode === "max"} onChange={() => setAmountMode("max")} className="accent-mint-400" />
               Withdraw entire position
             </label>
-            <label className="flex items-center gap-1.5 text-xs text-gray-400">
-              <input type="radio" checked={amountMode === "exact"} onChange={() => setAmountMode("exact")} />
+            <label className="flex items-center gap-1.5 text-xs text-cream-300">
+              <input type="radio" checked={amountMode === "exact"} onChange={() => setAmountMode("exact")} className="accent-mint-400" />
               Exact amount (smallest units)
             </label>
           </div>
           {amountMode === "exact" && (
             <div>
-              <label htmlFor="exact-amount" className="mb-1 block text-xs text-gray-500">
+              <label htmlFor="exact-amount" className="mb-1 block text-xs text-cream-400">
                 Amount (smallest units)
               </label>
               <input
@@ -230,13 +253,13 @@ export default function CreateStrategyPage() {
       </div>
 
       <div>
-        <label className="mb-1 block text-sm text-gray-400">Trigger condition</label>
+        <label className="mb-1 block text-sm text-cream-300">Trigger condition</label>
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-gray-400">Exit when USDC supply APR</span>
+          <span className="text-cream-300">Exit when USDC supply APR</span>
           <select
             value={comparator}
             onChange={(e) => setComparator(e.target.value as any)}
-            className="min-h-11 rounded border border-white/20 bg-ink px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
+            className="min-h-11 rounded-lg border border-cream-100/20 bg-forest-900/60 px-2 text-cream-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-forest-950"
           >
             <option value="lt">is below</option>
             <option value="lte">is at or below</option>
@@ -245,15 +268,15 @@ export default function CreateStrategyPage() {
           </select>
           <input
             aria-label="Threshold percentage"
-            className="min-h-11 w-20 rounded border border-white/20 bg-transparent px-2 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
+            className="min-h-11 w-20 rounded-lg border border-cream-100/20 bg-transparent px-2 tabular-nums text-cream-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-forest-950"
             value={thresholdPct}
             onChange={(e) => setThresholdPct(e.target.value)}
           />
-          <span className="text-gray-400">%</span>
+          <span className="text-cream-300">%</span>
         </div>
       </div>
 
-      {error && <p className="text-pretty text-sm text-red-400">{error}</p>}
+      {error && <p className="text-pretty text-sm text-danger">{error}</p>}
 
       <button onClick={createAndPreview} className={btnPrimary}>
         Preview transaction

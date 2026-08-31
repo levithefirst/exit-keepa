@@ -3,6 +3,20 @@
 @tailwind utilities;
 
 body {
-  background: #0b1120;
-  color: #e5e7eb;
+  background: theme("colors.forest.950");
+  color: theme("colors.cream.100");
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+.data-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Native <details> chevron: rotates open, no JS required. */
+.faq-chevron {
+  transition: transform 0.15s ease;
+}
+details[open] .faq-chevron {
+  transform: rotate(180deg);
 }

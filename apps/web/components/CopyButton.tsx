@@ -21,7 +21,7 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
     <button
       type="button"
       onClick={handleCopy}
-      className={`inline-flex min-h-11 items-center px-2 text-xs text-gray-500 hover:text-gray-200 ${linkFocus}`}
+      className={`inline-flex min-h-11 items-center px-2 text-xs text-cream-400 hover:text-cream-100 ${linkFocus}`}
       aria-label={`${label} to clipboard`}
     >
       {copied ? "Copied" : label}

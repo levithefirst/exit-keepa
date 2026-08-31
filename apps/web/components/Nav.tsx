@@ -1,64 +1,163 @@
 "use client";
 
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useWallet } from "../lib/wallet";
-import { btnPrimarySmall, linkFocus } from "../lib/ui";
+import { btnPrimarySmall, btnGhost, linkFocus } from "../lib/ui";
 
 function short(addr: string) {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+const NAV_LINKS = [
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/create", label: "Create strategy" },
+];
+
+function Logo() {
+  return (
+    <Link href="/" className={`flex shrink-0 items-center gap-2 ${linkFocus}`}>
+      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-mint-400 font-display text-sm font-bold text-forest-950">
+        EK
+      </span>
+      <span className="font-display text-lg font-bold tracking-tight text-cream-50">Exit Keepa</span>
+    </Link>
+  );
 }
 
 export function Nav() {
   const { address, connecting, error, connect, disconnect, chainId, switchToBase, isDemo, enterDemoMode } =
     useWallet();
+  const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuId = useId();
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Close on Escape, and auto-close if the viewport grows past the
+  // mobile breakpoint while the panel happens to be open.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setMenuOpen(false);
+        menuButtonRef.current?.focus();
+      }
+    }
+    function onResize() {
+      if (window.innerWidth >= 768) setMenuOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
+
+  function closeMenu() {
+    setMenuOpen(false);
+  }
+
+  const walletControls = address ? (
+    <div className="flex flex-wrap items-center gap-2">
+      {!isDemo && chainId !== 8453 && (
+        <button
+          onClick={switchToBase}
+          className={`min-h-11 rounded-lg bg-warning/15 px-2 text-xs text-warning ${linkFocus}`}
+        >
+          Wrong network — switch to Base
+        </button>
+      )}
+      {isDemo ? (
+        <span className="rounded-lg bg-warning/15 px-3 py-1 text-xs text-warning">Demo mode</span>
+      ) : (
+        <span className="data-mono rounded-lg bg-forest-700 px-3 py-1 font-mono text-xs text-cream-200">
+          {short(address)}
+        </span>
+      )}
+      <button onClick={disconnect} className={`min-h-11 px-1 text-xs text-cream-300 hover:text-cream-50 ${linkFocus}`}>
+        {isDemo ? "Exit demo" : "Disconnect"}
+      </button>
+    </div>
+  ) : (
+    <div className="flex flex-wrap items-center gap-2">
+      <button onClick={enterDemoMode} className={btnGhost}>
+        Try demo
+      </button>
+      <button onClick={connect} disabled={connecting} className={btnPrimarySmall}>
+        {connecting ? "Connecting…" : "Connect wallet"}
+      </button>
+    </div>
+  );
 
   return (
-    <nav className="border-b border-white/10">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-6 py-4">
-        <Link href="/" className={`shrink-0 font-semibold text-white ${linkFocus}`}>
-          Exit Keepa
-        </Link>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-          <Link href="/dashboard" className={`text-gray-300 hover:text-white ${linkFocus}`}>
-            Dashboard
-          </Link>
-          <Link href="/create" className={`text-gray-300 hover:text-white ${linkFocus}`}>
-            Create strategy
-          </Link>
-          {address ? (
-            <div className="flex flex-wrap items-center gap-2">
-              {!isDemo && chainId !== 8453 && (
-                <button
-                  onClick={switchToBase}
-                  className={`min-h-11 rounded bg-yellow-600/20 px-2 text-xs text-yellow-300 ${linkFocus}`}
-                >
-                  Wrong network — switch to Base
-                </button>
-              )}
-              {isDemo ? (
-                <span className="rounded bg-yellow-600/20 px-3 py-1 text-xs text-yellow-300">Demo mode</span>
-              ) : (
-                <span className="rounded bg-white/10 px-3 py-1 font-mono text-xs tabular-nums">
-                  {short(address)}
-                </span>
-              )}
-              <button onClick={disconnect} className={`min-h-11 px-1 text-xs text-gray-400 hover:text-white ${linkFocus}`}>
-                {isDemo ? "Exit demo" : "Disconnect"}
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <button onClick={connect} disabled={connecting} className={btnPrimarySmall}>
-                {connecting ? "Connecting..." : "Connect wallet"}
-              </button>
-              <button onClick={enterDemoMode} className={`min-h-11 px-1 text-xs text-gray-400 underline hover:text-white ${linkFocus}`}>
-                Try demo mode
-              </button>
-            </div>
-          )}
+    <nav className="sticky top-0 z-40 border-b border-cream-100/10 bg-forest-900/90 backdrop-blur">
+      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3.5">
+        <Logo />
+
+        {/* Desktop nav */}
+        <div className="hidden items-center gap-6 text-sm md:flex">
+          {NAV_LINKS.map((link) => {
+            const isActive = pathname === link.href;
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`${linkFocus} ${isActive ? "text-mint-400" : "text-cream-200 hover:text-mint-300"}`}
+              >
+                {link.label}
+              </Link>
+            );
+          })}
         </div>
+
+        <div className="hidden md:block">{walletControls}</div>
+
+        {/* Mobile hamburger */}
+        <button
+          ref={menuButtonRef}
+          type="button"
+          className={`flex h-11 w-11 items-center justify-center rounded-lg text-cream-100 md:hidden ${linkFocus}`}
+          aria-expanded={menuOpen}
+          aria-controls={menuId}
+          aria-label={menuOpen ? "Close menu" : "Open menu"}
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
+            {menuOpen ? (
+              <path strokeLinecap="round" d="M6 6l12 12M6 18L18 6" />
+            ) : (
+              <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
+            )}
+          </svg>
+        </button>
       </div>
-      {error && <p className="mx-auto max-w-5xl px-6 pb-2 text-xs text-red-400 text-pretty">{error}</p>}
+
+      {/* Mobile panel */}
+      {menuOpen && (
+        <div id={menuId} className="border-t border-cream-100/10 bg-forest-900 px-6 py-4 md:hidden">
+          <div className="flex flex-col gap-1">
+            {NAV_LINKS.map((link) => {
+              const isActive = pathname === link.href;
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={closeMenu}
+                  className={`min-h-11 rounded-lg px-2 py-2.5 text-sm ${linkFocus} ${
+                    isActive ? "bg-mint-400/10 text-mint-400" : "text-cream-200 hover:bg-cream-100/5"
+                  }`}
+                >
+                  {link.label}
+                </Link>
+              );
+            })}
+          </div>
+          <div className="mt-3 border-t border-cream-100/10 pt-3">{walletControls}</div>
+        </div>
+      )}
+
+      {error && <p className="mx-auto max-w-5xl px-6 pb-2 text-xs text-pretty text-danger">{error}</p>}
     </nav>
   );
 }
