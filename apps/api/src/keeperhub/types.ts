@@ -53,6 +53,7 @@ export interface KeeperHubChain {
   chainId: number;
   name: string;
   symbol: string;
+  // eslint-disable-next-line @typescript-eslint/ban-types -- `string & {}` is the standard TS idiom for "known literals, but any string is still allowed" (keeps autocomplete without narrowing the type)
   chainType: "evm" | "solana" | (string & {});
   explorerUrl: string;
   explorerAddressPath: string;

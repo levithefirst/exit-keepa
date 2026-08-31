@@ -20,6 +20,7 @@ export interface BuiltTransaction {
 
 export interface SafeForExecution {
   safeAddress: string;
+  chainId: number;
   rolesModifierAddress: string | null;
   rolesKey: string | null;
 }
@@ -35,6 +36,19 @@ export interface SafeForExecution {
  * buggy frontend from ever steering an arbitrary call through the Safe.
  */
 export function buildExitTransaction(action: ExitAction, safe: SafeForExecution): BuiltTransaction {
+  // Every constant below (Aave Pool address, USDC address) is Base-only.
+  // A Safe registered under any other chainId (e.g. a copy-pasted
+  // Ethereum mainnet chainId with the same safeAddress) must never reach
+  // KeeperHub with a Base-targeted transaction built for a chain it
+  // never validated - fail closed here, not silently on whatever chain
+  // that address happens to resolve to.
+  if (safe.chainId !== AAVE_V3_BASE.chainId) {
+    throw new HttpError(
+      409,
+      `Safe is registered on chainId ${safe.chainId}, but Exit Keepa v1 only supports Base (chainId ${AAVE_V3_BASE.chainId})`,
+    );
+  }
+
   if (!safe.rolesModifierAddress || !safe.rolesKey) {
     throw new HttpError(409, "Safe has no Roles Modifier / role key configured yet");
   }

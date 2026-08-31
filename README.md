@@ -7,15 +7,13 @@ through your own Safe — without ever holding your keys.
 > "If the monitored rate crosses my threshold, withdraw my position back
 > to my Safe."
 
-**Live demo:** the API is live at
-`https://api-production-2e11.up.railway.app`. The frontend
-(`apps/web`) isn't deployed from this environment — Vercel blocks this
-environment's integration with `409`/`403` on the existing project, see
-[`docs/VERCEL_DEPLOY.md`](docs/VERCEL_DEPLOY.md) for the exact manual
-deploy steps — so in the meantime, run it locally in a couple of minutes
-(see [Local setup](#local-setup)) and use its "Try demo mode" button to
-explore the full flow, including the pre-filled live demo Safe, without
-a wallet extension.
+**Live demo:** [`https://exit-keepa-web.vercel.app`](https://exit-keepa-web.vercel.app) —
+the full app, live. API: `https://api-production-2e11.up.railway.app`.
+Click **"Try demo mode"** in the nav bar to explore the full flow,
+including the pre-filled live demo Safe, without a wallet extension —
+see [Known limitations](#known-limitations) for what demo mode does and
+does not do. See [`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md) for an exact,
+timed click-through.
 
 **Hackathon judges:** see [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for
 the pitch, live evidence (on-chain Roles config + a real simulation
@@ -226,11 +224,13 @@ npm run test --workspace apps/api
 npm run test --workspace packages/shared
 ```
 
-64 tests total: calldata correctness (against independently-computed hex
+70 tests total: chain-boundary enforcement (rejecting a Safe registered on any chain other than Base before building a Base-targeted transaction), calldata correctness (against independently-computed hex
 fixtures, not the encoder checking itself), condition-comparator logic,
 execution state-transition/idempotency rules, KeeperHub response parsing
-(including refusing to trust a malformed hash), and an end-to-end test
-(`apps/api/test/e2e.test.ts`) that walks create strategy → activate →
+(including refusing to trust a malformed hash, and distinguishing a
+confirmed KeeperHub rejection from an ambiguous network/timeout failure
+where the broadcast outcome is unknown), and end-to-end tests
+(`apps/api/test/e2e.test.ts`) that walk create strategy → activate →
 condition check → simulate → broadcast → duplicate-broadcast rejection →
 recorded transaction hash, against an in-memory fake of the database and
 a mocked KeeperHub client.
@@ -298,15 +298,16 @@ for the full research trail.
 - Start: `npm run start --workspace apps/api`
 - Health check: `/health`
 
-**Frontend (Vercel) — not deployed from this environment:**
+**Frontend (Vercel) — live:**
 
-A project named `exit-keepa-web` already exists, but this environment's
-connected Vercel integration gets `409 Conflict` on create and
-`403 Forbidden` on every read/list against it — an account/token
-permission restriction, not a bug in the app (it builds and typechecks
-cleanly, verified repeatedly, see below). See
-[`docs/VERCEL_DEPLOY.md`](docs/VERCEL_DEPLOY.md) for the exact manual
-steps and post-deploy verification checklist.
+- Project: `exit-keepa-web`, tracking branch `claude/exit-keepa-init-v5lzuy`
+- URL: `https://exit-keepa-web.vercel.app`
+- Root Directory: `apps/web`; Install Command runs the real monorepo
+  `npm install`, Build Command runs `npm run build:web` — see
+  [`docs/VERCEL_DEPLOY.md`](docs/VERCEL_DEPLOY.md) for the exact
+  settings and the two build-breaking misconfigurations that were fixed
+  to get here (Root Directory, and the real `npm install` needing to run
+  as the Install Command rather than buried inside the Build Command).
 
 **Database (Neon):** already provisioned; migrations run automatically on
 every Railway deploy via the pre-deploy command above.
@@ -331,5 +332,12 @@ every Railway deploy via the pre-deploy command above.
   being hand-encoded here.
 - **Single protocol/action only.** By design for v1 — see "What it
   actually does" above.
+- **No per-user authentication or ownership boundary.** Any caller who
+  knows (or enumerates) a Safe/strategy/execution ID can read or act on
+  it — there is no session, no login, no concept of "this strategy
+  belongs to this wallet" enforced server-side. This is deliberate scope
+  for a v1 demo built around a single Safe's identity rather than a
+  multi-tenant product, not an oversight; adding real auth is the
+  natural next step before this could hold third-party funds at scale.
 - **Frontend deploy is a manual step** for the reason described in
   Deployment above.

@@ -10,6 +10,26 @@ import type {
 } from "./types";
 
 /**
+ * Thrown when KeeperHub itself responded with a non-2xx status - i.e. the
+ * request definitely reached KeeperHub and it definitely rejected it.
+ * Distinct from a network/timeout failure (plain fetch throw, no HTTP
+ * response at all), where whether KeeperHub received and acted on the
+ * request is unknown. Callers that need to tell "confirmed rejection"
+ * apart from "ambiguous, outcome unconfirmed" - see
+ * execution/executor.ts and routes/executions.ts - must check
+ * `instanceof KeeperHubApiError` rather than parsing the error message.
+ */
+export class KeeperHubApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly body: string,
+  ) {
+    super(`KeeperHub API error ${status}: ${body}`);
+    this.name = "KeeperHubApiError";
+  }
+}
+
+/**
  * Thin client for KeeperHub's REST API (https://docs.keeperhub.com/api).
  *
  * IMPORTANT - scope of what's implemented:
@@ -71,7 +91,7 @@ export class KeeperHubClient {
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       logger.error({ url, status: response.status, body }, "KeeperHub API request failed");
-      throw new Error(`KeeperHub API error ${response.status}: ${body}`);
+      throw new KeeperHubApiError(response.status, body);
     }
 
     return (await response.json()) as T;
@@ -189,7 +209,7 @@ export class KeeperHubClient {
         response.status === 400 && body !== null && typeof body === "object" && "wouldRevert" in body;
       if (!isSimulatedRevertResult) {
         logger.error({ url, status: response.status, body: text }, "KeeperHub API request failed");
-        throw new Error(`KeeperHub API error ${response.status}: ${text}`);
+        throw new KeeperHubApiError(response.status, text);
       }
     }
 

@@ -36,13 +36,7 @@ Rate condition  →  Exit Keepa (API + DB)  →  KeeperHub  →  Zodiac Roles Mo
 ## Live deployment
 
 - **API (live):** https://api-production-2e11.up.railway.app
-- **Frontend:** pending manual Vercel deploy — this environment's
-  connected Vercel integration gets `409 Conflict`/`403 Forbidden` against
-  the existing `exit-keepa-web` project (an account/token permission
-  restriction, not an app bug — `apps/web` builds and typechecks cleanly).
-  See [`VERCEL_DEPLOY.md`](VERCEL_DEPLOY.md) for the exact manual steps.
-  In the meantime, run it locally (see the main [README](../README.md#local-setup))
-  and use "Try demo mode" to explore the full flow without a wallet.
+- **Frontend (live):** https://exit-keepa-web.vercel.app
 - **Safe:** `0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9`
 - **Roles Modifier:** `0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE`
 - **Role key (`exit_keepa`):** `0x657869745f6b6565706100000000000000000000000000000000000000000000`
@@ -112,12 +106,12 @@ whether the withdraw happened; this fix makes the app agree with it.
   Safe being used. That's true for the demo Safe above (hence the real
   broadcast); a different Safe without one will correctly simulate to a
   revert and never reach broadcast.
-- **Frontend deployment** is a manual Vercel step — see above.
 
 ## Judge path (under 5 minutes)
 
-1. Open the web app (deployed URL once live, or `npm run dev:web` locally
-   against the live API) → click **"Try demo mode"** (no wallet needed).
+See [`JUDGE_DEMO.md`](JUDGE_DEMO.md) for the exact click-by-click version.
+
+1. Open https://exit-keepa-web.vercel.app → click **"Try demo mode"** (no wallet needed).
 2. **Dashboard** → click **"Fill in the live demo Safe"** to pre-fill the
    real Safe/Roles Modifier/role key above → **Save Safe**.
 3. **Create Strategy** → pick a trigger condition → **Preview** shows the
