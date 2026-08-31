@@ -23,11 +23,7 @@ async function rpc(method: string, params: unknown[]): Promise<string> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
-
-  if (!response.ok) {
-    throw new Error(`Base RPC returned HTTP ${response.status}`);
-  }
-
+  if (!response.ok) throw new Error(`Base RPC returned HTTP ${response.status}`);
   const body = (await response.json()) as { result?: string; error?: { message?: string } };
   if (body.error) throw new Error(body.error.message ?? "Base RPC call failed");
   if (!body.result || body.result === "0x") throw new Error("Aave rate read returned no data");
@@ -42,6 +38,15 @@ function word(data: string, index: number): bigint {
   return BigInt(`0x${value}`);
 }
 
+export function decodeAaveRateBps(data: string, metric: AaveRateMetric): { rateRay: bigint; rateBps: number } {
+  const hexLength = data.startsWith("0x") ? data.length - 2 : data.length;
+  if (hexLength < 15 * 64) throw new Error(`Unexpected Aave reserve response length: ${hexLength / 2} bytes`);
+  const rateRay = metric === "supply_apr" ? word(data, 2) : word(data, 4);
+  const rateBps = (rateRay * BPS) / RAY;
+  if (rateBps > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Aave rate is outside the supported numeric range");
+  return { rateRay, rateBps: Number(rateBps) };
+}
+
 /**
  * Reads Aave V3's verified getReserveData(address) view directly from the
  * deployed Base Pool. Aave keeps this getter backwards-compatible via
@@ -53,25 +58,15 @@ export async function readAaveUsdcRate(metric: AaveRateMetric): Promise<AaveRate
   const asset = AAVE_V3_BASE.usdc;
   const calldata = `${GET_RESERVE_DATA_SELECTOR}${asset.slice(2).toLowerCase().padStart(64, "0")}`;
   const result = await rpc("eth_call", [{ to: AAVE_V3_BASE.pool, data: calldata }, "latest"]);
-
-  const hexLength = result.startsWith("0x") ? result.length - 2 : result.length;
-  if (hexLength < 15 * 64) {
-    throw new Error(`Unexpected Aave reserve response length: ${hexLength / 2} bytes`);
-  }
-
-  const rateRay = metric === "supply_apr" ? word(result, 2) : word(result, 4);
-  const rateBpsBigInt = (rateRay * BPS) / RAY;
-  if (rateBpsBigInt > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error("Aave rate is outside the supported numeric range");
-  }
+  const decoded = decodeAaveRateBps(result, metric);
 
   return {
     chainId: 8453,
     blockTag: "latest",
     asset,
     metric,
-    rateBps: Number(rateBpsBigInt),
-    rateRay: rateRay.toString(),
+    rateBps: decoded.rateBps,
+    rateRay: decoded.rateRay.toString(),
     observedAt: new Date().toISOString(),
   };
 }
