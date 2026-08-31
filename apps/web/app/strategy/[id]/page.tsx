@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
-import { btnPrimary, btnPrimarySmall, btnSecondarySmall, btnDanger, inputBase, card } from "../../../lib/ui";
+import { btnPrimary, btnPrimarySmall, btnSecondarySmall, btnDanger, card } from "../../../lib/ui";
 import { StatusPill } from "../../../components/StatusPill";
 import { CopyButton } from "../../../components/CopyButton";
 
@@ -26,12 +26,9 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   const [strategy, setStrategy] = useState<any>(null);
   const [preview, setPreview] = useState<any>(null);
   const [executions, setExecutions] = useState<any[]>([]);
-  const [currentRateBps, setCurrentRateBps] = useState("150");
+  const [agentResult, setAgentResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // The one truly irreversible action (a real broadcast) gets a two-step
-  // confirm instead of firing on the first click - everything else stays
-  // single-click.
   const [armedExecutionId, setArmedExecutionId] = useState<string | null>(null);
 
   async function refresh() {
@@ -53,11 +50,12 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   if (error && !strategy) return <p className="text-pretty text-sm text-danger">{error}</p>;
   if (!strategy) return <DetailSkeleton />;
 
-  async function createExecution() {
+  async function runGuardian() {
     setBusy(true);
     setError(null);
     try {
-      await api.createExecution(id, Number(currentRateBps));
+      const result = await api.evaluateAgent(id);
+      setAgentResult(result);
       await refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -110,13 +108,64 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
         </p>
       </div>
 
+      <section className="rounded-xl border border-mint-400/30 bg-mint-400/5 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-mint-300">Exit Guardian</p>
+            <h2 className="mt-1 font-display text-lg font-semibold text-cream-50">Observe → decide → prove</h2>
+            <p className="mt-1 max-w-xl text-pretty text-sm text-cream-300">
+              The deterministic agent reads the live Aave V3 Base rate, checks your exact strategy and permission boundary,
+              then returns an auditable approval or refusal. It cannot bypass the simulation gate.
+            </p>
+          </div>
+          <button onClick={runGuardian} disabled={busy || strategy.status !== "active"} className={btnPrimary}>
+            {busy ? "Checking live state..." : "Run Exit Guardian"}
+          </button>
+        </div>
+
+        {agentResult && (
+          <div className="mt-5 space-y-4 rounded-xl border border-cream-100/10 bg-forest-950/50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium text-cream-100">Agent decision</span>
+              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${agentResult.decisionReceipt.decision === "approved" ? "bg-mint-400/15 text-mint-300" : "bg-danger/15 text-danger"}`}>
+                {agentResult.decisionReceipt.decision.toUpperCase()}
+              </span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <p className="text-xs text-cream-400">Observed rate</p>
+                <p className="mt-1 font-mono text-sm tabular-nums text-cream-100">
+                  {(agentResult.decisionReceipt.observation.rateBps / 100).toFixed(2)}%
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-cream-400">Condition</p>
+                <p className="mt-1 text-sm text-cream-100">{agentResult.decisionReceipt.conditionMet ? "Satisfied" : "Not satisfied"}</p>
+              </div>
+            </div>
+            {agentResult.refusalReasons?.length > 0 && (
+              <div className="rounded-lg border border-danger/20 bg-danger/5 p-3 text-xs text-danger">
+                {agentResult.refusalReasons.map((reason: string) => <p key={reason}>{reason}</p>)}
+              </div>
+            )}
+            <details>
+              <summary className="cursor-pointer text-xs font-medium text-cream-300">Inspect decision receipt</summary>
+              <div className="mt-3 space-y-2 font-mono text-[11px] text-cream-400">
+                <p className="break-all">Intent hash: {agentResult.decisionReceipt.intentHash}</p>
+                <p className="break-all">Receipt hash: {agentResult.receiptHash}</p>
+                <p>Policy: {Object.entries(agentResult.decisionReceipt.policy).filter(([, ok]) => ok).length}/{Object.keys(agentResult.decisionReceipt.policy).length} checks passed</p>
+                <p>Execution: {agentResult.decisionReceipt.executionPath}</p>
+              </div>
+            </details>
+          </div>
+        )}
+      </section>
+
       {preview?.tx && (
         <details className="group rounded-xl border border-cream-100/10 p-4">
-          <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-cream-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
+          <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-cream-100">
             Configured transaction (technical details)
-            <svg className="faq-chevron h-4 w-4 text-mint-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
-            </svg>
+            <span className="text-mint-400">⌄</span>
           </summary>
           <div className="data-mono mt-3 space-y-1 font-mono text-xs text-cream-300">
             <p>Target contract: {preview.tx.to}</p>
@@ -134,24 +183,11 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
           {preview.rolesPermission && (
             <>
               <div className="data-mono space-y-1 font-mono text-xs text-cream-300">
-                <p>
-                  Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})
-                </p>
-                <p>
-                  Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})
-                </p>
-                {preview.rolesPermission.conditions.map((c: any) => (
-                  <p key={c.param}>
-                    · {c.param} ({c.type}): {c.rule}
-                  </p>
-                ))}
+                <p>Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})</p>
+                <p>Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})</p>
+                {preview.rolesPermission.conditions.map((c: any) => <p key={c.param}>· {c.param} ({c.type}): {c.rule}</p>)}
               </div>
-              <a
-                href={preview.rolesPermission.safeAppUrl}
-                target="_blank"
-                rel="noreferrer"
-                className={`inline-flex ${btnSecondarySmall}`}
-              >
+              <a href={preview.rolesPermission.safeAppUrl} target="_blank" rel="noreferrer" className={`inline-flex ${btnSecondarySmall}`}>
                 Open Zodiac Roles app for this Safe →
               </a>
             </>
@@ -159,40 +195,12 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
         </div>
       )}
 
-      <div className={`${card} space-y-3`}>
-        <h2 className="font-semibold text-cream-50">Manual trigger (demo)</h2>
-        <p className="text-pretty text-xs text-cream-400">
-          Exit Keepa v1 doesn&apos;t yet run a live on-chain rate oracle (see README limitations) — enter the current rate
-          to check against the condition, exactly as a real monitor would.
-        </p>
-        <div className="flex flex-wrap items-end gap-2">
-          <div>
-            <label htmlFor="current-rate" className="mb-1 block text-sm text-cream-300">
-              Current supply APR (bps)
-            </label>
-            <input
-              id="current-rate"
-              className={`${inputBase} w-28 tabular-nums`}
-              value={currentRateBps}
-              onChange={(e) => setCurrentRateBps(e.target.value)}
-            />
-          </div>
-          <button onClick={createExecution} disabled={busy || strategy.status !== "active"} className={btnPrimary}>
-            Check &amp; create execution
-          </button>
-        </div>
-        {strategy.status !== "active" && (
-          <p className="text-pretty text-xs text-warning">Activate the strategy from Create Strategy before executing.</p>
-        )}
-      </div>
-
       {error && <p className="text-pretty text-sm text-danger">{error}</p>}
 
       <div>
         <h2 className="mb-3 font-semibold text-cream-50">Execution history</h2>
         <p className="mb-3 text-pretty text-xs text-cream-400">
-          Simulated means checked, not broadcast. Confirmed onchain is the only status backed by a real transaction —
-          verify any of them directly on BaseScan.
+          A Guardian approval is a decision, not a broadcast. Simulation must still pass before a real transaction can execute.
         </p>
         {executions.length === 0 && <p className="text-pretty text-sm text-cream-400">No executions yet.</p>}
         <div className="space-y-3">
@@ -205,39 +213,20 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
               {e.errorMessage && <p className="mt-1 text-pretty text-xs text-danger">{e.errorMessage}</p>}
               {e.txHash && (
                 <div className="mt-2 flex items-center gap-1 rounded-lg bg-forest-950/60 px-3 py-2">
-                  <a
-                    href={`${BASESCAN}/tx/${e.txHash}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block break-all font-mono text-xs text-mint-300 underline hover:text-mint-200"
-                  >
+                  <a href={`${BASESCAN}/tx/${e.txHash}`} target="_blank" rel="noreferrer" className="block break-all font-mono text-xs text-mint-300 underline hover:text-mint-200">
                     {e.txHash}
                   </a>
                   <CopyButton value={e.txHash} label="Copy tx hash" />
                 </div>
               )}
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                {e.status === "pending" && (
-                  <button onClick={() => simulate(e.id)} disabled={busy} className={btnSecondarySmall}>
-                    Simulate
-                  </button>
-                )}
-                {e.status === "simulated" && armedExecutionId !== e.id && (
-                  <button onClick={() => setArmedExecutionId(e.id)} disabled={busy} className={btnPrimarySmall}>
-                    Execute (broadcast)
-                  </button>
-                )}
+                {e.status === "pending" && <button onClick={() => simulate(e.id)} disabled={busy} className={btnSecondarySmall}>Simulate</button>}
+                {e.status === "simulated" && armedExecutionId !== e.id && <button onClick={() => setArmedExecutionId(e.id)} disabled={busy} className={btnPrimarySmall}>Execute (broadcast)</button>}
                 {e.status === "simulated" && armedExecutionId === e.id && (
                   <>
-                    <span className="text-pretty text-xs text-danger">
-                      This sends a real, irreversible transaction. Confirm?
-                    </span>
-                    <button onClick={() => broadcast(e.id)} disabled={busy} className={btnDanger}>
-                      Confirm broadcast
-                    </button>
-                    <button onClick={() => setArmedExecutionId(null)} disabled={busy} className={btnSecondarySmall}>
-                      Cancel
-                    </button>
+                    <span className="text-pretty text-xs text-danger">This sends a real, irreversible transaction. Confirm?</span>
+                    <button onClick={() => broadcast(e.id)} disabled={busy} className={btnDanger}>Confirm broadcast</button>
+                    <button onClick={() => setArmedExecutionId(null)} disabled={busy} className={btnSecondarySmall}>Cancel</button>
                   </>
                 )}
               </div>
