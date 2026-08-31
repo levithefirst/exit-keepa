@@ -4,6 +4,7 @@ import { buildExitTransaction, type SafeForExecution } from "./buildTransaction"
 
 const SAFE: SafeForExecution = {
   safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
+  chainId: AAVE_V3_BASE.chainId,
   rolesModifierAddress: "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE",
   rolesKey: "0x657869745f6b6565706100000000000000000000000000000000000000000000",
 };
@@ -37,5 +38,12 @@ describe("buildExitTransaction", () => {
     expect(() =>
       buildExitTransaction({ protocol: "aave-v3-base", action: "withdraw", asset: AAVE_V3_BASE.usdc, amount: "max" }, noKey),
     ).toThrow(/role key/);
+  });
+
+  it("fails closed for a Safe registered on any chain other than Base - never builds a Base-targeted tx for the wrong chain", () => {
+    const wrongChain: SafeForExecution = { ...SAFE, chainId: 1 }; // Ethereum mainnet
+    expect(() =>
+      buildExitTransaction({ protocol: "aave-v3-base", action: "withdraw", asset: AAVE_V3_BASE.usdc, amount: "max" }, wrongChain),
+    ).toThrow(/chainId 1.*Base \(chainId 8453\)/s);
   });
 });

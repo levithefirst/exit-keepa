@@ -9,6 +9,7 @@ import { HttpError } from "../middleware/errorHandler";
 import { logger } from "../logger";
 import { buildExitTransaction } from "../execution/buildTransaction";
 import { broadcastExitTransaction, simulateExitTransaction } from "../execution/executor";
+import { KeeperHubApiError } from "../keeperhub/client";
 import { evaluateRateCondition } from "../execution/evaluateCondition";
 import { decideBroadcast } from "../execution/stateMachine";
 
@@ -235,12 +236,37 @@ executionsRouter.post("/exit-strategies/:id/executions/:executionId/broadcast", 
 
     res.status(200).json(updated);
   } catch (err) {
+    // A confirmed rejection (KeeperHubApiError - the request reached
+    // KeeperHub and it explicitly said no) is reported as a plain
+    // failure. Anything else - a network error, timeout, or other
+    // exception with no HTTP response at all - means we genuinely do not
+    // know whether KeeperHub received and broadcast this transaction.
+    // The row is still marked `failed` (there is no "unknown" status,
+    // and `decideBroadcast` must never let a `failed` row be retried
+    // through this same execution automatically), but the message makes
+    // the ambiguity explicit so a human checks the chain before assuming
+    // nothing happened and creating a fresh execution.
+    const confirmed = err instanceof KeeperHubApiError;
+    const errorMessage = confirmed
+      ? (err as Error).message
+      : `Broadcast outcome could not be confirmed - KeeperHub may or may not have received this request. ` +
+        `Verify on BaseScan / the Safe's transaction history for Roles Modifier ${tx.rolesModifierAddress} ` +
+        `before creating a new execution for this strategy. Underlying error: ${(err as Error).message}`;
+
     const [failed] = await db
       .update(keeperhubExecutions)
-      .set({ status: "failed", errorMessage: (err as Error).message, updatedAt: new Date() })
+      .set({ status: "failed", errorMessage, updatedAt: new Date() })
       .where(eq(keeperhubExecutions.id, execution.id))
       .returning();
-    logger.error({ err, executionId: execution.id }, "KeeperHub broadcast call failed");
+
+    await db.insert(auditEvents).values({
+      entityType: "keeperhub_execution",
+      entityId: execution.id,
+      eventType: confirmed ? "execution.broadcast_rejected" : "execution.broadcast_ambiguous",
+      payload: { message: errorMessage },
+    });
+
+    logger.error({ err, executionId: execution.id, confirmed }, "KeeperHub broadcast call failed");
     res.status(502).json(failed);
   }
 });

@@ -314,6 +314,28 @@ describe("KeeperHubClient", () => {
           client.callContractFunction({ contractAddress: "", chainId: 8453, functionName: "x" }),
         ).rejects.toThrow(/400/);
       });
+
+      it("throws a KeeperHubApiError (not a plain Error) carrying the status and body", async () => {
+        mockFetchOnce(400, { error: "Missing required field", field: "contractAddress", details: "x" });
+        await expect(
+          client.callContractFunction({ contractAddress: "", chainId: 8453, functionName: "x" }),
+        ).rejects.toMatchObject({ name: "KeeperHubApiError", status: 400 });
+      });
+    });
+  });
+
+  describe("error classification", () => {
+    it("a confirmed non-2xx response throws KeeperHubApiError, distinguishable from a network failure", async () => {
+      mockFetchOnce(500, { error: "internal" });
+      await expect(client.listChains()).rejects.toMatchObject({ name: "KeeperHubApiError", status: 500 });
+    });
+
+    it("a network-level failure (no HTTP response at all) throws a plain error, not KeeperHubApiError", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockRejectedValue(new TypeError("fetch failed")),
+      );
+      await expect(client.listChains()).rejects.not.toMatchObject({ name: "KeeperHubApiError" });
     });
   });
 });

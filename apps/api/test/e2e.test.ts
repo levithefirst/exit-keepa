@@ -2,6 +2,7 @@ import "./setup";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import request from "supertest";
 import { createFakeDb, eq, and } from "./fakeDb";
+import { KeeperHubApiError } from "../src/keeperhub/client";
 
 const fakeDb = createFakeDb();
 
@@ -11,10 +12,14 @@ vi.mock("drizzle-orm", async (importOriginal) => {
   return { ...actual, eq, and };
 });
 
-const callContractFunction = vi.fn();
-vi.mock("../src/keeperhub/client", () => ({
-  keeperHubClient: { callContractFunction },
-}));
+const { callContractFunction } = vi.hoisted(() => ({ callContractFunction: vi.fn() }));
+vi.mock("../src/keeperhub/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/keeperhub/client")>();
+  return {
+    ...actual,
+    keeperHubClient: { callContractFunction },
+  };
+});
 
 // Imported after the mocks above so every route picks up the fakes.
 const { createApp } = await import("../src/app");
@@ -157,6 +162,92 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     );
     expect(broadcastRes.status).toBe(409);
     expect(callContractFunction).toHaveBeenCalledTimes(1); // simulate only, never broadcast
+  });
+
+  it("distinguishes a confirmed KeeperHub rejection from an ambiguous network failure on broadcast, and never lets either be retried through the same execution", async () => {
+    const safeRes = await request(app)
+      .post("/api/safe-accounts")
+      .send({
+        chainId: 8453,
+        safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
+        rolesModifierAddress: "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE",
+        rolesKey: "0x657869745f6b6565706100000000000000000000000000000000000000000000",
+      });
+    const strategyRes = await request(app)
+      .post("/api/exit-strategies")
+      .send({
+        safeId: safeRes.body.id,
+        name: "Ambiguous-broadcast-failure strategy",
+        condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
+        action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "max" },
+      });
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`);
+    const execRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .send({ currentRateBps: 100 });
+
+    callContractFunction.mockResolvedValueOnce({ success: true, status: "simulated", wouldRevert: false });
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/simulate`);
+
+    // Broadcast fails with a network-level error - no HTTP response was
+    // ever received, so whether KeeperHub actually processed it is
+    // unknown. The row must still be marked failed (no silent success),
+    // but the message must say the outcome is unconfirmed rather than
+    // flatly "failed" as if nothing happened.
+    callContractFunction.mockRejectedValueOnce(new TypeError("fetch failed"));
+    const ambiguousRes = await request(app).post(
+      `/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`,
+    );
+    expect(ambiguousRes.status).toBe(502);
+    expect(ambiguousRes.body.status).toBe("failed");
+    expect(ambiguousRes.body.errorMessage).toMatch(/could not be confirmed/i);
+    expect(ambiguousRes.body.txHash).toBeFalsy(); // no hash was ever set - null in production Postgres, undefined in this in-memory fake
+
+    // Whatever the ambiguity, a `failed` row must never be silently
+    // retried through the same execution - the state machine only
+    // proceeds from `simulated`.
+    const retryRes = await request(app).post(
+      `/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`,
+    );
+    expect(retryRes.status).toBe(409);
+    expect(callContractFunction).toHaveBeenCalledTimes(2); // simulate + the one ambiguous broadcast attempt, never a third
+  });
+
+  it("reports a confirmed KeeperHub rejection plainly, without the ambiguous-outcome wording", async () => {
+    const safeRes = await request(app)
+      .post("/api/safe-accounts")
+      .send({
+        chainId: 8453,
+        safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
+        rolesModifierAddress: "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE",
+        rolesKey: "0x657869745f6b6565706100000000000000000000000000000000000000000000",
+      });
+    const strategyRes = await request(app)
+      .post("/api/exit-strategies")
+      .send({
+        safeId: safeRes.body.id,
+        name: "Confirmed-rejection strategy",
+        condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
+        action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "max" },
+      });
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`);
+    const execRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .send({ currentRateBps: 100 });
+
+    callContractFunction.mockResolvedValueOnce({ success: true, status: "simulated", wouldRevert: false });
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/simulate`);
+
+    // KeeperHub itself responded with a real HTTP error - the request
+    // definitely reached it and it definitely rejected. No ambiguity.
+    callContractFunction.mockRejectedValueOnce(new KeeperHubApiError(500, "internal server error"));
+    const rejectedRes = await request(app).post(
+      `/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`,
+    );
+    expect(rejectedRes.status).toBe(502);
+    expect(rejectedRes.body.status).toBe("failed");
+    expect(rejectedRes.body.errorMessage).not.toMatch(/could not be confirmed/i);
+    expect(rejectedRes.body.errorMessage).toMatch(/KeeperHub API error 500/);
   });
 
   it("returns the same in-flight execution instead of opening a second one on a duplicate create request", async () => {
