@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd ../.. && npm install && npm run build:web",
-  "installCommand": "echo 'install handled by buildCommand'",
+  "installCommand": "cd ../.. && npm install",
+  "buildCommand": "cd ../.. && npm run build:web",
   "outputDirectory": ".next"
 }
