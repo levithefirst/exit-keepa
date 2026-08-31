@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import type { ExitAction, RateCondition } from "@exit-keepa/shared";
+import { AAVE_V3_BASE, AAVE_V3_WITHDRAW_SELECTOR, type ExitAction, type RateCondition } from "@exit-keepa/shared";
 import { db } from "../db";
 import { auditEvents, exitStrategies, safeAccounts } from "../db/schema";
 import { HttpError } from "../middleware/errorHandler";
@@ -22,7 +22,7 @@ agentRouter.post("/exit-strategies/:id/agent/evaluate", async (req, res) => {
   const [safe] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, strategy.safeId)).limit(1);
   if (!safe) throw new HttpError(404, `Safe account ${strategy.safeId} not found`);
   if (strategy.status !== "active") throw new HttpError(409, `Strategy is ${strategy.status}, not active`);
-  if (safe.chainId !== 8453) throw new HttpError(409, "Exit Guardian only monitors Base strategies");
+  if (safe.chainId !== AAVE_V3_BASE.chainId) throw new HttpError(409, "Exit Guardian only monitors Base strategies");
 
   const condition = strategy.condition as RateCondition;
   if (condition.market !== "aave-v3-base" || !["supply_apr", "borrow_apr"].includes(condition.metric)) {
@@ -34,10 +34,11 @@ agentRouter.post("/exit-strategies/:id/agent/evaluate", async (req, res) => {
   const tx = buildExitTransaction(strategy.action as ExitAction, safe);
 
   const policy = {
-    chainAllowed: safe.chainId === 8453,
-    targetAllowed: tx.to === "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
-    actionAllowed: tx.decodedFunction === "withdraw(address,uint256,address)",
-    assetBound: tx.decodedArgs.asset === "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    chainAllowed: safe.chainId === AAVE_V3_BASE.chainId,
+    targetAllowed: tx.to === AAVE_V3_BASE.pool,
+    actionAllowed: tx.decodedFunction === "withdraw(address asset, uint256 amount, address to)",
+    selectorBound: tx.data.slice(0, 10).toLowerCase() === AAVE_V3_WITHDRAW_SELECTOR.toLowerCase(),
+    assetBound: tx.decodedArgs.asset.toLowerCase() === AAVE_V3_BASE.usdc.toLowerCase(),
     recipientBound: tx.decodedArgs.to.toLowerCase() === safe.safeAddress.toLowerCase(),
     rolesConfigured: Boolean(safe.rolesModifierAddress && safe.rolesKey),
   };
