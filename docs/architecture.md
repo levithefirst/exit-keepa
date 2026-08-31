@@ -17,7 +17,7 @@
   KeeperHub's execution account narrowly scoped, revocable rights to
   unwind the position, without exposing the Safe's own keys.
 
-## Request flow (current skeleton)
+## Request flow (live)
 
 ```
 Browser (apps/web)
@@ -26,10 +26,20 @@ Browser (apps/web)
 apps/api  ──►  Neon Postgres (safe_accounts, exit_strategies,
    │               keeperhub_executions, audit_events)
    │
-   ├──►  KeeperHub REST API (workflows / executions — confirmed subset only)
-   │
-   ◄──  KeeperHub webhook (execution status → audit_events)
+   └──►  KeeperHub POST /execute/contract-call
+             (execTransactionWithRole, simulate:true then simulate:false)
+             │
+             ▼
+        Zodiac Roles Modifier  ──►  Safe  ──►  Aave v3 Pool.withdraw()
 ```
+
+`apps/api` builds the exact `execTransactionWithRole` calldata
+deterministically from a stored strategy (see `execution/buildTransaction.ts`)
+and calls KeeperHub directly - there is no separate "workflow" resource
+in the live path, and no inbound webhook in the critical path (the
+webhook route in `apps/api/src/routes/webhooks.ts` still exists for
+future async execution status but isn't required for the current
+synchronous simulate/broadcast flow).
 
 ## Data model
 
@@ -53,13 +63,16 @@ silently. See `.env.example` for the full list. No secret is committed to
 the repository; Railway and Vercel project settings are the source of
 truth for deployed environments.
 
-## Deployment targets (not yet deployed)
+## Deployment targets (live)
 
-- **Railway**: root directory = repo root, uses `apps/api/railway.json`
-  (build: `npm install && npm run build:api`, start:
-  `npm run start --workspace apps/api`, health check: `/health`).
+- **Railway** (live: https://api-production-2e11.up.railway.app): root
+  directory = repo root, build: `npm install && npm run build:api`,
+  start: `npm run start --workspace apps/api`, health check: `/health`.
+  Migrations run via a Railway pre-deploy command
+  (`npm run db:migrate --workspace apps/api`).
 - **Vercel**: root directory = `apps/web`, uses `apps/web/vercel.json`
   (build steps back up to the repo root to install workspace deps and
-  build `packages/shared` before `next build`).
-- **Neon**: one project/branch per environment; `DATABASE_URL` supplied
-  to Railway only (the frontend never talks to Postgres directly).
+  build `packages/shared` before `next build`). See
+  `docs/VERCEL_DEPLOY.md` for the exact manual deploy steps.
+- **Neon**: `DATABASE_URL` supplied to Railway only (the frontend never
+  talks to Postgres directly).

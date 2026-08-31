@@ -8,7 +8,8 @@ function short(addr: string) {
 }
 
 export function Nav() {
-  const { address, connecting, error, connect, disconnect, chainId, switchToBase } = useWallet();
+  const { address, connecting, error, connect, disconnect, chainId, switchToBase, isDemo, enterDemoMode } =
+    useWallet();
 
   return (
     <nav className="border-b border-white/10">
@@ -25,7 +26,7 @@ export function Nav() {
           </Link>
           {address ? (
             <div className="flex items-center gap-2">
-              {chainId !== 8453 && (
+              {!isDemo && chainId !== 8453 && (
                 <button
                   onClick={switchToBase}
                   className="rounded bg-yellow-600/20 px-2 py-1 text-xs text-yellow-300"
@@ -33,19 +34,28 @@ export function Nav() {
                   Wrong network — switch to Base
                 </button>
               )}
-              <span className="rounded bg-white/10 px-3 py-1 font-mono text-xs">{short(address)}</span>
+              {isDemo ? (
+                <span className="rounded bg-yellow-600/20 px-3 py-1 text-xs text-yellow-300">Demo mode</span>
+              ) : (
+                <span className="rounded bg-white/10 px-3 py-1 font-mono text-xs">{short(address)}</span>
+              )}
               <button onClick={disconnect} className="text-xs text-gray-400 hover:text-white">
-                Disconnect
+                {isDemo ? "Exit demo" : "Disconnect"}
               </button>
             </div>
           ) : (
-            <button
-              onClick={connect}
-              disabled={connecting}
-              className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-black disabled:opacity-50"
-            >
-              {connecting ? "Connecting..." : "Connect Wallet"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={connect}
+                disabled={connecting}
+                className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-black disabled:opacity-50"
+              >
+                {connecting ? "Connecting..." : "Connect Wallet"}
+              </button>
+              <button onClick={enterDemoMode} className="text-xs text-gray-400 underline hover:text-white">
+                Try demo mode
+              </button>
+            </div>
           )}
         </div>
       </div>

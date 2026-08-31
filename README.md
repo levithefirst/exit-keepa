@@ -7,12 +7,15 @@ through your own Safe — without ever holding your keys.
 > "If the monitored rate crosses my threshold, withdraw my position back
 > to my Safe."
 
-**Live demo:** connect a wallet at the deployed web app (see
-[Deployment](#deployment) for the URL once you've deployed it — Vercel
-deployment from this environment was blocked by an account permission
-issue, see that section), or run it locally in a couple of minutes (see
-[Local setup](#local-setup)). The API is live at
-`https://api-production-2e11.up.railway.app`.
+**Live demo:** the API is live at
+`https://api-production-2e11.up.railway.app`. The frontend
+(`apps/web`) isn't deployed from this environment — Vercel blocks this
+environment's integration with `409`/`403` on the existing project, see
+[`docs/VERCEL_DEPLOY.md`](docs/VERCEL_DEPLOY.md) for the exact manual
+deploy steps — so in the meantime, run it locally in a couple of minutes
+(see [Local setup](#local-setup)) and use its "Try demo mode" button to
+explore the full flow, including the pre-filled live demo Safe, without
+a wallet extension.
 
 **Hackathon judges:** see [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for
 the pitch, live evidence (on-chain Roles config + a real simulation
@@ -74,17 +77,24 @@ permission is:
    anywhere else, and no other Aave action (supply, borrow, liquidate,
    flash-loan) is reachable.
 
-**This permission is not pre-granted anywhere in this repo or its
-deployment.** The exact `ConditionFlat[]` byte encoding for step 2 is a
-flattened-tree encoding that Zodiac's own tooling (`zodiac-roles-sdk`)
-generates and round-trip-verifies — hand-rolling it for a permission that
+**What's actually granted on the live demo Safe** is broader than that
+ideal: its owner granted `allowTarget(roleKey, aavePool)` — whole-target
+clearance on the Aave Pool, not scoped down to just `withdraw` with the
+asset/recipient conditions above. That's a real trade-off, not a
+mistake glossed over: `allowTarget` is a single owner-signed transaction
+in the Zodiac Roles app UI, while the narrower `scopeFunction` grant
+requires generating a `ConditionFlat[]` byte encoding via
+`zodiac-roles-sdk` (hand-rolling that encoding for a permission that
 gates fund movement is exactly the kind of guess this project has
-avoided throughout. Generate it with that SDK, review the exact
-`scopeTarget`/`scopeFunction` calldata it produces, and grant it from the
-Safe's own owner(s) before real execution can succeed. Until then,
-simulating a `withdraw` through an unscoped role will correctly revert
-with `ConditionViolation(2, ...)` — `2` is `TargetAddressNotAllowed` in
-Zodiac's `PermissionChecker.Status` enum (verified against
+avoided throughout) and wasn't completed before submission. **A real
+Aave v3 USDC withdraw has been executed end-to-end through this exact
+path** — see "Live proof" below — proving the architecture works; the
+narrower per-function scope remains the documented target for anyone
+extending this to a real user's Safe with more than a demo balance at
+stake. Before the `allowTarget` grant, simulating `withdraw` through the
+unscoped role correctly reverted with `ConditionViolation(2, ...)` — `2`
+is `TargetAddressNotAllowed` in Zodiac's `PermissionChecker.Status` enum
+(verified against
 `gnosisguild/zodiac-modifier-roles` source), meaning the target isn't
 authorized yet, not that anything else is wrong.
 
@@ -123,14 +133,39 @@ authorized yet, not that anything else is wrong.
   read-only against chain state.
 - Step 7 (a real broadcast) additionally requires a Safe that (a) holds a
   real USDC supply position on Aave v3 Base, and (b) has actually been
-  granted the narrow Roles permission described above — see that section
-  for why this isn't pre-granted in the deployed demo.
+  granted the Roles permission described above. For the demo Safe listed
+  in "Live proof" below, both are already true — that's why its broadcast
+  is a real, confirmed on-chain transaction rather than a simulation. Try
+  it yourself with **any other Safe address** and you'll see the same
+  simulate step correctly refuse to broadcast until those two conditions
+  are met for that Safe.
 - The "manual trigger" control on the strategy detail page exists because
   v1 has no live on-chain rate oracle wired up yet — see **Known
   limitations** below. It lets you enter the rate a real monitor would
   have observed, and the server independently re-checks it against the
   strategy's stored condition before creating an execution — it never
   trusts a client-supplied "yes, the condition is true."
+
+## Live proof
+
+A real Aave v3 USDC withdraw was broadcast end-to-end through this exact
+Safe → Roles Modifier → KeeperHub path on Base mainnet:
+
+| | |
+|---|---|
+| Tx hash | `0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b` |
+| BaseScan | https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b |
+| Result | Receipt status `0x1` (success) — USDC returned to the Safe |
+| Safe | `0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9` (Base) |
+| Roles Modifier | `0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE` |
+| KeeperHub executor | `0xc68f0E22Dc6eD7e883873B36f23DdBBC1b3968Ac` |
+
+This was independently verified against the chain itself (not just the
+app's own claim) via `eth_getTransactionReceipt`. The app's own
+execution-history row for this broadcast briefly showed `status: failed`
+due to a hash-extraction bug (fixed — see the executor tests) even though
+the on-chain transaction had already succeeded; the chain, not the
+database, is the source of truth here.
 
 ## Architecture
 
@@ -191,7 +226,7 @@ npm run test --workspace apps/api
 npm run test --workspace packages/shared
 ```
 
-53 tests total: calldata correctness (against independently-computed hex
+64 tests total: calldata correctness (against independently-computed hex
 fixtures, not the encoder checking itself), condition-comparator logic,
 execution state-transition/idempotency rules, KeeperHub response parsing
 (including refusing to trust a malformed hash), and an end-to-end test
@@ -265,24 +300,13 @@ for the full research trail.
 
 **Frontend (Vercel) — not deployed from this environment:**
 
-Both `create_git_project` and a manual `deploy_to_vercel` file-tree
-deploy were attempted for a new `exit-keepa-web` project and both failed
-with `403 forbidden: You don't have permission to create a ... Deployment
-for this project` — an account/token permission restriction on this
-environment's connected Vercel access, not a bug in the app itself (the
-app builds and typechecks cleanly, see below). To deploy it yourself:
-
-```bash
-# from the Vercel dashboard, or via the Vercel CLI:
-vercel link            # create/link a project, root directory: apps/web
-vercel env add NEXT_PUBLIC_API_URL production   # https://api-production-2e11.up.railway.app
-vercel --prod
-```
-
-Or connect the GitHub repo directly in the Vercel dashboard (New Project
-→ Import `levithefirst/exit-keepa` → root directory `apps/web` → it will
-pick up `apps/web/vercel.json`'s build command, which builds
-`packages/shared` first).
+A project named `exit-keepa-web` already exists, but this environment's
+connected Vercel integration gets `409 Conflict` on create and
+`403 Forbidden` on every read/list against it — an account/token
+permission restriction, not a bug in the app (it builds and typechecks
+cleanly, verified repeatedly, see below). See
+[`docs/VERCEL_DEPLOY.md`](docs/VERCEL_DEPLOY.md) for the exact manual
+steps and post-deploy verification checklist.
 
 **Database (Neon):** already provisioned; migrations run automatically on
 every Railway deploy via the pre-deploy command above.
@@ -299,10 +323,12 @@ every Railway deploy via the pre-deploy command above.
   enter the rate a monitor would have observed, and the server
   independently re-validates it against the condition before creating an
   execution.
-- **The Roles permission for `withdraw` is not pre-granted anywhere.**
-  See "How execution is authorized" above for the exact spec and why the
-  final calldata should come from Zodiac's own SDK rather than being
-  hand-encoded here.
+- **The narrow, per-function Roles permission (`scopeFunction` with
+  asset/recipient conditions) is not what's actually granted.** The live
+  demo Safe instead has the broader `allowTarget` grant — see "How
+  execution is authorized" above for the exact spec, the trade-off, and
+  why the narrower encoding should come from Zodiac's own SDK rather than
+  being hand-encoded here.
 - **Single protocol/action only.** By design for v1 — see "What it
   actually does" above.
 - **Frontend deploy is a manual step** for the reason described in

@@ -8,7 +8,9 @@ transaction executes through their own Safe — without Exit Keepa ever
 holding their keys. Execution runs through KeeperHub, and authorization
 is enforced entirely by a Zodiac Roles Modifier scoped to the user's Safe,
 so the automation can only ever do the one thing it was explicitly
-granted permission to do.
+granted permission to do. This isn't just a design on paper: a real Aave
+v3 USDC withdraw has already been executed end-to-end through this exact
+path on Base mainnet — see "Live proof" below.
 
 ## Architecture
 
@@ -16,8 +18,10 @@ granted permission to do.
 Rate condition  →  Exit Keepa (API + DB)  →  KeeperHub  →  Zodiac Roles Modifier  →  Safe  →  Aave v3 Pool.withdraw()
 ```
 
-- **apps/web** — Next.js frontend: connect wallet, register a Safe, create
-  a strategy, preview the exact transaction, activate, simulate.
+- **apps/web** — Next.js frontend: connect a wallet (or use "Try demo
+  mode" with no wallet extension needed), register a Safe, create a
+  strategy, preview the exact transaction, activate, simulate, broadcast,
+  and view execution history — all against the live API.
 - **apps/api** — Express + Postgres: stores strategies/executions, builds
   the exact withdraw transaction deterministically from stored data
   (never from client-supplied calldata), calls KeeperHub for
@@ -32,64 +36,59 @@ Rate condition  →  Exit Keepa (API + DB)  →  KeeperHub  →  Zodiac Roles Mo
 ## Live deployment
 
 - **API (live):** https://api-production-2e11.up.railway.app
-- **Frontend:** not publicly reachable from this build session — see
-  "Frontend deployment" below for the exact blocker and manual steps.
+- **Frontend:** pending manual Vercel deploy — this environment's
+  connected Vercel integration gets `409 Conflict`/`403 Forbidden` against
+  the existing `exit-keepa-web` project (an account/token permission
+  restriction, not an app bug — `apps/web` builds and typechecks cleanly).
+  See [`VERCEL_DEPLOY.md`](VERCEL_DEPLOY.md) for the exact manual steps.
+  In the meantime, run it locally (see the main [README](../README.md#local-setup))
+  and use "Try demo mode" to explore the full flow without a wallet.
 - **Safe:** `0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9`
 - **Roles Modifier:** `0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE`
 - **Role key (`exit_keepa`):** `0x657869745f6b6565706100000000000000000000000000000000000000000000`
 - **Aave v3 Pool (Base):** `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5`
 - **KeeperHub executor (role member):** `0xc68f0E22Dc6eD7e883873B36f23DdBBC1b3968Ac`
+- **Submission branch:** `claude/exit-keepa-init-v5lzuy` (repo default
+  branch; kept in sync with the working branch `claude/verify-railway-mcp-tk0q6h`)
 
-## Evidence: the authorization path is real and working
+## Live proof: a real broadcast succeeded
 
-**1. On-chain Roles config, re-verified live via Gnosis Guild's public
-subgraph** (`gnosisguild.squids.live/roles:production`) immediately before
-this submission was written:
+A real Aave v3 USDC withdraw was broadcast through this exact
+Safe → Roles Modifier → KeeperHub path and confirmed on Base mainnet:
 
-```json
-{
-  "key": "0x657869745f6b6565706100000000000000000000000000000000000000000000",
-  "targets": [
-    { "address": "0xa238dd80c259a72e81d7e4664a9801593f98d1c5", "clearance": "Target", "executionOptions": "None" },
-    { "address": "0xffd5c5e17e09e012c99550bfb2ef88d370cd66a9", "clearance": "Target", "executionOptions": "None" }
-  ]
-}
-```
+| | |
+|---|---|
+| Tx hash | `0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b` |
+| BaseScan | https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b |
+| Result | Receipt `status: 0x1` (success) — USDC returned to the Safe |
 
-The `exit_keepa` role is granted `Target` clearance (whole-target,
-`allowTarget`-style) on both the Aave v3 Pool and the Safe itself.
+This was independently verified against the chain itself via
+`eth_getTransactionReceipt` — not just taken from the app's own database.
+In fact, the app's own execution-history row for this exact broadcast
+briefly showed `status: failed`, because the hash-extraction logic didn't
+recognize KeeperHub's success response shape
+(`{status: "completed", transactionHash, ...}` has no `wouldRevert` key,
+which is what the code was keying off of). That bug is now fixed —
+`extractTransactionHash()` in `apps/api/src/execution/executor.ts` checks
+`transactionHash`/`txHash`/`hash` across the top level and `result`/`data`
+sub-objects, with regression tests using the real response payload. The
+chain, not a database row, was always the actual source of truth for
+whether the withdraw happened; this fix makes the app agree with it.
 
-**2. Live simulation** (`POST /api/exit-strategies/447e68d9-.../executions/.../simulate`
-against the live API, `simulate: true`, immediately before this
-submission):
+### How this was reached
 
-```json
-{
-  "status": "failed",
-  "responsePayload": {
-    "success": false,
-    "wouldRevert": true,
-    "revertReason": "ModuleTransactionFailed",
-    "failureKind": "revert"
-  },
-  "errorMessage": "ModuleTransactionFailed"
-}
-```
-
-This proves the full chain works: KeeperHub correctly builds and submits
-`execTransactionWithRole` calldata, the Roles Modifier correctly
-authorizes the `withdraw` call against the Aave Pool (the earlier
-`ConditionViolation(2)` / `TargetAddressNotAllowed` from before the
-`allowTarget` grant is gone), and the call reaches the Safe. It reverts
-one level deeper, inside the actual Aave `withdraw()` call, with
-`ModuleTransactionFailed` — the generic Zodiac wrapper for "the
-authorized call itself failed" — consistent with this Safe holding no
-Aave v3 USDC supply position (no aToken balance to withdraw).
-
-**3. No broadcast was performed.** `wouldRevert: true` means the
-transaction would fail on-chain; broadcasting it would just waste gas for
-an identical revert. Per this project's own rule (never broadcast unless
-a simulation actually succeeded), nothing was submitted.
+1. **On-chain Roles config**, verified live via Gnosis Guild's public
+   subgraph (`gnosisguild.squids.live/roles:production`): the `exit_keepa`
+   role has `Target` clearance (`allowTarget`-style) on both the Aave v3
+   Pool and the Safe itself.
+2. **The Safe was funded** with a real USDC supply position on Aave v3
+   Base (verified independently via a direct `eth_call` to the aUSDC
+   token contract for the Safe's balance).
+3. **Simulation** (`simulate: true`) against the live API returned
+   `wouldRevert: false`.
+4. **Broadcast** (`simulate: false`) was then triggered once, per this
+   project's own rule of never broadcasting without a preceding clean
+   simulation — producing the confirmed transaction above.
 
 ## Honest limitations
 
@@ -103,44 +102,32 @@ a simulation actually succeeded), nothing was submitted.
   submits a Roles configuration transaction itself. The app generates a
   Safe-specific deep link into Gnosis Guild's own Roles app
   (`https://app.safe.global/apps/open?safe=base:<safe>&appUrl=...roles.gnosisguild.org`)
-  so the Safe's own signers review and approve it.
-- **A successful real withdraw still requires an actual Aave position.**
-  The demo Safe has no USDC supplied to Aave v3 Base, so any real
-  broadcast would revert with `ModuleTransactionFailed`. Funding the Safe
-  and calling Aave's `supply()` once (outside this app - a manual Safe
-  transaction) is what turns the current "authorization proven, action
-  blocked only by missing funds" state into a real, broadcastable
-  withdraw.
-- **Frontend deployment**: see below.
+  so the Safe's own signers review and approve it. What's actually
+  granted on the live demo Safe is the broader `allowTarget` grant rather
+  than the narrower `scopeFunction` (with asset/recipient conditions)
+  documented as the ideal in the main README — a real trade-off, since
+  the narrower grant requires generating a `ConditionFlat[]` encoding via
+  `zodiac-roles-sdk` that wasn't completed before submission.
+- **A successful real withdraw requires an actual Aave position** on the
+  Safe being used. That's true for the demo Safe above (hence the real
+  broadcast); a different Safe without one will correctly simulate to a
+  revert and never reach broadcast.
+- **Frontend deployment** is a manual Vercel step — see above.
 
-## Frontend deployment
+## Judge path (under 5 minutes)
 
-`apps/web` builds and typechecks cleanly against
-`NEXT_PUBLIC_API_URL=https://api-production-2e11.up.railway.app` (verified
-this session). A Vercel project named `exit-keepa-web` already exists,
-but this session's connected Vercel integration gets `403 Forbidden` on
-every read/list/create against it - almost certainly because it was
-created directly in the Vercel dashboard rather than through this
-integration, which only gets access to projects it creates itself.
-
-**Manual steps** (2 minutes, from the Vercel dashboard):
-1. Open the existing `exit-keepa-web` project (or, if none exists in your
-   account, New Project → import `levithefirst/exit-keepa`).
-2. Root Directory: `apps/web`. Framework: Next.js (auto-detected).
-3. Environment variable: `NEXT_PUBLIC_API_URL` = `https://api-production-2e11.up.railway.app`
-4. Deploy. `apps/web/vercel.json` already sets the correct monorepo build
-   command (`cd ../.. && npm install && npm run build:web`).
-
-## Judge path
-
-1. Open the deployed web app → **Connect Wallet**.
-2. **Dashboard** → register any Safe (or the demo Safe address above).
+1. Open the web app (deployed URL once live, or `npm run dev:web` locally
+   against the live API) → click **"Try demo mode"** (no wallet needed).
+2. **Dashboard** → click **"Fill in the live demo Safe"** to pre-fill the
+   real Safe/Roles Modifier/role key above → **Save Safe**.
 3. **Create Strategy** → pick a trigger condition → **Preview** shows the
    exact target/function/calldata and the Roles permission required.
 4. **Activate** the strategy.
 5. **Strategy Detail** → enter a rate that satisfies the condition →
-   **Create Execution** → **Simulate** → see a truthful success/failure
-   result (never a fabricated one).
-6. A real broadcast is only enabled after a simulation actually succeeds
-   (`wouldRevert: false`) - which for this demo Safe requires it to
-   actually hold a funded Aave v3 USDC position first.
+   **Create Execution** → **Simulate** → see the real result
+   (`wouldRevert: false` for the demo Safe, since it already holds an
+   Aave position and the permission is already granted).
+6. Broadcasting again would move real funds on an already-completed demo
+   position, so it isn't repeated in the UI walkthrough — the "Live
+   proof" panel on the home page and above links directly to the already-
+   confirmed transaction instead.

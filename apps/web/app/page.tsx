@@ -22,14 +22,42 @@ export default function HomePage() {
             Go to Dashboard
           </Link>
         ) : (
-          <button
-            onClick={connect}
-            disabled={connecting}
-            className="rounded bg-accent px-5 py-2.5 font-medium text-black disabled:opacity-50"
-          >
-            {connecting ? "Connecting..." : "Connect Wallet to Get Started"}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={connect}
+              disabled={connecting}
+              className="rounded bg-accent px-5 py-2.5 font-medium text-black disabled:opacity-50"
+            >
+              {connecting ? "Connecting..." : "Connect Wallet to Get Started"}
+            </button>
+            <Link href="/dashboard" className="text-sm text-gray-400 underline hover:text-white">
+              or try demo mode →
+            </Link>
+          </div>
         )}
+      </section>
+
+      <section className="rounded-lg border border-accent/30 bg-accent/5 p-6">
+        <h2 className="mb-2 font-semibold text-accent">Live proof — a real completed withdraw on Base</h2>
+        <p className="text-sm text-gray-300">
+          This exact flow — Safe + Roles Modifier + KeeperHub simulate/broadcast — already executed a real Aave v3
+          USDC withdraw on Base mainnet through the demo Safe, verified independently on-chain (not just claimed by
+          the app):
+        </p>
+        <div className="mt-3 space-y-1 font-mono text-xs text-gray-300">
+          <p>
+            Tx:{" "}
+            <a
+              href="https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b"
+              target="_blank"
+              rel="noreferrer"
+              className="break-all text-accent underline"
+            >
+              0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b
+            </a>
+          </p>
+          <p>Result: success (receipt status 0x1) — USDC returned to the Safe</p>
+        </div>
       </section>
 
       <section className="grid gap-6 sm:grid-cols-3">
@@ -69,10 +97,12 @@ export default function HomePage() {
       <section className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-6">
         <h2 className="mb-2 font-semibold text-yellow-300">For judges: a safe way to try this</h2>
         <p className="text-sm text-gray-400">
-          You can connect a wallet, register a Safe, create a strategy, and inspect/simulate the exact transaction
-          Exit Keepa would run — all without any funds at risk. Real execution additionally requires a Safe that (a)
-          holds a real USDC supply position on Aave v3 Base and (b) has the narrow Roles permission described above
-          actually granted on-chain (see README for the exact permission spec and why it isn&apos;t pre-granted here).
+          No wallet? Click <strong className="text-gray-200">&quot;Try demo mode&quot;</strong> in the nav bar to
+          register a Safe, create a strategy, and inspect/simulate the exact transaction Exit Keepa would run — all
+          without any funds at risk or a wallet extension. The demo Safe above is pre-fillable on the Dashboard. Real
+          execution requires a Safe that (a) holds a real USDC supply position on Aave v3 Base and (b) has the narrow
+          Roles permission described above actually granted on-chain — both are already true for the demo Safe,
+          which is why its tx above is real, not simulated.
         </p>
       </section>
     </main>

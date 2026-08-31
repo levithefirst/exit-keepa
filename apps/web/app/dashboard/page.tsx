@@ -7,9 +7,12 @@ import { api } from "../../lib/api";
 import { getStoredSafeId, setStoredSafeId } from "../../lib/storage";
 
 const BASESCAN = "https://basescan.org";
+const DEMO_SAFE = "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9";
+const DEMO_ROLES_MODIFIER = "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE";
+const DEMO_ROLE_KEY = "0x657869745f6b6565706100000000000000000000000000000000000000000000";
 
 export default function DashboardPage() {
-  const { address } = useWallet();
+  const { address, isDemo } = useWallet();
   const [safeId, setSafeId] = useState<string | null>(null);
   const [safe, setSafe] = useState<any>(null);
   const [balances, setBalances] = useState<any>(null);
@@ -84,9 +87,23 @@ export default function DashboardPage() {
           onChange={(e) => setFormRoleKey(e.target.value)}
         />
         {error && <p className="text-sm text-red-400">{error}</p>}
-        <button onClick={registerSafe} className="rounded bg-accent px-4 py-2 text-sm font-medium text-black">
-          Save Safe
-        </button>
+        <div className="flex gap-3">
+          <button onClick={registerSafe} className="rounded bg-accent px-4 py-2 text-sm font-medium text-black">
+            Save Safe
+          </button>
+          {isDemo && (
+            <button
+              onClick={() => {
+                setFormSafeAddress(DEMO_SAFE);
+                setFormRoles(DEMO_ROLES_MODIFIER);
+                setFormRoleKey(DEMO_ROLE_KEY);
+              }}
+              className="rounded border border-white/20 px-4 py-2 text-sm text-gray-300"
+            >
+              Fill in the live demo Safe
+            </button>
+          )}
+        </div>
       </div>
     );
   }

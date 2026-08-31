@@ -20,10 +20,21 @@ interface WalletState {
   connecting: boolean;
   error: string | null;
   hasProvider: boolean;
+  /** True when `address` is a demo identity, not a real connected wallet. */
+  isDemo: boolean;
   connect: () => Promise<void>;
   disconnect: () => void;
   switchToBase: () => Promise<void>;
+  /**
+   * Lets a judge without a wallet extension (or one who doesn't want to
+   * connect) explore the app anyway - registers a Safe/strategies under a
+   * fixed local demo identity instead of blocking the whole UI on wallet
+   * availability.
+   */
+  enterDemoMode: () => void;
 }
+
+const DEMO_IDENTITY = "demo-mode";
 
 const WalletContext = createContext<WalletState | null>(null);
 
@@ -78,6 +89,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setChainId(null);
   }, []);
 
+  const enterDemoMode = useCallback(() => {
+    setError(null);
+    setAddress(DEMO_IDENTITY);
+    setChainId(8453);
+  }, []);
+
   const switchToBase = useCallback(async () => {
     if (!hasProvider) return;
     try {
@@ -90,9 +107,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, [hasProvider]);
 
+  const isDemo = address === DEMO_IDENTITY;
+
   const value = useMemo(
-    () => ({ address, chainId, connecting, error, hasProvider, connect, disconnect, switchToBase }),
-    [address, chainId, connecting, error, hasProvider, connect, disconnect, switchToBase],
+    () => ({
+      address,
+      chainId,
+      connecting,
+      error,
+      hasProvider,
+      isDemo,
+      connect,
+      disconnect,
+      switchToBase,
+      enterDemoMode,
+    }),
+    [address, chainId, connecting, error, hasProvider, isDemo, connect, disconnect, switchToBase, enterDemoMode],
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
