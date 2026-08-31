@@ -112,10 +112,19 @@ authorized yet, not that anything else is wrong.
    calldata that gets trusted directly.
 5. **Activate** — turns monitoring on. Does not simulate or broadcast
    anything by itself.
-6. **Simulate** (Strategy Detail) — runs `execTransactionWithRole` with
-   `simulate: true` through KeeperHub against the real Roles Modifier and
-   Aave Pool on Base, and shows whether it would succeed or the exact
-   revert reason.
+6. **Run Exit Guardian** (Strategy Detail) — reads the live Aave supply/
+   borrow rate on Base, checks it against your condition, and runs a
+   deterministic policy check (right chain, right contract, right
+   function, right asset, funds returning only to your Safe, Roles
+   configured). If the condition isn't met, nothing happens. If it's met
+   but the policy check fails, the attempt is refused with a specific
+   reason and nothing reaches KeeperHub. If it's met and the policy check
+   passes, an execution is created and automatically simulated —
+   `execTransactionWithRole` with `simulate: true`, through KeeperHub,
+   against the real Roles Modifier and Aave Pool — landing on either
+   `simulated` (would succeed) or `failed` (the exact revert reason). A
+   background poller runs this same check on an interval when enabled
+   (see "Known limitations").
 7. **Execute (broadcast)** — only enabled once a simulation has actually
    succeeded; runs the identical call with `simulate: false`. The
    returned transaction hash is only ever shown/stored if it's a
@@ -137,12 +146,11 @@ authorized yet, not that anything else is wrong.
   it yourself with **any other Safe address** and you'll see the same
   simulate step correctly refuse to broadcast until those two conditions
   are met for that Safe.
-- The "manual trigger" control on the strategy detail page exists because
-  v1 has no live on-chain rate oracle wired up yet — see **Known
-  limitations** below. It lets you enter the rate a real monitor would
-  have observed, and the server independently re-checks it against the
-  strategy's stored condition before creating an execution — it never
-  trusts a client-supplied "yes, the condition is true."
+- The **"Run Exit Guardian"** control on the strategy detail page runs
+  the real autonomous decision path on demand, live: it reads the actual
+  Aave rate from Base, not a value you type in. Every decision (including
+  ones that don't act) is recorded and independently inspectable via its
+  full receipt — intent, observation, policy check, simulation result.
 
 ## Live proof
 
@@ -314,16 +322,22 @@ every Railway deploy via the pre-deploy command above.
 
 ## Known limitations
 
-- **No live on-chain rate oracle.** Reading Aave's actual current
-  supply/borrow APR requires decoding `Pool.getReserveData()`'s returned
-  struct, whose exact field layout differs across Aave v3 versions. This
-  wasn't decoded without independently confirming which exact version is
-  deployed at the specific Base Pool address in use — guessing a struct
-  layout for a value that gates fund movement is exactly the kind of
-  guess this project avoids. The strategy detail page instead lets you
-  enter the rate a monitor would have observed, and the server
-  independently re-validates it against the condition before creating an
-  execution.
+- **The autonomous background poller is off by default everywhere**,
+  including the live Railway deployment, until `AGENT_POLL_ENABLED=true`
+  is set. Deliberate: a fresh deploy should never silently start creating
+  real execution rows against live chain state on its own. The on-demand
+  "Run Exit Guardian" button runs the identical decision path
+  (`agent/guardian.ts`) regardless of this flag.
+- **Aave rate-oracle and aUSDC-balance reads are verified by static
+  analysis, not by a live call from this environment.** The
+  `getReserveData(address)` selector was recomputed locally via a real
+  Keccak-256 implementation; the `ReserveDataLegacy` field layout and the
+  aUSDC token address were checked against Aave's own source
+  (`aave-dao/aave-v3-origin`) and `bgd-labs/aave-address-book`
+  respectively — not guessed, and not recalled from memory alone. What
+  this session couldn't do is place a live `eth_call` against the actual
+  deployed contracts (the sandbox's egress proxy blocks direct RPC
+  access), so treat first production use as the final cross-check.
 - **The narrow, per-function Roles permission (`scopeFunction` with
   asset/recipient conditions) is not what's actually granted.** The live
   demo Safe instead has the broader `allowTarget` grant — see "How
@@ -333,11 +347,13 @@ every Railway deploy via the pre-deploy command above.
 - **Single protocol/action only.** By design for v1 — see "What it
   actually does" above.
 - **No per-user authentication or ownership boundary.** Any caller who
-  knows (or enumerates) a Safe/strategy/execution ID can read or act on
-  it — there is no session, no login, no concept of "this strategy
-  belongs to this wallet" enforced server-side. This is deliberate scope
-  for a v1 demo built around a single Safe's identity rather than a
-  multi-tenant product, not an oversight; adding real auth is the
-  natural next step before this could hold third-party funds at scale.
+  knows a Safe/strategy/execution ID can still read or act on it — there
+  is no session, no login, no concept of "this strategy belongs to this
+  wallet" enforced server-side. `GET /api/exit-strategies` used to make
+  this worse by returning every strategy in the database to a caller who
+  supplied no ID at all (now fixed: `safeId` is required). Real
+  wallet-authenticated auth (e.g. SIWE) is the natural next step before
+  this could hold third-party funds at scale; not attempted this session
+  because a half-verified auth layer is a worse outcome than none.
 - **Frontend deploy is a manual step** for the reason described in
   Deployment above.

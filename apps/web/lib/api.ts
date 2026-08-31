@@ -36,4 +36,13 @@ export const api = {
     request(`/api/exit-strategies/${strategyId}/executions/${executionId}/simulate`, { method: "POST" }),
   broadcastExecution: (strategyId: string, executionId: string) =>
     request(`/api/exit-strategies/${strategyId}/executions/${executionId}/broadcast`, { method: "POST" }),
+
+  // Exit Guardian: the autonomous decision layer. evaluateAgent runs the
+  // same observe -> decide -> (refuse | approve+simulate) path the
+  // background poller runs on its own interval - this is an on-demand,
+  // same-code-path check, not a separate/fake "demo" action.
+  evaluateAgent: (strategyId: string) =>
+    request<any>(`/api/exit-strategies/${strategyId}/agent/evaluate`, { method: "POST" }),
+  listAgentDecisions: (strategyId: string) => request<any[]>(`/api/exit-strategies/${strategyId}/agent/decisions`),
+  getAgentReceipt: (decisionId: string) => request<any>(`/api/agent/decisions/${decisionId}`),
 };

@@ -21,6 +21,19 @@ vi.mock("../src/keeperhub/client", async (importOriginal) => {
   };
 });
 
+// The only real `fetch` call any route in this file's scenarios reaches is
+// the broadcast route's live Aave position read (agent/broadcastGuards.ts,
+// used for the amount-exceeded check) - KeeperHub calls never touch real
+// fetch at all, since keeperHubClient itself is replaced above. Stubbed to
+// a comfortably large balance so it never blocks a scenario these tests
+// aren't about; the amount-exceeded check itself has its own dedicated
+// unit tests in src/agent/broadcastGuards.test.ts.
+const bigBalanceHex = `0x${(10n ** 12n).toString(16).padStart(64, "0")}`;
+vi.stubGlobal(
+  "fetch",
+  vi.fn(async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: bigBalanceHex }), { status: 200 })),
+);
+
 // Imported after the mocks above so every route picks up the fakes.
 const { createApp } = await import("../src/app");
 

@@ -4,7 +4,12 @@
  * simulation" rules are directly unit-testable without a database.
  *
  * keeperhub_executions.status values: pending -> simulating -> simulated ->
- * executing -> succeeded | failed | cancelled.
+ * executing -> succeeded | failed | cancelled. Two rows created directly by
+ * Exit Guardian (agent/guardian.ts) never enter this chain at all: `refused`
+ * (a policy/permission check said no before ever reaching KeeperHub) is a
+ * terminal status created straight from nothing, and a `simulated` row can
+ * be stopped short of `executing` into `blocked` (see decideBroadcast's
+ * staleness/amount checks) instead of proceeding to a real broadcast.
  */
 
 export type ExecutionStatus =
@@ -14,6 +19,8 @@ export type ExecutionStatus =
   | "executing"
   | "succeeded"
   | "failed"
+  | "refused"
+  | "blocked"
   | "cancelled";
 
 export interface ExecutionSnapshot {

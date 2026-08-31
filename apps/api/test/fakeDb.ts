@@ -41,6 +41,8 @@ function applyInsertDefaults(table: unknown, values: Row): Row {
     if (row.updatedAt === undefined) row.updatedAt = now;
   }
   if (table === schema.exitStrategies && row.status === undefined) row.status = "draft";
+  if (table === schema.exitStrategies && row.agentState === undefined) row.agentState = "normal";
+  if (table === schema.exitStrategies && row.agentStateUpdatedAt === undefined) row.agentStateUpdatedAt = now;
   if (table === schema.keeperhubExecutions && row.status === undefined) row.status = "pending";
   if (table === schema.auditEvents && row.payload === undefined) row.payload = {};
   return row;

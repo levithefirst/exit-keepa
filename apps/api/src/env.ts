@@ -23,6 +23,19 @@ const envSchema = z.object({
 
   BASE_CHAIN_ID: z.coerce.number().int().positive().default(8453),
   BASE_RPC_URL: z.string().url().default("https://mainnet.base.org"),
+
+  // The autonomous Exit Guardian loop. Off by default in any environment
+  // that doesn't explicitly turn it on, so a `dev` run or a preview deploy
+  // never starts silently polling live chain state and creating real
+  // execution rows without someone deciding that's what they want.
+  AGENT_POLL_ENABLED: z
+    .string()
+    .default("false")
+    .transform((value) => value === "true"),
+  AGENT_POLL_INTERVAL_MS: z.coerce.number().int().min(5_000).default(30_000),
+  // How long an approved-but-not-yet-broadcast decision stays fresh before
+  // routes/executions.ts's broadcast route refuses it as stale.
+  AGENT_DECISION_MAX_AGE_MS: z.coerce.number().int().positive().default(5 * 60_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
-import { btnPrimary, btnPrimarySmall, btnSecondarySmall, btnDanger, inputBase, card } from "../../../lib/ui";
+import { btnPrimary, btnPrimarySmall, btnSecondarySmall, btnDanger, card } from "../../../lib/ui";
 import { StatusPill } from "../../../components/StatusPill";
 import { CopyButton } from "../../../components/CopyButton";
 
@@ -26,9 +26,10 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   const [strategy, setStrategy] = useState<any>(null);
   const [preview, setPreview] = useState<any>(null);
   const [executions, setExecutions] = useState<any[]>([]);
-  const [currentRateBps, setCurrentRateBps] = useState("150");
+  const [receipt, setReceipt] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [guardianBusy, setGuardianBusy] = useState(false);
   // The one truly irreversible action (a real broadcast) gets a two-step
   // confirm instead of firing on the first click - everything else stays
   // single-click.
@@ -53,16 +54,18 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   if (error && !strategy) return <p className="text-pretty text-sm text-danger">{error}</p>;
   if (!strategy) return <DetailSkeleton />;
 
-  async function createExecution() {
-    setBusy(true);
+  async function runGuardian() {
+    setGuardianBusy(true);
     setError(null);
     try {
-      await api.createExecution(id, Number(currentRateBps));
+      const evalResult = await api.evaluateAgent(id);
+      const fullReceipt = await api.getAgentReceipt(evalResult.decisionId);
+      setReceipt(fullReceipt);
       await refresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
-      setBusy(false);
+      setGuardianBusy(false);
     }
   }
 
@@ -159,32 +162,101 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
         </div>
       )}
 
-      <div className={`${card} space-y-3`}>
-        <h2 className="font-semibold text-cream-50">Manual trigger (demo)</h2>
-        <p className="text-pretty text-xs text-cream-400">
-          Exit Keepa doesn&apos;t run a live rate oracle yet. Enter the current rate below to check it against your
-          condition, exactly as a real monitor would.
-        </p>
-        <div className="flex flex-wrap items-end gap-2">
+      <section className="rounded-xl border border-mint-400/30 bg-mint-400/5 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <label htmlFor="current-rate" className="mb-1 block text-sm text-cream-300">
-              Current supply APR (bps)
-            </label>
-            <input
-              id="current-rate"
-              className={`${inputBase} w-28 tabular-nums`}
-              value={currentRateBps}
-              onChange={(e) => setCurrentRateBps(e.target.value)}
-            />
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-mint-300">Exit Guardian</p>
+            <h2 className="mt-1 font-display text-lg font-semibold text-cream-50">Observe, decide, prove</h2>
+            <p className="mt-1 max-w-xl text-pretty text-sm text-cream-300">
+              Reads the live Aave supply rate on Base, checks it against your condition, and runs the same deterministic
+              policy check the autonomous background loop uses. It can approve, refuse, or find nothing to do.
+            </p>
           </div>
-          <button onClick={createExecution} disabled={busy || strategy.status !== "active"} className={btnPrimary}>
-            Check &amp; create execution
+          <button onClick={runGuardian} disabled={guardianBusy || strategy.status !== "active"} className={btnPrimary}>
+            {guardianBusy ? "Checking live state..." : "Run Exit Guardian"}
           </button>
         </div>
         {strategy.status !== "active" && (
-          <p className="text-pretty text-xs text-warning">Activate the strategy from Create Strategy before executing.</p>
+          <p className="mt-2 text-pretty text-xs text-warning">
+            Activate the strategy from Create Strategy before Exit Guardian can watch it.
+          </p>
         )}
-      </div>
+
+        {receipt && (
+          <div className="mt-5 space-y-4 rounded-xl border border-cream-100/10 bg-forest-950/50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-medium text-cream-100">
+                {receipt.decision === "triggered" && "Triggered — condition just crossed"}
+                {receipt.decision === "held" && "Holding — already acted on this crossing"}
+                {receipt.decision === "normal" && "Normal — condition not met"}
+              </span>
+              {receipt.decision === "triggered" && (
+                <span
+                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                    receipt.policyCheck.policyPassed && receipt.simulationResult?.status !== "failed"
+                      ? "bg-mint-400/15 text-mint-300"
+                      : "bg-danger/15 text-danger"
+                  }`}
+                >
+                  {!receipt.policyCheck.policyPassed
+                    ? "REFUSED"
+                    : receipt.simulationResult?.status === "failed"
+                      ? "SIMULATION FAILED"
+                      : "APPROVED"}
+                </span>
+              )}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <p className="text-xs text-cream-400">Observed rate</p>
+                <p className="mt-1 font-mono text-sm tabular-nums text-cream-100">
+                  {(receipt.observation.rateBps / 100).toFixed(2)}%
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-cream-400">Condition</p>
+                <p className="mt-1 text-sm text-cream-100">{receipt.conditionMet ? "Satisfied" : "Not satisfied"}</p>
+              </div>
+            </div>
+
+            {(receipt.policyCheck.refusalReasons?.length > 0 || receipt.simulationResult?.errorMessage) && (
+              <div className="space-y-1 rounded-lg border border-danger/20 bg-danger/5 p-3 text-xs text-danger">
+                {receipt.policyCheck.refusalReasons?.map((reason: string) => <p key={reason}>{reason}</p>)}
+                {receipt.simulationResult?.status === "failed" && receipt.simulationResult?.errorMessage && (
+                  <p>Simulation reverted: {receipt.simulationResult.errorMessage}</p>
+                )}
+              </div>
+            )}
+
+            {receipt.decision === "triggered" && receipt.policyCheck.policyPassed && receipt.simulationResult?.status === "simulated" && (
+              <p className="text-pretty text-xs text-mint-300">
+                Approved and simulated clean. Confirm the broadcast below when you&apos;re ready — Exit Guardian never
+                broadcasts on its own.
+              </p>
+            )}
+
+            <details>
+              <summary className="cursor-pointer text-xs font-medium text-cream-300">Inspect the full receipt</summary>
+              <div className="mt-3 space-y-2 font-mono text-[11px] text-cream-400">
+                <p className="break-all">Intent hash: {receipt.intentHash}</p>
+                <p className="break-all">Receipt hash: {receipt.receiptHash}</p>
+                {receipt.intent.target && <p className="break-all">Target: {receipt.intent.target}</p>}
+                {receipt.policyCheck.policy && (
+                  <p>
+                    Policy:{" "}
+                    {Object.entries(receipt.policyCheck.policy)
+                      .map(([name, ok]) => `${name}=${ok ? "pass" : "fail"}`)
+                      .join(", ")}
+                  </p>
+                )}
+                <p>Source: {receipt.source === "poller" ? "autonomous poller" : "on-demand check"}</p>
+                <p>Checked at: {new Date(receipt.createdAt).toLocaleString()}</p>
+              </div>
+            </details>
+          </div>
+        )}
+      </section>
 
       {error && <p className="text-pretty text-sm text-danger">{error}</p>}
 

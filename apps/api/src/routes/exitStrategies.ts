@@ -10,11 +10,20 @@ import { buildRolesPermissionSpec } from "../execution/rolesPermission";
 
 export const exitStrategiesRouter = Router();
 
+/**
+ * Requires safeId. This app has no wallet-authenticated ownership boundary
+ * yet (see README "Known limitations" - anyone who knows a strategy or
+ * execution ID can still act on it), so the one thing this route can and
+ * must do without that is refuse to hand out every strategy from every
+ * Safe in the database to an unauthenticated caller who supplies no
+ * scoping at all.
+ */
 exitStrategiesRouter.get("/exit-strategies", async (req, res) => {
   const safeId = typeof req.query.safeId === "string" ? req.query.safeId : undefined;
-  const rows = safeId
-    ? await db.select().from(exitStrategies).where(eq(exitStrategies.safeId, safeId))
-    : await db.select().from(exitStrategies);
+  if (!safeId) {
+    throw new HttpError(400, "safeId query parameter is required");
+  }
+  const rows = await db.select().from(exitStrategies).where(eq(exitStrategies.safeId, safeId));
   res.json(rows);
 });
 

@@ -8,6 +8,13 @@
       "when": 1788112211369,
       "tag": "0000_nebulous_spencer_smythe",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788216242750,
+      "tag": "0001_complete_multiple_man",
+      "breakpoints": true
     }
   ]
 }

@@ -56,6 +56,8 @@ export const STATUS_META: Record<string, { label: string; dot: string; text: str
   executing: { label: "Broadcasting…", dot: "bg-warning animate-pulse", text: "text-warning", bg: "bg-warning/10" },
   succeeded: { label: "Confirmed onchain", dot: "bg-mint-400", text: "text-mint-300", bg: "bg-mint-400/15" },
   failed: { label: "Failed", dot: "bg-danger", text: "text-danger", bg: "bg-danger/15" },
+  refused: { label: "Refused by policy", dot: "bg-danger", text: "text-danger", bg: "bg-danger/15" },
+  blocked: { label: "Blocked before broadcast", dot: "bg-warning", text: "text-warning", bg: "bg-warning/10" },
   cancelled: { label: "Cancelled", dot: "bg-cream-400", text: "text-cream-400", bg: "bg-cream-100/10" },
 };
 

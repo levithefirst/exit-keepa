@@ -2,16 +2,19 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import type { ExitAction, RateCondition } from "@exit-keepa/shared";
+import { resolveWithdrawAmount, type ExitAction, type RateCondition } from "@exit-keepa/shared";
 import { db } from "../db";
-import { auditEvents, exitStrategies, keeperhubExecutions, safeAccounts } from "../db/schema";
+import { agentDecisions, auditEvents, exitStrategies, keeperhubExecutions, safeAccounts } from "../db/schema";
 import { HttpError } from "../middleware/errorHandler";
 import { logger } from "../logger";
+import { env } from "../env";
 import { buildExitTransaction } from "../execution/buildTransaction";
-import { broadcastExitTransaction, simulateExitTransaction } from "../execution/executor";
+import { broadcastExitTransaction } from "../execution/executor";
+import { simulatePendingExecution } from "../execution/simulate";
 import { KeeperHubApiError } from "../keeperhub/client";
 import { evaluateRateCondition } from "../execution/evaluateCondition";
 import { decideBroadcast } from "../execution/stateMachine";
+import { checkAmountExceeded, checkStaleIntent, readAaveUsdcPositionBalance } from "../agent/broadcastGuards";
 
 export const executionsRouter = Router();
 
@@ -121,42 +124,8 @@ executionsRouter.post("/exit-strategies/:id/executions/:executionId/simulate", a
   }
 
   const tx = buildExitTransaction(strategy.action as ExitAction, safe);
-
-  let result;
-  try {
-    result = await simulateExitTransaction(tx, safe.chainId);
-  } catch (err) {
-    const [failed] = await db
-      .update(keeperhubExecutions)
-      .set({ status: "failed", errorMessage: (err as Error).message, updatedAt: new Date() })
-      .where(eq(keeperhubExecutions.id, execution.id))
-      .returning();
-    logger.error({ err, executionId: execution.id }, "KeeperHub simulation call failed");
-    res.status(502).json(failed);
-    return;
-  }
-
-  const wouldSucceed = result.parsed?.wouldRevert === false;
-  const [updated] = await db
-    .update(keeperhubExecutions)
-    .set({
-      status: wouldSucceed ? "simulated" : "failed",
-      requestPayload: result.request,
-      responsePayload: result.raw as object,
-      errorMessage: wouldSucceed ? null : (result.parsed?.revertReason ?? "Simulation failed"),
-      updatedAt: new Date(),
-    })
-    .where(eq(keeperhubExecutions.id, execution.id))
-    .returning();
-
-  await db.insert(auditEvents).values({
-    entityType: "keeperhub_execution",
-    entityId: execution.id,
-    eventType: "execution.simulated",
-    payload: { wouldSucceed, result },
-  });
-
-  res.status(200).json(updated);
+  const outcome = await simulatePendingExecution(execution.id, tx, safe.chainId);
+  res.status(outcome.callFailed ? 502 : 200).json(outcome.row);
 });
 
 /**
@@ -184,6 +153,68 @@ executionsRouter.post("/exit-strategies/:id/executions/:executionId/broadcast", 
   }
   if (decision.action === "reject") {
     throw new HttpError(409, decision.reason);
+  }
+
+  // Stale-intent and amount-exceeded checks run against live state
+  // (strategy.updatedAt, the Guardian decision's own age, the Safe's
+  // current Aave position) right before the one irreversible step, not at
+  // decision time - so an execution approved minutes ago against
+  // conditions that have since changed is blocked here instead of
+  // broadcasting on stale authority.
+  // At most one decision ever links to a given executionId (it's set once,
+  // at creation, and never reassigned - see agent/guardian.ts), so this
+  // needs no ordering.
+  const [linkedDecision] = await db
+    .select()
+    .from(agentDecisions)
+    .where(eq(agentDecisions.executionId, execution.id))
+    .limit(1);
+
+  const staleness = checkStaleIntent({
+    decisionCreatedAt: linkedDecision?.createdAt ?? null,
+    strategyUpdatedAt: strategy.updatedAt,
+    now: new Date(),
+    maxAgeMs: env.AGENT_DECISION_MAX_AGE_MS,
+  });
+
+  const action = strategy.action as ExitAction;
+  let amountGuard: { blocked: boolean; reason?: string } = { blocked: false };
+  if (action.amount !== "max") {
+    try {
+      const [livePosition, configuredAmount] = await Promise.all([
+        readAaveUsdcPositionBalance(safe.safeAddress),
+        Promise.resolve(resolveWithdrawAmount(action.amount)),
+      ]);
+      amountGuard = checkAmountExceeded(configuredAmount, livePosition);
+    } catch (err) {
+      // Can't confirm the live position - fail closed rather than assume
+      // the configured amount is still safe to withdraw.
+      amountGuard = { blocked: true, reason: `Could not verify the live Aave position before broadcast: ${(err as Error).message}` };
+    }
+  }
+
+  const guardResult = staleness.blocked ? staleness : amountGuard;
+  if (guardResult.blocked) {
+    const [blocked] = await db
+      .update(keeperhubExecutions)
+      .set({ status: "blocked", errorMessage: guardResult.reason, updatedAt: new Date() })
+      .where(and(eq(keeperhubExecutions.id, execution.id), eq(keeperhubExecutions.status, "simulated")))
+      .returning();
+
+    if (blocked) {
+      await db.insert(auditEvents).values({
+        entityType: "keeperhub_execution",
+        entityId: execution.id,
+        eventType: "execution.broadcast_blocked",
+        payload: { reason: guardResult.reason },
+      });
+      logger.warn({ executionId: execution.id, reason: guardResult.reason }, "Broadcast blocked before reaching KeeperHub");
+      res.status(200).json(blocked);
+      return;
+    }
+    // Lost the race to another request that already moved this row past
+    // `simulated` - fall through to the normal broadcast path below, which
+    // will itself see the execution is no longer `simulated` and reject.
   }
 
   // Conditional UPDATE makes the "proceed" decision race-safe: only the
