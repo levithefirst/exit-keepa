@@ -45,26 +45,53 @@ export function simulateExitTransaction(tx: BuiltTransaction, chainId: number) {
 }
 
 /**
+ * Extracts a transaction hash from a KeeperHub broadcast response,
+ * checking every field name/nesting actually observed across this
+ * project's live broadcasts, plus the common aliases other KeeperHub
+ * response shapes could plausibly use. LIVE-VERIFIED response shape for a
+ * successful broadcast (2026-08-31,
+ * tx 0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b):
+ * `{ status: "completed", executionId, transactionHash, transactionLink }`
+ * - no `wouldRevert` key, so it does NOT parse as
+ * ExecTransactionWithRoleResult. The original implementation only
+ * checked `parsed?.transactionHash` (gated on `wouldRevert` being
+ * present) and a top-level `result` string, so it missed this exact
+ * shape and reported a real, successful, on-chain broadcast as failed.
+ * Never invents a hash - only returns one that was actually present in
+ * the response.
+ */
+function extractTransactionHash(raw: unknown, parsed: ExecTransactionWithRoleResult | null): string | undefined {
+  if (parsed?.transactionHash) return parsed.transactionHash;
+  if (!raw || typeof raw !== "object") return undefined;
+  const body = raw as Record<string, unknown>;
+  const nested = [body, body.result, body.data].filter(
+    (candidate): candidate is Record<string, unknown> => Boolean(candidate) && typeof candidate === "object",
+  );
+  for (const candidate of nested) {
+    for (const key of ["transactionHash", "txHash", "hash"]) {
+      const value = candidate[key];
+      if (typeof value === "string") return value;
+    }
+  }
+  // `result` itself as a bare string (the shape used by a plain read call).
+  if (typeof body.result === "string") return body.result;
+  return undefined;
+}
+
+/**
  * Broadcasts the transaction for real (simulate: false). Only ever call
  * this after a successful simulation and after confirming no prior
  * broadcast exists for this execution row - see routes/executions.ts.
  *
- * The exact response shape for a real broadcast has not been previously
- * live-verified in this project (only reverting/simulated calls have
- * been). So a transaction hash is only ever trusted, stored, or reported
- * to the user if it matches a well-formed 66-character 0x hash - anything
- * else is treated as "broadcast attempted, hash unconfirmed" rather than
+ * A transaction hash is only ever trusted, stored, or reported to the
+ * user if it matches a well-formed 66-character 0x hash - anything else
+ * is treated as "broadcast attempted, hash unconfirmed" rather than
  * fabricated or guessed at.
  */
 export async function broadcastExitTransaction(tx: BuiltTransaction, chainId: number) {
   const result = await callExecTransactionWithRole(tx, chainId, false);
 
-  const candidateHash =
-    result.parsed?.transactionHash ??
-    (typeof (result.raw as Record<string, unknown> | undefined)?.result === "string"
-      ? ((result.raw as Record<string, unknown>).result as string)
-      : undefined);
-
+  const candidateHash = extractTransactionHash(result.raw, result.parsed);
   const txHash = candidateHash && VALID_TX_HASH.test(candidateHash) ? candidateHash : null;
 
   if (candidateHash && !txHash) {

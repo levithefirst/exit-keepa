@@ -87,4 +87,34 @@ describe("broadcastExitTransaction", () => {
     const result = await broadcastExitTransaction(TX, 8453);
     expect(result.txHash).toBeNull();
   });
+
+  it("extracts the hash from a real successful-broadcast response (no wouldRevert key)", async () => {
+    // Live-captured 2026-08-31: real successful broadcast
+    // (0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b,
+    // confirmed on Base, receipt status 0x1). This shape has no
+    // `wouldRevert` field, so it never parses as
+    // ExecTransactionWithRoleResult - regression test for the bug where
+    // this exact response was reported as a failed execution.
+    const REAL_HASH = "0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b";
+    vi.mocked(keeperHubClient.callContractFunction).mockResolvedValue({
+      status: "completed",
+      executionId: "u9zr4vzbfurjvzgwz687g",
+      transactionHash: REAL_HASH,
+      transactionLink: `https://basescan.org/tx/${REAL_HASH}`,
+    } as never);
+
+    const result = await broadcastExitTransaction(TX, 8453);
+    expect(result.txHash).toBe(REAL_HASH);
+  });
+
+  it.each([
+    { shape: "txHash", body: { txHash: "0x" + "2".repeat(64) } },
+    { shape: "hash", body: { hash: "0x" + "3".repeat(64) } },
+    { shape: "result.transactionHash", body: { result: { transactionHash: "0x" + "4".repeat(64) } } },
+    { shape: "data.transactionHash", body: { data: { transactionHash: "0x" + "5".repeat(64) } } },
+  ])("also recognizes the $shape field name", async ({ body }) => {
+    vi.mocked(keeperHubClient.callContractFunction).mockResolvedValue(body as never);
+    const result = await broadcastExitTransaction(TX, 8453);
+    expect(result.txHash).toMatch(/^0x[a-fA-F0-9]{64}$/);
+  });
 });
