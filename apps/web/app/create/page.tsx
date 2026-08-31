@@ -5,8 +5,23 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
 import { getStoredSafeId } from "../../lib/storage";
+import { PageHeader } from "../../components/ui/PageHeader";
+import { Card, CardHeader } from "../../components/ui/Card";
+import { Button } from "../../components/ui/Button";
+import { Field, TextInput } from "../../components/ui/Field";
+import { Alert } from "../../components/ui/Alert";
+import { Disclosure } from "../../components/ui/Disclosure";
+import { DataRow } from "../../components/ui/DataRow";
+import { EmptyState } from "../../components/ui/EmptyState";
 
 const AAVE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+const COMPARATOR_LABEL: Record<string, string> = {
+  lt: "drops below",
+  lte: "is at or below",
+  gt: "rises above",
+  gte: "is at or above",
+};
 
 export default function CreateStrategyPage() {
   const { address } = useWallet();
@@ -22,26 +37,32 @@ export default function CreateStrategyPage() {
   const [strategyId, setStrategyId] = useState<string | null>(null);
   const [preview, setPreview] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [step, setStep] = useState<"form" | "review" | "activated">("form");
 
   useEffect(() => {
     if (address) setSafeId(getStoredSafeId(address));
   }, [address]);
 
-  if (!address) return <p className="text-gray-400">Connect your wallet first.</p>;
+  if (!address) {
+    return <EmptyState title="Connect your wallet first" description="Strategies are tied to your connected Safe." />;
+  }
   if (!safeId)
     return (
-      <p className="text-gray-400">
-        You need to connect a Safe on the{" "}
-        <a href="/dashboard" className="underline">
-          Dashboard
-        </a>{" "}
-        before creating a strategy.
-      </p>
+      <EmptyState
+        title="No Safe connected yet"
+        description="You need to connect a Safe on the Dashboard before creating a strategy."
+        action={
+          <a href="/dashboard" className="text-sm text-accent underline">
+            Go to Dashboard
+          </a>
+        }
+      />
     );
 
   async function createAndPreview() {
     setError(null);
+    setSubmitting(true);
     try {
       const strategy: any = await api.createStrategy({
         safeId,
@@ -65,198 +86,208 @@ export default function CreateStrategyPage() {
       setStep("review");
     } catch (err) {
       setError((err as Error).message);
+    } finally {
+      setSubmitting(false);
     }
   }
 
   async function activate() {
     if (!strategyId) return;
     setError(null);
+    setSubmitting(true);
     try {
       await api.activateStrategy(strategyId);
       setStep("activated");
     } catch (err) {
       setError((err as Error).message);
+    } finally {
+      setSubmitting(false);
     }
   }
 
   if (step === "activated") {
     return (
-      <div className="max-w-lg space-y-4">
-        <h1 className="text-2xl font-bold text-white">Strategy activated</h1>
-        <p className="text-sm text-gray-400">
-          Exit Keepa will execute this transaction through your Safe once the condition is met.
-        </p>
-        <button
-          onClick={() => router.push(`/strategy/${strategyId}`)}
-          className="rounded bg-accent px-4 py-2 text-sm font-medium text-black"
-        >
-          View Strategy
-        </button>
+      <div className="max-w-lg space-y-5">
+        <Alert tone="success" title="Strategy activated">
+          Exit Keepa is now monitoring this condition. It will execute this exact transaction through your Safe once
+          the condition is met — nothing has been broadcast yet.
+        </Alert>
+        <Button onClick={() => router.push(`/strategy/${strategyId}`)}>View Strategy</Button>
       </div>
     );
   }
 
   if (step === "review" && preview) {
     const canActivate = Boolean(preview.tx);
+    const thresholdLabel = `${thresholdPct}%`;
     return (
-      <div className="max-w-xl space-y-5">
-        <h1 className="text-2xl font-bold text-white">Review the exact transaction</h1>
-        <p className="text-sm text-gray-400">
-          This is deterministically rebuilt from your strategy — nothing here is user-suppliable calldata.
-        </p>
+      <div className="max-w-2xl space-y-6">
+        <PageHeader
+          eyebrow="Step 2 of 2"
+          title="Review before activating"
+          description="This is deterministically rebuilt from your strategy — nothing here is user-suppliable calldata."
+        />
+
+        <Card className="space-y-3">
+          <CardHeader title="In plain terms" />
+          <ul className="space-y-2.5 text-sm">
+            <li className="flex gap-2">
+              <span className="text-gray-500">Protecting</span>
+              <span className="text-gray-200">Your Safe&apos;s USDC supply position on Aave v3 (Base)</span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-gray-500">Trigger</span>
+              <span className="text-gray-200">
+                Exit when USDC supply APR {COMPARATOR_LABEL[comparator]} {thresholdLabel}
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-gray-500">Action</span>
+              <span className="text-gray-200">
+                Withdraw {amountMode === "max" ? "the entire position" : `${exactAmount || "0"} (smallest units)`}{" "}
+                back to your own Safe — funds never leave your custody
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-gray-500">When active</span>
+              <span className="text-gray-200">Only monitoring turns on — nothing is simulated or broadcast yet</span>
+            </li>
+          </ul>
+        </Card>
 
         {preview.tx ? (
-          <div className="space-y-2 rounded-lg border border-white/10 p-4 font-mono text-xs">
-            <p>
-              <span className="text-gray-500">Target: </span>
-              {preview.tx.to}
-            </p>
-            <p>
-              <span className="text-gray-500">Function: </span>
-              {preview.tx.decodedFunction}
-            </p>
-            <p>
-              <span className="text-gray-500">Args: </span>
-              {JSON.stringify(preview.tx.decodedArgs)}
-            </p>
-            <p>
-              <span className="text-gray-500">Calldata: </span>
-              <span className="break-all">{preview.tx.data}</span>
-            </p>
-            <p>
-              <span className="text-gray-500">Via Roles Modifier: </span>
-              {preview.tx.rolesModifierAddress}
-            </p>
-          </div>
+          <Disclosure summary="Technical transaction details">
+            <div className="-mt-1">
+              <DataRow label="Target">{preview.tx.to}</DataRow>
+              <DataRow label="Function">{preview.tx.decodedFunction}</DataRow>
+              <DataRow label="Args">{JSON.stringify(preview.tx.decodedArgs)}</DataRow>
+              <DataRow label="Calldata">{preview.tx.data}</DataRow>
+              <DataRow label="Via Roles Modifier">{preview.tx.rolesModifierAddress}</DataRow>
+            </div>
+          </Disclosure>
         ) : (
-          <p className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 text-sm text-yellow-300">
+          <Alert tone="warning" title="Roles permission not yet granted">
             {preview.txError}
-          </p>
+          </Alert>
         )}
 
         {preview.rolesPermission && (
-          <div className="rounded-lg border border-white/10 p-4 space-y-2">
-            <h2 className="font-semibold text-white">Roles permission required</h2>
-            <p className="text-xs text-gray-500">{preview.rolesPermission.note}</p>
-            <div className="space-y-1 font-mono text-xs text-gray-300">
-              <p>Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})</p>
-              <p>Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})</p>
+          <Card className="space-y-3">
+            <CardHeader
+              title="Roles permission required"
+              description={preview.rolesPermission.note}
+            />
+            <div className="-mt-1 -mb-1">
+              <DataRow label="Target">
+                {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})
+              </DataRow>
+              <DataRow label="Function">
+                {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})
+              </DataRow>
               {preview.rolesPermission.conditions.map((c: any) => (
-                <p key={c.param}>· {c.param} ({c.type}): {c.rule}</p>
+                <DataRow key={c.param} label={c.param}>
+                  ({c.type}) {c.rule}
+                </DataRow>
               ))}
-              <p>Execution options: {preview.rolesPermission.executionOptions}</p>
+              <DataRow label="Execution options">{preview.rolesPermission.executionOptions}</DataRow>
             </div>
             <a
               href={preview.rolesPermission.safeAppUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-block rounded border border-accent/40 px-3 py-1.5 text-xs font-medium text-accent"
+              className="inline-block text-sm font-medium text-accent underline"
             >
               Open Zodiac Roles app for this Safe →
             </a>
-          </div>
+          </Card>
         )}
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <Alert tone="danger">{error}</Alert>}
+
         <div className="flex gap-3">
-          <button
-            onClick={activate}
-            disabled={!canActivate}
-            className="rounded bg-accent px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
-          >
-            Activate Strategy
-          </button>
-          <button
-            onClick={() => setStep("form")}
-            className="rounded border border-white/20 px-4 py-2 text-sm text-gray-300"
-          >
+          <Button onClick={activate} disabled={!canActivate || submitting}>
+            {submitting ? "Activating…" : "Activate Strategy"}
+          </Button>
+          <Button variant="secondary" onClick={() => setStep("form")}>
             Back
-          </button>
+          </Button>
         </div>
-        <p className="text-xs text-gray-500">
-          Activating only turns monitoring on — it does not simulate or broadcast anything. Do that from the strategy
-          detail page.
-        </p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-lg space-y-5">
-      <h1 className="text-2xl font-bold text-white">Create Exit Strategy</h1>
+    <div className="max-w-lg space-y-6">
+      <PageHeader
+        eyebrow="Step 1 of 2"
+        title="Create exit strategy"
+        description="Define what you're protecting and the condition that should trigger an exit."
+      />
 
-      <div>
-        <label className="mb-1 block text-sm text-gray-400">Name</label>
-        <input
-          className="w-full rounded border border-white/20 bg-transparent px-3 py-2 text-sm"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Exit USDC when supply APR drops"
-        />
-      </div>
+      <Card className="space-y-4">
+        <CardHeader title="Strategy" />
+        <Field label="Name" hint="Optional — helps you tell strategies apart on the dashboard.">
+          <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Exit USDC when supply APR drops" />
+        </Field>
+      </Card>
 
-      <div>
-        <label className="mb-1 block text-sm text-gray-400">Protocol / Market</label>
-        <div className="rounded border border-white/20 px-3 py-2 text-sm text-gray-300">
-          Aave v3 on Base — USDC supply (only supported protocol in v1)
+      <Card className="space-y-4">
+        <CardHeader title="What you're protecting" />
+        <div className="rounded-lg border border-white/10 bg-ink px-3 py-2.5 text-sm text-gray-300">
+          Aave v3 on Base — USDC supply position
+          <span className="ml-2 text-xs text-gray-500">(only supported market in v1)</span>
         </div>
-      </div>
+      </Card>
 
-      <div>
-        <label className="mb-1 block text-sm text-gray-400">Exit action</label>
-        <div className="space-y-2 rounded border border-white/20 p-3 text-sm">
-          <p className="text-gray-300">
-            Withdraw USDC from Aave back to your Safe (<code>withdraw(asset, amount, to)</code>)
-          </p>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-1 text-xs text-gray-400">
-              <input type="radio" checked={amountMode === "max"} onChange={() => setAmountMode("max")} />
-              Withdraw entire position
-            </label>
-            <label className="flex items-center gap-1 text-xs text-gray-400">
-              <input type="radio" checked={amountMode === "exact"} onChange={() => setAmountMode("exact")} />
-              Exact amount (smallest units)
-            </label>
-          </div>
-          {amountMode === "exact" && (
-            <input
-              className="w-full rounded border border-white/20 bg-transparent px-3 py-2 text-sm"
-              placeholder="e.g. 1000000 for 1 USDC"
-              value={exactAmount}
-              onChange={(e) => setExactAmount(e.target.value)}
-            />
-          )}
+      <Card className="space-y-4">
+        <CardHeader title="Exit action" description="Funds are always withdrawn back to your own Safe — never elsewhere." />
+        <div className="flex gap-4 text-sm">
+          <label className="flex items-center gap-2 text-gray-300">
+            <input type="radio" checked={amountMode === "max"} onChange={() => setAmountMode("max")} />
+            Withdraw entire position
+          </label>
+          <label className="flex items-center gap-2 text-gray-300">
+            <input type="radio" checked={amountMode === "exact"} onChange={() => setAmountMode("exact")} />
+            Exact amount
+          </label>
         </div>
-      </div>
+        {amountMode === "exact" && (
+          <TextInput
+            placeholder="e.g. 1000000 for 1 USDC (smallest units)"
+            value={exactAmount}
+            onChange={(e) => setExactAmount(e.target.value)}
+          />
+        )}
+      </Card>
 
-      <div>
-        <label className="mb-1 block text-sm text-gray-400">Trigger condition</label>
-        <div className="flex items-center gap-2 text-sm">
+      <Card className="space-y-3">
+        <CardHeader title="Trigger condition" description="What should cause Exit Keepa to act." />
+        <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="text-gray-400">Exit when USDC supply APR</span>
           <select
             value={comparator}
             onChange={(e) => setComparator(e.target.value as any)}
-            className="rounded border border-white/20 bg-ink px-2 py-1"
+            className="rounded-lg border border-white/15 bg-ink px-2.5 py-2 text-gray-200"
           >
-            <option value="lt">is below</option>
+            <option value="lt">drops below</option>
             <option value="lte">is at or below</option>
-            <option value="gt">is above</option>
+            <option value="gt">rises above</option>
             <option value="gte">is at or above</option>
           </select>
           <input
-            className="w-20 rounded border border-white/20 bg-transparent px-2 py-1"
+            className="w-20 rounded-lg border border-white/15 bg-ink px-2.5 py-2 text-gray-200"
             value={thresholdPct}
             onChange={(e) => setThresholdPct(e.target.value)}
           />
           <span className="text-gray-400">%</span>
         </div>
-      </div>
+      </Card>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <Alert tone="danger">{error}</Alert>}
 
-      <button onClick={createAndPreview} className="rounded bg-accent px-4 py-2 text-sm font-medium text-black">
-        Preview Transaction
-      </button>
+      <Button onClick={createAndPreview} disabled={submitting}>
+        {submitting ? "Building preview…" : "Preview Transaction"}
+      </Button>
     </div>
   );
 }

@@ -3,6 +3,15 @@
 @tailwind utilities;
 
 body {
-  background: #0b1120;
-  color: #e5e7eb;
+  background: theme("colors.ink");
+  color: theme("colors.gray.200");
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numeric/address/hash content should align on a monospace grid — this is
+   the one deliberate typographic contrast in the system, reserved for
+   on-chain data (addresses, calldata, tx hashes, amounts). */
+.data-mono {
+  font-variant-numeric: tabular-nums;
 }

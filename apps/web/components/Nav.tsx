@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useWallet } from "../lib/wallet";
+import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
 
 function short(addr: string) {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
 export function Nav() {
@@ -12,54 +14,54 @@ export function Nav() {
     useWallet();
 
   return (
-    <nav className="border-b border-white/10">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-        <Link href="/" className="font-semibold text-white">
+    <nav className="border-b border-white/10 bg-ink/95 backdrop-blur">
+      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3.5">
+        <Link href="/" className="flex items-center gap-2 font-semibold text-white">
+          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-accent text-xs font-bold text-black">
+            EK
+          </span>
           Exit Keepa
         </Link>
-        <div className="flex items-center gap-4 text-sm">
-          <Link href="/dashboard" className="text-gray-300 hover:text-white">
+        <div className="flex items-center gap-5 text-sm">
+          <Link href="/dashboard" className="text-gray-400 transition-colors hover:text-white">
             Dashboard
           </Link>
-          <Link href="/create" className="text-gray-300 hover:text-white">
+          <Link href="/create" className="text-gray-400 transition-colors hover:text-white">
             Create Strategy
           </Link>
           {address ? (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               {!isDemo && chainId !== 8453 && (
-                <button
-                  onClick={switchToBase}
-                  className="rounded bg-yellow-600/20 px-2 py-1 text-xs text-yellow-300"
-                >
-                  Wrong network — switch to Base
+                <button onClick={switchToBase}>
+                  <Badge tone="warning">Wrong network — switch to Base</Badge>
                 </button>
               )}
               {isDemo ? (
-                <span className="rounded bg-yellow-600/20 px-3 py-1 text-xs text-yellow-300">Demo mode</span>
+                <Badge tone="warning">Demo mode</Badge>
               ) : (
-                <span className="rounded bg-white/10 px-3 py-1 font-mono text-xs">{short(address)}</span>
+                <span className="data-mono rounded-full border border-white/10 bg-surface px-3 py-1 font-mono text-xs text-gray-300">
+                  {short(address)}
+                </span>
               )}
-              <button onClick={disconnect} className="text-xs text-gray-400 hover:text-white">
+              <Button variant="ghost" size="sm" onClick={disconnect} className="px-0">
                 {isDemo ? "Exit demo" : "Disconnect"}
-              </button>
+              </Button>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={connect}
-                disabled={connecting}
-                className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-black disabled:opacity-50"
-              >
-                {connecting ? "Connecting..." : "Connect Wallet"}
-              </button>
-              <button onClick={enterDemoMode} className="text-xs text-gray-400 underline hover:text-white">
+            <div className="flex items-center gap-3">
+              <Button size="sm" onClick={connect} disabled={connecting}>
+                {connecting ? "Connecting…" : "Connect Wallet"}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={enterDemoMode} className="px-0 underline">
                 Try demo mode
-              </button>
+              </Button>
             </div>
           )}
         </div>
       </div>
-      {error && <p className="mx-auto max-w-5xl px-6 pb-2 text-xs text-red-400">{error}</p>}
+      {error && (
+        <p className="mx-auto max-w-5xl px-6 pb-2.5 text-xs text-danger">{error}</p>
+      )}
     </nav>
   );
 }

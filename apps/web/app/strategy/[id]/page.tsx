@@ -2,6 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
+import { STRATEGY_STATUS, EXECUTION_STATUS } from "../../../lib/status";
+import { PageHeader } from "../../../components/ui/PageHeader";
+import { Card, CardHeader } from "../../../components/ui/Card";
+import { Badge } from "../../../components/ui/Badge";
+import { Button } from "../../../components/ui/Button";
+import { Alert } from "../../../components/ui/Alert";
+import { Disclosure } from "../../../components/ui/Disclosure";
+import { DataRow } from "../../../components/ui/DataRow";
+import { Field, TextInput } from "../../../components/ui/Field";
+import { EmptyState } from "../../../components/ui/EmptyState";
 
 const BASESCAN = "https://basescan.org";
 
@@ -30,8 +40,8 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  if (error && !strategy) return <p className="text-sm text-red-400">{error}</p>;
-  if (!strategy) return <p className="text-sm text-gray-500">Loading...</p>;
+  if (error && !strategy) return <Alert tone="danger">{error}</Alert>;
+  if (!strategy) return <p className="text-sm text-gray-500">Loading…</p>;
 
   async function createExecution() {
     setBusy(true);
@@ -72,152 +82,144 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
     }
   }
 
+  const strategyMeta = STRATEGY_STATUS[strategy.status as keyof typeof STRATEGY_STATUS];
+
   return (
     <div className="max-w-2xl space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-white">{strategy.name}</h1>
-        <span
-          className={`mt-1 inline-block rounded px-2 py-0.5 text-xs ${
-            strategy.status === "active" ? "bg-accent/20 text-accent" : "bg-white/10 text-gray-400"
-          }`}
-        >
-          {strategy.status}
-        </span>
-      </div>
+      <PageHeader
+        title={strategy.name}
+        action={
+          <Badge tone={strategyMeta.tone} pending={strategyMeta.pending}>
+            {strategyMeta.label}
+          </Badge>
+        }
+      />
 
-      <div className="rounded-lg border border-white/10 p-4">
-        <h2 className="mb-2 font-semibold text-white">Condition</h2>
+      <Card>
+        <CardHeader title="Condition" />
         <p className="text-sm text-gray-300">
-          {strategy.condition.market} — {strategy.condition.metric} {strategy.condition.comparator}{" "}
-          {strategy.condition.thresholdBps / 100}%
+          {strategy.condition.market} — exit when {strategy.condition.metric.replace("_", " ")}{" "}
+          {strategy.condition.comparator} {strategy.condition.thresholdBps / 100}%
         </p>
-      </div>
+      </Card>
 
-      {preview?.tx && (
-        <div className="rounded-lg border border-white/10 p-4">
-          <h2 className="mb-2 font-semibold text-white">Configured transaction</h2>
-          <div className="space-y-1 font-mono text-xs text-gray-300">
-            <p>Target contract: {preview.tx.to}</p>
-            <p>Function: {preview.tx.decodedFunction}</p>
-            <p>Args: {JSON.stringify(preview.tx.decodedArgs)}</p>
-            <p className="break-all">Calldata: {preview.tx.data}</p>
+      {preview?.tx ? (
+        <Disclosure summary="Configured transaction (technical details)">
+          <div className="-mt-1">
+            <DataRow label="Target">{preview.tx.to}</DataRow>
+            <DataRow label="Function">{preview.tx.decodedFunction}</DataRow>
+            <DataRow label="Args">{JSON.stringify(preview.tx.decodedArgs)}</DataRow>
+            <DataRow label="Calldata">{preview.tx.data}</DataRow>
           </div>
-        </div>
-      )}
-
-      {preview && !preview.tx && (
-        <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 space-y-2">
-          <h2 className="font-semibold text-yellow-300">Roles permission not yet granted</h2>
-          <p className="text-xs text-gray-400">{preview.txError}</p>
+        </Disclosure>
+      ) : preview ? (
+        <Card className="space-y-3 border-warning/30 bg-warning-soft">
+          <CardHeader title={<span className="text-warning">Roles permission not yet granted</span>} description={preview.txError} />
           {preview.rolesPermission && (
             <>
-              <div className="space-y-1 font-mono text-xs text-gray-300">
-                <p>
-                  Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})
-                </p>
-                <p>
-                  Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})
-                </p>
+              <div className="-mt-1 -mb-1">
+                <DataRow label="Target">
+                  {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})
+                </DataRow>
+                <DataRow label="Function">
+                  {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})
+                </DataRow>
                 {preview.rolesPermission.conditions.map((c: any) => (
-                  <p key={c.param}>
-                    · {c.param} ({c.type}): {c.rule}
-                  </p>
+                  <DataRow key={c.param} label={c.param}>
+                    ({c.type}) {c.rule}
+                  </DataRow>
                 ))}
               </div>
               <a
                 href={preview.rolesPermission.safeAppUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-block rounded border border-accent/40 px-3 py-1.5 text-xs font-medium text-accent"
+                className="inline-block text-sm font-medium text-accent underline"
               >
                 Open Zodiac Roles app for this Safe →
               </a>
             </>
           )}
-        </div>
-      )}
+        </Card>
+      ) : null}
 
-      <div className="rounded-lg border border-white/10 p-4 space-y-3">
-        <h2 className="font-semibold text-white">Manual trigger (demo)</h2>
-        <p className="text-xs text-gray-500">
-          Exit Keepa v1 doesn&apos;t yet run a live on-chain rate oracle (see README limitations) — enter the current rate
-          to check against the condition, exactly as a real monitor would.
-        </p>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-400">Current supply APR (bps):</span>
-          <input
-            className="w-24 rounded border border-white/20 bg-transparent px-2 py-1 text-sm"
-            value={currentRateBps}
-            onChange={(e) => setCurrentRateBps(e.target.value)}
-          />
-          <button
-            onClick={createExecution}
-            disabled={busy || strategy.status !== "active"}
-            className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-black disabled:opacity-50"
-          >
-            Check & Create Execution
-          </button>
+      <Card className="space-y-3">
+        <CardHeader
+          title="Manual trigger (demo tool)"
+          description="Exit Keepa v1 doesn't yet run a live on-chain rate oracle. Enter the current rate to check it against the condition, exactly as a real monitor would."
+        />
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Current supply APR (bps)">
+            <TextInput
+              className="w-32"
+              value={currentRateBps}
+              onChange={(e) => setCurrentRateBps(e.target.value)}
+            />
+          </Field>
+          <Button onClick={createExecution} disabled={busy || strategy.status !== "active"} size="sm">
+            Check &amp; create execution
+          </Button>
         </div>
         {strategy.status !== "active" && (
-          <p className="text-xs text-yellow-400">Activate the strategy from Create Strategy before executing.</p>
+          <p className="text-xs text-warning">Activate the strategy from Create Strategy before executing.</p>
         )}
-      </div>
+      </Card>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <Alert tone="danger">{error}</Alert>}
 
-      <div>
-        <h2 className="mb-3 font-semibold text-white">Execution history</h2>
-        {executions.length === 0 && <p className="text-sm text-gray-500">No executions yet.</p>}
+      <div className="space-y-4">
+        <div>
+          <h2 className="font-semibold text-white">Execution history</h2>
+          <p className="mt-1 text-xs text-gray-500">
+            Simulate previews the outcome with no on-chain effect. Execute broadcasts the real transaction.
+          </p>
+        </div>
+
+        {executions.length === 0 && (
+          <EmptyState title="No executions yet" description="Executions appear here once the condition is checked." />
+        )}
+
         <div className="space-y-3">
-          {executions.map((e) => (
-            <div key={e.id} className="rounded-lg border border-white/10 p-4">
-              <div className="flex items-center justify-between">
-                <span
-                  className={`rounded px-2 py-0.5 text-xs ${
-                    e.status === "succeeded"
-                      ? "bg-accent/20 text-accent"
-                      : e.status === "failed"
-                        ? "bg-red-500/20 text-red-300"
-                        : "bg-white/10 text-gray-400"
-                  }`}
-                >
-                  {e.status}
-                </span>
-                <span className="text-xs text-gray-500">{new Date(e.createdAt).toLocaleString()}</span>
-              </div>
-              {e.errorMessage && <p className="mt-1 text-xs text-red-400">{e.errorMessage}</p>}
-              {e.txHash && (
-                <a
-                  href={`${BASESCAN}/tx/${e.txHash}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-1 block break-all font-mono text-xs text-accent underline"
-                >
-                  {e.txHash}
-                </a>
-              )}
-              <div className="mt-2 flex gap-2">
-                {e.status === "pending" && (
-                  <button
-                    onClick={() => simulate(e.id)}
-                    disabled={busy}
-                    className="rounded border border-white/20 px-3 py-1 text-xs text-gray-200 disabled:opacity-50"
-                  >
-                    Simulate
-                  </button>
+          {executions.map((e) => {
+            const meta = EXECUTION_STATUS[e.status as keyof typeof EXECUTION_STATUS];
+            return (
+              <Card key={e.id}>
+                <div className="flex items-center justify-between gap-3">
+                  <Badge tone={meta.tone} pending={meta.pending}>
+                    {meta.label}
+                  </Badge>
+                  <span className="text-xs text-gray-500">{new Date(e.createdAt).toLocaleString()}</span>
+                </div>
+                {e.errorMessage && (
+                  <p className="mt-2 text-sm text-danger">{e.errorMessage}</p>
                 )}
-                {e.status === "simulated" && (
-                  <button
-                    onClick={() => broadcast(e.id)}
-                    disabled={busy}
-                    className="rounded bg-accent px-3 py-1 text-xs font-medium text-black disabled:opacity-50"
+                {e.txHash && (
+                  <a
+                    href={`${BASESCAN}/tx/${e.txHash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="data-mono mt-2 block break-all font-mono text-xs text-accent underline"
                   >
-                    Execute (broadcast)
-                  </button>
+                    {e.txHash}
+                  </a>
                 )}
-              </div>
-            </div>
-          ))}
+                {(e.status === "pending" || e.status === "simulated") && (
+                  <div className="mt-3 flex gap-2">
+                    {e.status === "pending" && (
+                      <Button variant="secondary" size="sm" onClick={() => simulate(e.id)} disabled={busy}>
+                        Simulate
+                      </Button>
+                    )}
+                    {e.status === "simulated" && (
+                      <Button size="sm" onClick={() => broadcast(e.id)} disabled={busy}>
+                        Execute (broadcast)
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </Card>
+            );
+          })}
         </div>
       </div>
     </div>

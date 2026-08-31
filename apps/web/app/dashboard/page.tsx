@@ -5,6 +5,14 @@ import Link from "next/link";
 import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
 import { getStoredSafeId, setStoredSafeId } from "../../lib/storage";
+import { STRATEGY_STATUS } from "../../lib/status";
+import { PageHeader } from "../../components/ui/PageHeader";
+import { Card, CardHeader } from "../../components/ui/Card";
+import { Badge } from "../../components/ui/Badge";
+import { Button, LinkButton } from "../../components/ui/Button";
+import { Field, TextInput } from "../../components/ui/Field";
+import { Alert } from "../../components/ui/Alert";
+import { EmptyState } from "../../components/ui/EmptyState";
 
 const BASESCAN = "https://basescan.org";
 const DEMO_SAFE = "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9";
@@ -41,7 +49,12 @@ export default function DashboardPage() {
   }, [safeId]);
 
   if (!address) {
-    return <p className="text-gray-400">Connect your wallet to see your dashboard.</p>;
+    return (
+      <EmptyState
+        title="Connect your wallet to see your dashboard"
+        description="You'll be able to register a Safe and manage exit strategies once connected."
+      />
+    );
   }
 
   async function registerSafe() {
@@ -62,117 +75,156 @@ export default function DashboardPage() {
 
   if (!safeId) {
     return (
-      <div className="max-w-md space-y-4">
-        <h1 className="text-2xl font-bold text-white">Connect your Safe</h1>
-        <p className="text-sm text-gray-400">
-          Enter the Safe you want Exit Keepa to protect. If it already has a Zodiac Roles Modifier enabled, add its
-          address and role key so strategies can be activated immediately.
-        </p>
-        <input
-          className="w-full rounded border border-white/20 bg-transparent px-3 py-2 text-sm"
-          placeholder="Safe address (0x...)"
-          value={formSafeAddress}
-          onChange={(e) => setFormSafeAddress(e.target.value)}
+      <div className="max-w-lg space-y-6">
+        <PageHeader
+          eyebrow="Step 1 of 1"
+          title="Connect your Safe"
+          description="Enter the Safe you want Exit Keepa to protect. If it already has a Zodiac Roles Modifier enabled, add its address and role key so strategies can be activated immediately."
         />
-        <input
-          className="w-full rounded border border-white/20 bg-transparent px-3 py-2 text-sm"
-          placeholder="Roles Modifier address (optional)"
-          value={formRoles}
-          onChange={(e) => setFormRoles(e.target.value)}
-        />
-        <input
-          className="w-full rounded border border-white/20 bg-transparent px-3 py-2 text-sm"
-          placeholder="Role key, bytes32 (optional)"
-          value={formRoleKey}
-          onChange={(e) => setFormRoleKey(e.target.value)}
-        />
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <div className="flex gap-3">
-          <button onClick={registerSafe} className="rounded bg-accent px-4 py-2 text-sm font-medium text-black">
-            Save Safe
-          </button>
-          {isDemo && (
-            <button
-              onClick={() => {
-                setFormSafeAddress(DEMO_SAFE);
-                setFormRoles(DEMO_ROLES_MODIFIER);
-                setFormRoleKey(DEMO_ROLE_KEY);
-              }}
-              className="rounded border border-white/20 px-4 py-2 text-sm text-gray-300"
-            >
-              Fill in the live demo Safe
-            </button>
-          )}
-        </div>
+        <Card className="space-y-4">
+          <Field label="Safe address" hint="The Gnosis Safe holding the position you want to protect.">
+            <TextInput
+              placeholder="0x..."
+              value={formSafeAddress}
+              onChange={(e) => setFormSafeAddress(e.target.value)}
+            />
+          </Field>
+          <Field label="Roles Modifier address" hint="Optional — you can add this later from the strategy review screen.">
+            <TextInput
+              placeholder="0x... (optional)"
+              value={formRoles}
+              onChange={(e) => setFormRoles(e.target.value)}
+            />
+          </Field>
+          <Field label="Role key" hint="bytes32 value (optional).">
+            <TextInput
+              placeholder="0x... (optional)"
+              value={formRoleKey}
+              onChange={(e) => setFormRoleKey(e.target.value)}
+            />
+          </Field>
+          {error && <Alert tone="danger">{error}</Alert>}
+          <div className="flex gap-3 pt-1">
+            <Button onClick={registerSafe} disabled={!formSafeAddress}>
+              Save Safe
+            </Button>
+            {isDemo && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setFormSafeAddress(DEMO_SAFE);
+                  setFormRoles(DEMO_ROLES_MODIFIER);
+                  setFormRoleKey(DEMO_ROLE_KEY);
+                }}
+              >
+                Fill in the live demo Safe
+              </Button>
+            )}
+          </div>
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-        <p className="text-sm text-gray-400">Connected: {address}</p>
-      </div>
+    <div className="space-y-10">
+      <PageHeader
+        title="Dashboard"
+        description={`Connected: ${address}`}
+      />
 
       {safe && (
-        <div className="rounded-lg border border-white/10 p-5">
-          <h2 className="mb-2 font-semibold text-white">Safe</h2>
-          <p className="font-mono text-sm text-gray-300">{safe.safeAddress}</p>
-          <p className="text-xs text-gray-500">Chain: Base ({safe.chainId})</p>
-          <p className="text-xs text-gray-500">
-            Roles Modifier: {safe.rolesModifierAddress ?? <span className="text-yellow-400">not configured</span>}
-          </p>
-          {balances && (
-            <p className="mt-2 text-sm text-gray-300">
-              Balances — ETH: {(Number(balances.eth) / 1e18).toFixed(5)} · USDC: {(Number(balances.usdc) / 1e6).toFixed(2)}
-            </p>
-          )}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-white">Your Strategies</h2>
-        <Link href="/create" className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-black">
-          + New Strategy
-        </Link>
-      </div>
-
-      {loading && <p className="text-sm text-gray-500">Loading...</p>}
-      {!loading && strategies.length === 0 && (
-        <p className="text-sm text-gray-500">No strategies yet. Create one to get started.</p>
-      )}
-
-      <div className="space-y-3">
-        {strategies.map((s) => (
-          <Link
-            key={s.id}
-            href={`/strategy/${s.id}`}
-            className="block rounded-lg border border-white/10 p-4 hover:border-accent/50"
-          >
-            <div className="flex items-center justify-between">
-              <span className="font-medium text-white">{s.name}</span>
-              <span
-                className={`rounded px-2 py-0.5 text-xs ${
-                  s.status === "active" ? "bg-accent/20 text-accent" : "bg-white/10 text-gray-400"
-                }`}
+        <Card>
+          <CardHeader
+            title="Safe"
+            action={
+              <a
+                href={`${BASESCAN}/address/${safe.safeAddress}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-gray-400 underline hover:text-white"
               >
-                {s.status}
-              </span>
+                View on BaseScan
+              </a>
+            }
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <p className="text-xs text-gray-500">Address</p>
+              <p className="data-mono mt-0.5 break-all font-mono text-sm text-gray-200">{safe.safeAddress}</p>
             </div>
-            <p className="mt-1 text-xs text-gray-500">
-              Exit when {s.condition.metric} {s.condition.comparator} {s.condition.thresholdBps / 100}%
-            </p>
-          </Link>
-        ))}
-      </div>
+            <div>
+              <p className="text-xs text-gray-500">Chain</p>
+              <p className="mt-0.5 text-sm text-gray-200">Base ({safe.chainId})</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">Roles Modifier</p>
+              <p className="mt-0.5">
+                {safe.rolesModifierAddress ? (
+                  <span className="data-mono break-all font-mono text-sm text-gray-200">
+                    {safe.rolesModifierAddress}
+                  </span>
+                ) : (
+                  <Badge tone="warning">Not configured</Badge>
+                )}
+              </p>
+            </div>
+            {balances && (
+              <div>
+                <p className="text-xs text-gray-500">Balances</p>
+                <p className="data-mono mt-0.5 font-mono text-sm text-gray-200">
+                  {(Number(balances.eth) / 1e18).toFixed(5)} ETH · {(Number(balances.usdc) / 1e6).toFixed(2)} USDC
+                </p>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
 
-      <p className="text-xs text-gray-600">
-        Explorer:{" "}
-        <a href={`${BASESCAN}/address/${safe?.safeAddress}`} target="_blank" rel="noreferrer" className="underline">
-          view Safe on BaseScan
-        </a>
-      </p>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-white">Your strategies</h2>
+          <LinkButton href="/create" size="sm">
+            + New Strategy
+          </LinkButton>
+        </div>
+
+        {loading && <p className="text-sm text-gray-500">Loading…</p>}
+
+        {!loading && strategies.length === 0 && (
+          <EmptyState
+            title="No strategies yet"
+            description="Create one to start protecting a position on a schedule you define."
+            action={
+              <LinkButton href="/create" size="sm">
+                Create your first strategy
+              </LinkButton>
+            }
+          />
+        )}
+
+        <div className="space-y-3">
+          {strategies.map((s) => {
+            const meta = STRATEGY_STATUS[s.status as keyof typeof STRATEGY_STATUS];
+            return (
+              <Link key={s.id} href={`/strategy/${s.id}`}>
+                <Card interactive className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-white">{s.name}</p>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Exit when {s.condition.metric.replace("_", " ")} {s.condition.comparator}{" "}
+                      {s.condition.thresholdBps / 100}%
+                    </p>
+                  </div>
+                  <Badge tone={meta.tone} pending={meta.pending}>
+                    {meta.label}
+                  </Badge>
+                </Card>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

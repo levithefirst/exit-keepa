@@ -14,7 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <WalletProvider>
           <Nav />
-          <div className="mx-auto max-w-5xl px-6 py-8">{children}</div>
+          <div className="mx-auto max-w-5xl px-6 py-10">{children}</div>
         </WalletProvider>
       </body>
     </html>
