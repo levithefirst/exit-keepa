@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
 import { getStoredSafeId } from "../../lib/storage";
+import { btnPrimary, btnSecondary, inputBase } from "../../lib/ui";
 
 const AAVE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
@@ -28,10 +29,10 @@ export default function CreateStrategyPage() {
     if (address) setSafeId(getStoredSafeId(address));
   }, [address]);
 
-  if (!address) return <p className="text-gray-400">Connect your wallet first.</p>;
+  if (!address) return <p className="text-pretty text-gray-400">Connect your wallet first.</p>;
   if (!safeId)
     return (
-      <p className="text-gray-400">
+      <p className="text-pretty text-gray-400">
         You need to connect a Safe on the{" "}
         <a href="/dashboard" className="underline">
           Dashboard
@@ -82,15 +83,12 @@ export default function CreateStrategyPage() {
   if (step === "activated") {
     return (
       <div className="max-w-lg space-y-4">
-        <h1 className="text-2xl font-bold text-white">Strategy activated</h1>
-        <p className="text-sm text-gray-400">
+        <h1 className="text-balance text-2xl font-bold text-white">Strategy activated</h1>
+        <p className="text-pretty text-sm text-gray-400">
           Exit Keepa will execute this transaction through your Safe once the condition is met.
         </p>
-        <button
-          onClick={() => router.push(`/strategy/${strategyId}`)}
-          className="rounded bg-accent px-4 py-2 text-sm font-medium text-black"
-        >
-          View Strategy
+        <button onClick={() => router.push(`/strategy/${strategyId}`)} className={btnPrimary}>
+          View strategy
         </button>
       </div>
     );
@@ -100,8 +98,8 @@ export default function CreateStrategyPage() {
     const canActivate = Boolean(preview.tx);
     return (
       <div className="max-w-xl space-y-5">
-        <h1 className="text-2xl font-bold text-white">Review the exact transaction</h1>
-        <p className="text-sm text-gray-400">
+        <h1 className="text-balance text-2xl font-bold text-white">Review the exact transaction</h1>
+        <p className="text-pretty text-sm text-gray-400">
           This is deterministically rebuilt from your strategy — nothing here is user-suppliable calldata.
         </p>
 
@@ -129,7 +127,7 @@ export default function CreateStrategyPage() {
             </p>
           </div>
         ) : (
-          <p className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 text-sm text-yellow-300">
+          <p className="text-pretty rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 text-sm text-yellow-300">
             {preview.txError}
           </p>
         )}
@@ -137,7 +135,7 @@ export default function CreateStrategyPage() {
         {preview.rolesPermission && (
           <div className="rounded-lg border border-white/10 p-4 space-y-2">
             <h2 className="font-semibold text-white">Roles permission required</h2>
-            <p className="text-xs text-gray-500">{preview.rolesPermission.note}</p>
+            <p className="text-pretty text-xs text-gray-500">{preview.rolesPermission.note}</p>
             <div className="space-y-1 font-mono text-xs text-gray-300">
               <p>Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})</p>
               <p>Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})</p>
@@ -150,30 +148,23 @@ export default function CreateStrategyPage() {
               href={preview.rolesPermission.safeAppUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-block rounded border border-accent/40 px-3 py-1.5 text-xs font-medium text-accent"
+              className="inline-flex min-h-11 items-center rounded border border-white/20 px-3 text-xs font-medium text-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
             >
               Open Zodiac Roles app for this Safe →
             </a>
           </div>
         )}
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <div className="flex gap-3">
-          <button
-            onClick={activate}
-            disabled={!canActivate}
-            className="rounded bg-accent px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
-          >
-            Activate Strategy
+        {error && <p className="text-pretty text-sm text-red-400">{error}</p>}
+        <div className="flex flex-wrap gap-3">
+          <button onClick={activate} disabled={!canActivate} className={btnPrimary}>
+            Activate strategy
           </button>
-          <button
-            onClick={() => setStep("form")}
-            className="rounded border border-white/20 px-4 py-2 text-sm text-gray-300"
-          >
+          <button onClick={() => setStep("form")} className={btnSecondary}>
             Back
           </button>
         </div>
-        <p className="text-xs text-gray-500">
+        <p className="text-pretty text-xs text-gray-500">
           Activating only turns monitoring on — it does not simulate or broadcast anything. Do that from the strategy
           detail page.
         </p>
@@ -183,12 +174,15 @@ export default function CreateStrategyPage() {
 
   return (
     <div className="max-w-lg space-y-5">
-      <h1 className="text-2xl font-bold text-white">Create Exit Strategy</h1>
+      <h1 className="text-balance text-2xl font-bold text-white">Create exit strategy</h1>
 
       <div>
-        <label className="mb-1 block text-sm text-gray-400">Name</label>
+        <label htmlFor="strategy-name" className="mb-1 block text-sm text-gray-400">
+          Name
+        </label>
         <input
-          className="w-full rounded border border-white/20 bg-transparent px-3 py-2 text-sm"
+          id="strategy-name"
+          className={inputBase}
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Exit USDC when supply APR drops"
@@ -196,7 +190,7 @@ export default function CreateStrategyPage() {
       </div>
 
       <div>
-        <label className="mb-1 block text-sm text-gray-400">Protocol / Market</label>
+        <label className="mb-1 block text-sm text-gray-400">Protocol / market</label>
         <div className="rounded border border-white/20 px-3 py-2 text-sm text-gray-300">
           Aave v3 on Base — USDC supply (only supported protocol in v1)
         </div>
@@ -205,38 +199,44 @@ export default function CreateStrategyPage() {
       <div>
         <label className="mb-1 block text-sm text-gray-400">Exit action</label>
         <div className="space-y-2 rounded border border-white/20 p-3 text-sm">
-          <p className="text-gray-300">
+          <p className="text-pretty text-gray-300">
             Withdraw USDC from Aave back to your Safe (<code>withdraw(asset, amount, to)</code>)
           </p>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-1 text-xs text-gray-400">
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-1.5 text-xs text-gray-400">
               <input type="radio" checked={amountMode === "max"} onChange={() => setAmountMode("max")} />
               Withdraw entire position
             </label>
-            <label className="flex items-center gap-1 text-xs text-gray-400">
+            <label className="flex items-center gap-1.5 text-xs text-gray-400">
               <input type="radio" checked={amountMode === "exact"} onChange={() => setAmountMode("exact")} />
               Exact amount (smallest units)
             </label>
           </div>
           {amountMode === "exact" && (
-            <input
-              className="w-full rounded border border-white/20 bg-transparent px-3 py-2 text-sm"
-              placeholder="e.g. 1000000 for 1 USDC"
-              value={exactAmount}
-              onChange={(e) => setExactAmount(e.target.value)}
-            />
+            <div>
+              <label htmlFor="exact-amount" className="mb-1 block text-xs text-gray-500">
+                Amount (smallest units)
+              </label>
+              <input
+                id="exact-amount"
+                className={inputBase}
+                placeholder="e.g. 1000000 for 1 USDC"
+                value={exactAmount}
+                onChange={(e) => setExactAmount(e.target.value)}
+              />
+            </div>
           )}
         </div>
       </div>
 
       <div>
         <label className="mb-1 block text-sm text-gray-400">Trigger condition</label>
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="text-gray-400">Exit when USDC supply APR</span>
           <select
             value={comparator}
             onChange={(e) => setComparator(e.target.value as any)}
-            className="rounded border border-white/20 bg-ink px-2 py-1"
+            className="min-h-11 rounded border border-white/20 bg-ink px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
           >
             <option value="lt">is below</option>
             <option value="lte">is at or below</option>
@@ -244,7 +244,8 @@ export default function CreateStrategyPage() {
             <option value="gte">is at or above</option>
           </select>
           <input
-            className="w-20 rounded border border-white/20 bg-transparent px-2 py-1"
+            aria-label="Threshold percentage"
+            className="min-h-11 w-20 rounded border border-white/20 bg-transparent px-2 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
             value={thresholdPct}
             onChange={(e) => setThresholdPct(e.target.value)}
           />
@@ -252,10 +253,10 @@ export default function CreateStrategyPage() {
         </div>
       </div>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-pretty text-sm text-red-400">{error}</p>}
 
-      <button onClick={createAndPreview} className="rounded bg-accent px-4 py-2 text-sm font-medium text-black">
-        Preview Transaction
+      <button onClick={createAndPreview} className={btnPrimary}>
+        Preview transaction
       </button>
     </div>
   );

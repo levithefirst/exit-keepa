@@ -2,8 +2,24 @@
 
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
+import { btnPrimary, btnPrimarySmall, btnSecondarySmall, btnDanger, inputBase } from "../../../lib/ui";
+import { StatusPill } from "../../../components/StatusPill";
+import { CopyButton } from "../../../components/CopyButton";
 
 const BASESCAN = "https://basescan.org";
+
+function DetailSkeleton() {
+  return (
+    <div className="max-w-2xl animate-pulse space-y-8">
+      <div className="space-y-2">
+        <div className="h-7 w-64 rounded bg-white/10" />
+        <div className="h-5 w-20 rounded bg-white/10" />
+      </div>
+      <div className="h-20 rounded-lg border border-white/10 bg-white/5" />
+      <div className="h-28 rounded-lg border border-white/10 bg-white/5" />
+    </div>
+  );
+}
 
 export default function StrategyDetailPage({ params }: { params: { id: string } }) {
   const { id } = params;
@@ -13,6 +29,10 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   const [currentRateBps, setCurrentRateBps] = useState("150");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The one truly irreversible action (a real broadcast) gets a two-step
+  // confirm instead of firing on the first click - everything else stays
+  // single-click.
+  const [armedExecutionId, setArmedExecutionId] = useState<string | null>(null);
 
   async function refresh() {
     const [s, execs] = await Promise.all([api.getStrategy(id), api.listExecutions(id)]);
@@ -30,8 +50,8 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  if (error && !strategy) return <p className="text-sm text-red-400">{error}</p>;
-  if (!strategy) return <p className="text-sm text-gray-500">Loading...</p>;
+  if (error && !strategy) return <p className="text-pretty text-sm text-red-400">{error}</p>;
+  if (!strategy) return <DetailSkeleton />;
 
   async function createExecution() {
     setBusy(true);
@@ -62,6 +82,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   async function broadcast(executionId: string) {
     setBusy(true);
     setError(null);
+    setArmedExecutionId(null);
     try {
       await api.broadcastExecution(id, executionId);
       await refresh();
@@ -75,19 +96,15 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   return (
     <div className="max-w-2xl space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-white">{strategy.name}</h1>
-        <span
-          className={`mt-1 inline-block rounded px-2 py-0.5 text-xs ${
-            strategy.status === "active" ? "bg-accent/20 text-accent" : "bg-white/10 text-gray-400"
-          }`}
-        >
-          {strategy.status}
-        </span>
+        <h1 className="text-balance text-2xl font-bold text-white">{strategy.name}</h1>
+        <div className="mt-1">
+          <StatusPill status={strategy.status} />
+        </div>
       </div>
 
       <div className="rounded-lg border border-white/10 p-4">
         <h2 className="mb-2 font-semibold text-white">Condition</h2>
-        <p className="text-sm text-gray-300">
+        <p className="text-pretty text-sm tabular-nums text-gray-300">
           {strategy.condition.market} — {strategy.condition.metric} {strategy.condition.comparator}{" "}
           {strategy.condition.thresholdBps / 100}%
         </p>
@@ -108,7 +125,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
       {preview && !preview.tx && (
         <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 space-y-2">
           <h2 className="font-semibold text-yellow-300">Roles permission not yet granted</h2>
-          <p className="text-xs text-gray-400">{preview.txError}</p>
+          <p className="text-pretty text-xs text-gray-400">{preview.txError}</p>
           {preview.rolesPermission && (
             <>
               <div className="space-y-1 font-mono text-xs text-gray-300">
@@ -128,7 +145,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
                 href={preview.rolesPermission.safeAppUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-block rounded border border-accent/40 px-3 py-1.5 text-xs font-medium text-accent"
+                className="inline-flex min-h-11 items-center rounded border border-white/20 px-3 text-xs font-medium text-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
               >
                 Open Zodiac Roles app for this Safe →
               </a>
@@ -139,81 +156,80 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
 
       <div className="rounded-lg border border-white/10 p-4 space-y-3">
         <h2 className="font-semibold text-white">Manual trigger (demo)</h2>
-        <p className="text-xs text-gray-500">
+        <p className="text-pretty text-xs text-gray-500">
           Exit Keepa v1 doesn&apos;t yet run a live on-chain rate oracle (see README limitations) — enter the current rate
           to check against the condition, exactly as a real monitor would.
         </p>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-400">Current supply APR (bps):</span>
-          <input
-            className="w-24 rounded border border-white/20 bg-transparent px-2 py-1 text-sm"
-            value={currentRateBps}
-            onChange={(e) => setCurrentRateBps(e.target.value)}
-          />
-          <button
-            onClick={createExecution}
-            disabled={busy || strategy.status !== "active"}
-            className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-black disabled:opacity-50"
-          >
-            Check & Create Execution
+        <div className="flex flex-wrap items-end gap-2">
+          <div>
+            <label htmlFor="current-rate" className="mb-1 block text-sm text-gray-400">
+              Current supply APR (bps)
+            </label>
+            <input
+              id="current-rate"
+              className={`${inputBase} w-28 tabular-nums`}
+              value={currentRateBps}
+              onChange={(e) => setCurrentRateBps(e.target.value)}
+            />
+          </div>
+          <button onClick={createExecution} disabled={busy || strategy.status !== "active"} className={btnPrimary}>
+            Check &amp; create execution
           </button>
         </div>
         {strategy.status !== "active" && (
-          <p className="text-xs text-yellow-400">Activate the strategy from Create Strategy before executing.</p>
+          <p className="text-pretty text-xs text-yellow-400">Activate the strategy from Create Strategy before executing.</p>
         )}
       </div>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-pretty text-sm text-red-400">{error}</p>}
 
       <div>
         <h2 className="mb-3 font-semibold text-white">Execution history</h2>
-        {executions.length === 0 && <p className="text-sm text-gray-500">No executions yet.</p>}
+        {executions.length === 0 && <p className="text-pretty text-sm text-gray-500">No executions yet.</p>}
         <div className="space-y-3">
           {executions.map((e) => (
             <div key={e.id} className="rounded-lg border border-white/10 p-4">
               <div className="flex items-center justify-between">
-                <span
-                  className={`rounded px-2 py-0.5 text-xs ${
-                    e.status === "succeeded"
-                      ? "bg-accent/20 text-accent"
-                      : e.status === "failed"
-                        ? "bg-red-500/20 text-red-300"
-                        : "bg-white/10 text-gray-400"
-                  }`}
-                >
-                  {e.status}
-                </span>
-                <span className="text-xs text-gray-500">{new Date(e.createdAt).toLocaleString()}</span>
+                <StatusPill status={e.status} />
+                <span className="text-xs tabular-nums text-gray-500">{new Date(e.createdAt).toLocaleString()}</span>
               </div>
-              {e.errorMessage && <p className="mt-1 text-xs text-red-400">{e.errorMessage}</p>}
+              {e.errorMessage && <p className="mt-1 text-pretty text-xs text-red-400">{e.errorMessage}</p>}
               {e.txHash && (
-                <a
-                  href={`${BASESCAN}/tx/${e.txHash}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-1 block break-all font-mono text-xs text-accent underline"
-                >
-                  {e.txHash}
-                </a>
-              )}
-              <div className="mt-2 flex gap-2">
-                {e.status === "pending" && (
-                  <button
-                    onClick={() => simulate(e.id)}
-                    disabled={busy}
-                    className="rounded border border-white/20 px-3 py-1 text-xs text-gray-200 disabled:opacity-50"
+                <div className="mt-1 flex items-center gap-1">
+                  <a
+                    href={`${BASESCAN}/tx/${e.txHash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block break-all font-mono text-xs text-gray-300 underline hover:text-white"
                   >
+                    {e.txHash}
+                  </a>
+                  <CopyButton value={e.txHash} label="Copy tx hash" />
+                </div>
+              )}
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {e.status === "pending" && (
+                  <button onClick={() => simulate(e.id)} disabled={busy} className={btnSecondarySmall}>
                     Simulate
                   </button>
                 )}
-                {e.status === "simulated" && (
-                  <button
-                    onClick={() => broadcast(e.id)}
-                    disabled={busy}
-                    className="rounded bg-accent px-3 py-1 text-xs font-medium text-black disabled:opacity-50"
-                  >
+                {e.status === "simulated" && armedExecutionId !== e.id && (
+                  <button onClick={() => setArmedExecutionId(e.id)} disabled={busy} className={btnPrimarySmall}>
                     Execute (broadcast)
                   </button>
+                )}
+                {e.status === "simulated" && armedExecutionId === e.id && (
+                  <>
+                    <span className="text-pretty text-xs text-red-300">
+                      This sends a real, irreversible transaction. Confirm?
+                    </span>
+                    <button onClick={() => broadcast(e.id)} disabled={busy} className={btnDanger}>
+                      Confirm broadcast
+                    </button>
+                    <button onClick={() => setArmedExecutionId(null)} disabled={busy} className={btnSecondarySmall}>
+                      Cancel
+                    </button>
+                  </>
                 )}
               </div>
             </div>
