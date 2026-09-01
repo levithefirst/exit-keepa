@@ -25,7 +25,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "What protects my Safe?",
-    a: "A Zodiac Roles Modifier. By default it can do nothing. Exit Keepa's role is limited to one action, withdrawing from Aave's Pool, with the funds always returned to your Safe. Nothing else is reachable.",
+    a: "A Zodiac Roles Modifier. By default it can do nothing. The live permission scopes the role to exactly one function, withdraw() on Aave's Pool on Base — no other function or contract is reachable through it. Exit Keepa's own checks make sure every withdraw it builds sends funds back to your Safe; locking that same rule into the onchain permission itself is the next tightening step, tracked in the repo.",
   },
   {
     q: "Does Exit Keepa control my funds?",

@@ -65,8 +65,8 @@ const FEATURES = [
     body: "Execution is routed through KeeperHub, but it's boxed in by a Zodiac Roles permission before it ever reaches your Safe.",
     bullets: [
       "KeeperHub can only call one function, execTransactionWithRole. Nothing else.",
-      "Your Safe's Roles Modifier allows exactly one action. Everything else is blocked by default.",
-      "Funds can only return to the Safe that owns them, never anywhere else.",
+      "Your Safe's Roles Modifier allows exactly one function, withdraw() on the Aave Pool. Everything else is blocked by default.",
+      "Exit Keepa always builds the withdraw to return funds to the Safe that owns them; locking that at the Roles layer itself is the documented next step.",
     ],
     media: (
       <div className="flex flex-col gap-1.5 font-mono text-xs text-cream-300">

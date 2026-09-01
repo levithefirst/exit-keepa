@@ -3,6 +3,9 @@ import { linkFocus } from "../lib/ui";
 import { Logo } from "./Logo";
 
 const REPO = "https://github.com/levithefirst/exit-keepa";
+// This repo has no "main" branch — its default/production branch is
+// claude/exit-keepa-init-v5lzuy. A "blob/main/..." link 404s.
+const REPO_BRANCH = "claude/exit-keepa-init-v5lzuy";
 const PROOF_TX = "https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b";
 
 function FooterLink({ href, children, external = true }: { href: string; children: React.ReactNode; external?: boolean }) {
@@ -47,7 +50,7 @@ export function Footer() {
             <ul className="space-y-2">
               <li><FooterLink href={`${REPO}#readme`}>Documentation</FooterLink></li>
               <li><FooterLink href={REPO}>Source on GitHub</FooterLink></li>
-              <li><FooterLink href={`${REPO}/blob/main/docs/JUDGE_DEMO.md`}>Judge demo path</FooterLink></li>
+              <li><FooterLink href={`${REPO}/blob/${REPO_BRANCH}/docs/JUDGE_DEMO.md`}>Judge demo path</FooterLink></li>
               <li><FooterLink href={PROOF_TX}>Onchain proof</FooterLink></li>
             </ul>
           </div>

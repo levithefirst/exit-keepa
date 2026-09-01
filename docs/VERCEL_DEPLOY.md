@@ -1,5 +1,11 @@
 # Deploying apps/web to Vercel
 
+**Status: resolved.** `https://exit-keepa-web.vercel.app` is live in
+production today. This document is kept as the historical record of the
+one-time dashboard fix (Root Directory) that got it there — read it as
+"what was wrong and how it was fixed," not as a description of the
+current state.
+
 ## Root cause of the `DEPLOYMENT_NOT_FOUND` / 404 at exit-keepa-web.vercel.app
 
 The Vercel project `exit-keepa-web` (`prj_XQ4CPPcWdLlWMCJV4wNdK2rMb3vh`, team

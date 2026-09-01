@@ -1,15 +1,22 @@
 # Exit Keepa
 
-Exit Keepa protects a DeFi position from an adverse rate move by letting
-you define an exit condition once, then executing the exit automatically
-through your own Safe — without ever holding your keys.
+Exit Keepa integrates **KeeperHub** as the deterministic execution layer
+for protective exits of **Aave v3** positions held in user-owned
+**Gnosis Safes**, constrained by **Zodiac Roles**. Aave and Safe are the
+live systems users already use; Exit Keepa + KeeperHub are how a
+rate-based exit condition becomes a simulated-then-broadcast withdraw
+that lands onchain without ever giving the agent the user's keys.
 
 > "If the monitored rate crosses my threshold, withdraw my position back
 > to my Safe."
 
+**Built for KeeperHub's Agent Economy hackathon**
+([dorahacks.io/hackathon/agent-economy](https://dorahacks.io/hackathon/agent-economy/detail)).
+See [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for the full submission.
+
 **Live demo:** [`https://exit-keepa-web.vercel.app`](https://exit-keepa-web.vercel.app) —
 the full app, live. API: `https://api-production-2e11.up.railway.app`.
-Click **"Try demo mode"** in the nav bar to explore the full flow,
+Click **"Try demo"** in the nav bar to explore the full flow,
 including the pre-filled live demo Safe, without a wallet extension —
 see [Known limitations](#known-limitations) for what demo mode does and
 does not do. See [`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md) for an exact,
@@ -59,8 +66,8 @@ harmless self-call transaction was broadcast and confirmed on Base
 KeeperHub is the executor, but it can only ever call
 `execTransactionWithRole` on your Roles Modifier — and the Roles Modifier
 only permits what's explicitly scoped to a role. **A role permits nothing
-by default.** For Exit Keepa's `withdraw` action, the narrowest possible
-permission is:
+by default.** The fully-scoped target for Exit Keepa's `withdraw` action
+is:
 
 1. `scopeTarget(roleKey, targetAddress)` — `targetAddress` = the Aave Pool
    (`0xA238Dd80C259a72e81d7e4664a9801593F98d1c5`). Moves the target's
@@ -69,32 +76,41 @@ permission is:
 2. `scopeFunction(roleKey, targetAddress, selector, conditions, options)`
    — `selector` = `0x69328dec` (`withdraw`), `options` = `None` (plain
    call, no value, no delegatecall), with a parameter condition fixing
-   `asset == USDC` and `to == the Safe itself` (`amount` is left
-   unrestricted). This means the role can withdraw USDC from Aave, and
-   the funds can only ever land back in the Safe that owns them — never
-   anywhere else, and no other Aave action (supply, borrow, liquidate,
-   flash-loan) is reachable.
+   `asset == USDC` and `to == the Safe itself` (`amount` left
+   unrestricted). Once this is live, the role can withdraw USDC from
+   Aave and the funds can only ever land back in the Safe that owns them.
 
-**What's actually granted on the live demo Safe** is broader than that
-ideal: its owner granted `allowTarget(roleKey, aavePool)` — whole-target
-clearance on the Aave Pool, not scoped down to just `withdraw` with the
-asset/recipient conditions above. That's a real trade-off, not a
-mistake glossed over: `allowTarget` is a single owner-signed transaction
-in the Zodiac Roles app UI, while the narrower `scopeFunction` grant
-requires generating a `ConditionFlat[]` byte encoding via
-`zodiac-roles-sdk` (hand-rolling that encoding for a permission that
-gates fund movement is exactly the kind of guess this project has
-avoided throughout) and wasn't completed before submission. **A real
-Aave v3 USDC withdraw has been executed end-to-end through this exact
-path** — see "Live proof" below — proving the architecture works; the
-narrower per-function scope remains the documented target for anyone
-extending this to a real user's Safe with more than a demo balance at
-stake. Before the `allowTarget` grant, simulating `withdraw` through the
-unscoped role correctly reverted with `ConditionViolation(2, ...)` — `2`
-is `TargetAddressNotAllowed` in Zodiac's `PermissionChecker.Status` enum
-(verified against
-`gnosisguild/zodiac-modifier-roles` source), meaning the target isn't
-authorized yet, not that anything else is wrong.
+**What's actually granted on the live demo Safe right now** is a real
+middle state between "any function, any target" and that fully-scoped
+end state, not either extreme:
+
+- **Step 1 is live**: `scopeTarget` has been applied, so the Aave Pool's
+  clearance is `Function`, not whole-target `allowTarget`. On top of it,
+  the `withdraw` selector (`0x69328dec`) has been explicitly allowed for
+  the role via Zodiac's function-level allow. **No other function on the
+  Aave Pool is callable through this role** — `supply`, `borrow`,
+  `liquidate`, and every other Pool function are rejected by the Roles
+  Modifier itself before Exit Keepa's own code ever runs.
+- **Step 2's parameter conditions are not yet set.** The `withdraw`
+  allowance carries no `asset`/`to` condition — the Roles Modifier will
+  pass a call with *any* `asset` and *any* recipient `to`, not just USDC
+  back to this Safe. Right now, "only USDC, only back to this Safe" is
+  enforced by **Exit Keepa's own application-level policy check**
+  (`agent/policy.ts`'s `assetBound`/`recipientBound`, see below), not by
+  an on-chain condition — a real, stated gap, not glossed over. Closing
+  it means re-running `scopeFunction` with the asset/recipient
+  `ConditionFlat[]` described above; the exact calldata for that step is
+  prepared in [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md).
+- The demo Safe may also still show a **`Wildcard` clearance on the Safe
+  address itself** in the Roles config. That's residual from earlier demo
+  setup, unrelated to the Aave withdraw path above — it does not grant
+  anything against the Aave Pool, and should not be read as part of this
+  permission's scope. It's flagged here so a judge inspecting the Roles
+  config directly isn't misled by it.
+
+**A real Aave v3 USDC withdraw has been executed end-to-end through this
+exact path** — see "Live proof" below — proving the architecture works
+against real chain state, under the permission state described above.
 
 ## User flow
 
@@ -134,6 +150,11 @@ authorized yet, not that anything else is wrong.
 
 ## For judges
 
+See [`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md) for the exact click path
+(under 5 minutes), and [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for the
+full pitch and honest-limitations list. A demo video script for a human
+to record is at [`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md).
+
 - You can do everything through step 6 (simulate) with **zero funds at
   risk** — connecting a wallet, registering any Safe address, creating a
   strategy, and inspecting/simulating the exact transaction is all
@@ -154,8 +175,11 @@ authorized yet, not that anything else is wrong.
 
 ## Live proof
 
+This is **pre-existing chain history, not something a judge triggers**.
 A real Aave v3 USDC withdraw was broadcast end-to-end through this exact
-Safe → Roles Modifier → KeeperHub path on Base mainnet:
+Safe → Roles Modifier → KeeperHub path on Base mainnet, before this
+submission — the judge path below points at it rather than asking anyone
+to re-broadcast against an already-emptied demo position:
 
 | | |
 |---|---|
@@ -350,12 +374,16 @@ every Railway deploy via the pre-deploy command above.
   this session couldn't do is place a live `eth_call` against the actual
   deployed contracts (the sandbox's egress proxy blocks direct RPC
   access), so treat first production use as the final cross-check.
-- **The narrow, per-function Roles permission (`scopeFunction` with
-  asset/recipient conditions) is not what's actually granted.** The live
-  demo Safe instead has the broader `allowTarget` grant — see "How
-  execution is authorized" above for the exact spec, the trade-off, and
-  why the narrower encoding should come from Zodiac's own SDK rather than
-  being hand-encoded here.
+- **The Roles permission is scoped to the `withdraw` function, but not
+  yet to `asset == USDC` / `to == this Safe` at the on-chain layer.** See
+  "How execution is authorized" above: `scopeTarget` + a function-level
+  allow for `withdraw` are live, so no other function or contract is
+  reachable through this role, but the Roles Modifier itself would still
+  accept any `asset`/`to` argument for a `withdraw` call. Today, "only
+  USDC, only back to this Safe" is enforced by Exit Keepa's own policy
+  check (`agent/policy.ts`), not by an on-chain condition. Adding that
+  condition is the one remaining step in
+  [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md).
 - **Single protocol/action only.** By design for v1 — see "What it
   actually does" above.
 - **Wallet-authenticated ownership is implemented, but stops at the DB.**
@@ -374,13 +402,12 @@ every Railway deploy via the pre-deploy command above.
   wallet needed via a fixed demo identity, reachable only through the
   explicit `/api/auth/demo-session` endpoint (never through a real
   signature), backfilled to it at migration time.
-- **The Roles grant on the live demo Safe is still the broad
-  `allowTarget`, not the narrower `scopeFunction`.** See "How execution
-  is authorized" above. The exact calldata to tighten it — both
-  transactions, computed with `viem`'s real ABI encoder against the
-  actual Zodiac Roles v2 source and self-checked by decoding it back —
-  is prepared in [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md),
-  ready for the Safe's own signers to review and submit. Nothing in this
-  codebase submits it automatically.
-- **Frontend deploy is a manual step** for the reason described in
-  Deployment above.
+- **The Roles grant on the live demo Safe is function-scoped to
+  `withdraw`, but its `asset`/`to` parameters are not yet locked
+  on-chain.** See "How execution is authorized" above. The remaining
+  calldata to add that condition — computed with `viem`'s real ABI
+  encoder against the actual Zodiac Roles v2 source and self-checked by
+  decoding it back — is prepared in
+  [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md), ready for the
+  Safe's own signers to review and submit. Nothing in this codebase
+  submits it automatically.

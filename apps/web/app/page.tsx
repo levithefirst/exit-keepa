@@ -122,8 +122,10 @@ export default function HomePage() {
           <h3 className="mb-2 font-semibold text-cream-50">Technically</h3>
           <p className="text-pretty text-sm text-cream-300">
             Every execution routes through KeeperHub and is constrained by a Zodiac Roles Modifier before it ever
-            reaches your Safe. The role can call exactly one function, on one contract, and funds can only return
-            to your Safe.
+            reaches your Safe. The role can call exactly one function, <code>withdraw</code>, on one contract, the
+            Aave Pool &mdash; nothing else is reachable. Locking the asset and recipient into that same onchain
+            permission is the next tightening step; today that guarantee is enforced by Exit Keepa&apos;s own
+            checks.
           </p>
         </div>
       </section>

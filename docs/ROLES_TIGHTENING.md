@@ -1,30 +1,50 @@
-# Tightening the exit_keepa Roles grant: allowTarget -> scopeFunction
+# Tightening the exit_keepa Roles grant: withdraw-only -> withdraw with asset/recipient locked
 
-**Status: prepared, not submitted.** This document and the accompanying
-`roles-tightening/computeCalldata.js` produce the exact calldata for two
-Safe transactions. Nobody but the Safe's own signers can execute them -
-Exit Keepa's backend has no code path that submits a Roles configuration
-change, by design (see README "How execution is authorized"). Review this,
-re-run the script yourself if you want to reproduce the numbers
-independently, and submit through the Safe's normal signing flow if it
-matches what you expect.
+**Status: step 1 (function scoping) is now live onchain; step 2
+(parameter conditions) is prepared, not submitted.** This document and
+the accompanying `roles-tightening/computeCalldata.js` originally
+targeted moving the role from whole-target `allowTarget` clearance
+straight to a fully-scoped `withdraw` grant in two calls. Since this
+document was first written, **`scopeTarget` plus a function-level allow
+for `withdraw` have been submitted and confirmed** — the role's
+clearance on the Aave Pool is `Function`, not whole-target, and only the
+`withdraw` selector (`0x69328dec`) is callable. **What remains is the
+parameter-condition step below** (locking `asset == USDC` and
+`to == this Safe`), which has not been submitted. Nobody but the Safe's
+own signers can execute it — Exit Keepa's backend has no code path that
+submits a Roles configuration change, by design (see README "How
+execution is authorized"). Review this, re-run the script yourself if
+you want to reproduce the numbers independently, and submit through the
+Safe's normal signing flow if it matches what you expect.
 
 ## What's true right now
 
 The live demo Safe's `exit_keepa` role currently has:
 
-```
-allowTarget(roleKey, aavePool, ExecutionOptions.None)
-```
+- Aave v3 Pool clearance: `Function` (not whole-target — `scopeTarget`
+  has already been applied)
+- `withdraw(address,uint256,address)` (selector `0x69328dec`): allowed,
+  with **no parameter conditions** — the Roles Modifier will pass any
+  `asset`/`amount`/`to` combination for a `withdraw` call. Every other
+  function on the Pool is rejected by the Roles Modifier itself.
 
-This is **whole-target clearance**: the role can call *any* function on
-the Aave v3 Pool, not just `withdraw`. It's why the existing README and
-`docs/SUBMISSION.md` both flag this as a real, stated gap rather than the
-scoped permission the product's own copy describes as the target design.
+This is a real middle state, not the "still `allowTarget`" gap an
+earlier version of this document (and of the README) described, and not
+yet the fully-scoped end state either. Locking `asset == USDC` and
+`to == this Safe` at the Roles layer — so misuse is rejected onchain, not
+just by Exit Keepa's own `agent/policy.ts` check — is what the
+transaction below still does.
 
-## What this changes it to
+## What the remaining step changes
 
-Two calls, both `onlyOwner` (the Safe itself) on the Roles Modifier:
+**Only the `scopeFunction` call below is still needed** — `scopeTarget`
+has already been applied onchain, so re-submitting it is redundant
+(idempotent, but unnecessary) rather than required. It's kept here as
+transaction 1 for anyone reproducing this from a genuinely fresh
+`allowTarget` starting point (e.g. a different Safe); for *this* Safe,
+only transaction 2 is outstanding.
+
+Both calls are `onlyOwner` (the Safe itself) on the Roles Modifier:
 
 1. **`scopeTarget(roleKey, aavePool)`** - moves the target from whole
    clearance to function-level clearance. After this call alone, *no*
@@ -33,7 +53,7 @@ Two calls, both `onlyOwner` (the Safe itself) on the Roles Modifier:
    itself is strictly more restrictive than today, never less. Confirmed
    from `PermissionBuilder.sol`'s actual source: `scopeTarget` writes
    `clearance: Clearance.Function` and does not touch any previously
-   scoped function.
+   scoped function. **Already applied on the live demo Safe.**
 2. **`scopeFunction(roleKey, aavePool, withdrawSelector, conditions, ExecutionOptions.None)`**
    - grants exactly one function back, with per-parameter conditions:
    - `asset` (position 0): must equal USDC (`0x833589fC...02913`)
@@ -43,18 +63,26 @@ Two calls, both `onlyOwner` (the Safe itself) on the Roles Modifier:
      prevent misuse, not the amount)
    - `to` (position 2): must equal the Safe itself
      (`0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9`)
+   - **This is the one call still outstanding.** The live Safe already
+     has `withdraw` allowed with no conditions (an earlier, unconditioned
+     function-level allow); submitting this `scopeFunction` call replaces
+     that unconditioned allowance with the conditioned one shown here —
+     confirm in the Zodiac Roles app that it's presented as an update to
+     the existing `withdraw` permission, not a duplicate, before signing.
 
-After both calls: the role can call `withdraw(asset, amount, to)` on the
-Aave Pool if and only if `asset` is USDC and `to` is this exact Safe.
+After this call lands: the role can call `withdraw(asset, amount, to)` on
+the Aave Pool if and only if `asset` is USDC and `to` is this exact Safe.
 Every other function on the Pool, and every other recipient for a USDC
 withdrawal, is rejected by the Roles Modifier itself - before Exit
 Keepa's own application-level checks even come into it.
 
-**Submit both together if your Safe tooling supports a batch/MultiSend
-transaction.** Between the two calls (if submitted separately) the role
-can call nothing on the Pool at all - safe to be temporarily stuck in
-that state (it just means Exit Keepa can't execute until the second
-transaction lands), never dangerous.
+**Note on the calldata below:** it was computed assuming a fresh
+`allowTarget` starting point (transaction 1 + transaction 2 together).
+Since transaction 1 is already live, only transaction 2's calldata is
+still relevant for this Safe — re-verify it against the Zodiac Roles app
+before submitting, since the app will show the diff against the Safe's
+*actual* current permission (withdraw, unconditioned) rather than the
+`allowTarget` baseline this document originally assumed.
 
 ## The exact calldata
 
