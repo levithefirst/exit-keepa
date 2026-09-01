@@ -634,6 +634,90 @@ implementing the trigger side.
       this is what will determine whether the architecture above actually
       works, per the "Status" note on that section.
 
+## Documented (2026-09-01): official Direct Execution API reference — Safe First-Write Sequence, Idempotency-Key, status polling
+
+Unlike every section above, this one is sourced directly from KeeperHub's
+own published documentation
+([docs.keeperhub.com/api/direct-execution](https://docs.keeperhub.com/api/direct-execution),
+saved and archived 2026-09-01) rather than live experimentation against
+this project's own sandbox network policy (which still blocks outbound
+HTTPS to `keeperhub.com`). It is treated as authoritative for request/
+response *shapes*, the same way KeeperHub's public README was treated
+for the pre-live-verification sections below — but the polling and
+idempotency code paths built from it are not yet independently
+live-verified the way `listChains()` and `callContractFunction()`'s
+read-only cases are. See `docs/SUBMISSION.md`'s "what still breaks"
+section for the honest status of that gap.
+
+**What the doc confirms, and what this project implemented from it:**
+
+- **The Safe First-Write Sequence** is KeeperHub's own name for
+  simulate-with-the-exact-body → broadcast-the-same-body-with-an-
+  Idempotency-Key → persist `executionId` → poll
+  `GET /api/execute/{executionId}/status` → trust `receipts[]` over the
+  self-reported `status`/`transactionHash`. This project's
+  simulate-then-broadcast flow (`execution/executor.ts`,
+  `routes/executions.ts`) already matched the first two steps before
+  this doc was available (independently arrived at from KeeperHub's
+  `wouldRevert` response shape); this session added the
+  `Idempotency-Key` header, `executionId` persistence, and status
+  polling to complete the sequence.
+- **`Idempotency-Key`**: any client-chosen string, scoped per
+  organization + endpoint, replayable for 24h. A replayed response
+  carries `idempotentReplay: true` in the body (checked on the raw
+  response, not just the typed `ExecTransactionWithRoleResult` shape,
+  since the real successful-broadcast shape has no `wouldRevert` key and
+  so never parses as that type — see `executor.ts`'s
+  `broadcastExitTransaction`). `409 idempotency_conflict` (`retryable:
+  false`) and `409 idempotency_in_progress` (`retryable: true`) are
+  parsed into distinct error classes (`KeeperHubIdempotencyConflictError`,
+  `KeeperHubIdempotencyInProgressError` in `keeperhub/client.ts`) rather
+  than the generic `KeeperHubApiError`, so callers can branch on them.
+  This project's key is the execution row's own id (`keeperhub_executions
+  .idempotency_key`, already existed in the schema before this session,
+  originally set for DB-level dedup only) — stable per execution attempt,
+  never regenerated per HTTP call, which is exactly what the docs'
+  "Choosing a stable key" section requires for a caller that can persist
+  state (this app can, via Postgres) rather than needing to derive a key
+  deterministically from request fields.
+- **`GET /execute/{executionId}/status`**: `receipts[]` (each
+  independently re-fetched from the chain, `verified` + `receiptStatus`)
+  are the authoritative onchain proof; `transactionHash`/
+  `transactionLink` are self-reported by the write path. Implemented as
+  `KeeperHubClient.getDirectExecutionStatus` (returns the parsed body
+  alongside the `X-Poll-Interval-Hint` header) and
+  `execution/pollDirectExecutionStatus` (backoff loop, bounded budget,
+  terminal decided by the hint header being `0` — never by string-
+  matching `status`, per the docs' own warning that the status list is a
+  lower bound). `execution/statusOutcome.ts`'s
+  `deriveExecutionOutcomeFromStatus` is the pure decision function that
+  turns a status response into `succeeded`/`failed`/`executing`,
+  receipts-first.
+- **`check-and-execute`** (`POST /execute/check-and-execute`): evaluated
+  for the OPTIONAL "check-and-execute Roles-bound spike" and **not
+  implemented** — see `docs/SUBMISSION.md` §4 for the specific reason
+  (the condition check requires a single-scalar ABI return; Exit Keepa's
+  real condition is one field of Aave's multi-field
+  `ReserveDataLegacy` struct, which the docs explicitly say gets
+  rejected pre-flight with HTTP 400). This is a documented, evidence-
+  based skip, not an unexplored gap — the working simulate→broadcast
+  path (§ above) was not touched to force this in.
+- **MCP mirror confirmed, not built**: `docs.keeperhub.com/ai-tools/mcp-server`
+  documents `execute_contract_call`, `execute_check_and_execute`, and
+  `get_direct_execution_status` MCP tools with the identical simulate-
+  first / `idempotency_key` / poll-to-terminal contract as the REST
+  endpoints above. Recorded here for accuracy (`docs/SUBMISSION.md`
+  cites this), but this repo runs no MCP client or server — the backend
+  calls the REST endpoints directly.
+
+**What this still does NOT confirm:** the exact runtime behavior of any
+of the above against KeeperHub's real API — this sandbox's network
+policy still blocks direct verification, and the one real broadcast this
+project has (§ "Live-verified (2026-08-31)" mentioned throughout
+`executor.ts`'s comments) predates the Idempotency-Key/polling code
+entirely, so it never exercised this path. Treat the next real broadcast
+through this updated code as the actual live check.
+
 ## Temporary verification infrastructure (remove when no longer needed)
 
 - `apps/api/src/scripts/verify-keeperhub.ts` - one-off script run as a

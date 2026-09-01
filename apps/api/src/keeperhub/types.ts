@@ -224,5 +224,109 @@ export interface ExecTransactionWithRoleResult {
   revertReason?: string;
   error?: string;
   transactionHash?: string;
+  /**
+   * KeeperHub's own execution id for this write (e.g. `"direct_123"`),
+   * present on a real broadcast response - live-verified 2026-08-31
+   * (`docs/keeperhub-integration.md`, tx
+   * 0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b:
+   * `{status:"completed", executionId:"u9zr4vzbfurjvzgwz687g",
+   * transactionHash, transactionLink}`). This is the id to persist as
+   * `keeperhub_executions.keeperhub_execution_id` and poll via
+   * `GET /api/execute/{executionId}/status` - see
+   * KeeperHubClient.getDirectExecutionStatus.
+   */
+  executionId?: string;
+  /**
+   * Set to `true` only when this response is a replay of a previously
+   * stored outcome for the same Idempotency-Key, per
+   * https://docs.keeperhub.com/api/direct-execution#idempotency. Absent
+   * (not `false`) on a fresh response - never assume its absence means
+   * "false", only check for `=== true`. A replayed failure carries the
+   * *original* error, so a caller that retried expecting a fresh attempt
+   * must check this before concluding "still failing" - the retry itself
+   * was never sent.
+   */
+  idempotentReplay?: boolean;
   [key: string]: unknown;
+}
+
+/**
+ * `GET /api/execute/{executionId}/status` response body, per
+ * https://docs.keeperhub.com/api/direct-execution#get-execution-status.
+ * Not yet live-verified against a real polled execution by this project
+ * (the one confirmed broadcast to date settled synchronously with a
+ * verifiable hash on the initial response) - modeled directly from
+ * KeeperHub's own documented shape rather than guessed. Treat `receipts`
+ * as the authoritative source for whether an execution actually
+ * succeeded on-chain; `transactionHash`/`transactionLink` are
+ * self-reported by the write path per the same doc section.
+ */
+export interface DirectExecutionReceipt {
+  hash: string;
+  chainId: number;
+  /** Whether this hash positively confirmed on-chain - re-fetched from the chain, not self-reported. */
+  verified: boolean;
+  /**
+   * `success` | `reverted` | `safe_inner_failure` (outer tx succeeded, a
+   * wrapped inner call failed) | `not_found` | `timeout`. The last two
+   * mean verification could not reach a definitive answer within its
+   * budget - documented to fail the execution closed rather than
+   * optimistically settle it. Treat as an open string set, not a closed
+   * enum - the docs explicitly warn future statuses may be added.
+   */
+  // eslint-disable-next-line @typescript-eslint/ban-types -- known literals plus "any string" per docs' "treat as a lower bound" guidance
+  receiptStatus: "success" | "reverted" | "safe_inner_failure" | "not_found" | "timeout" | (string & {});
+  blockNumber?: number;
+  /** Gas units used, read from the fetched receipt - not self-reported by the write path. */
+  gasUsed?: string;
+  verifiedAt?: string;
+}
+
+export interface DirectExecutionStatusResponse {
+  executionId: string;
+  /**
+   * Documented values: `pending`, `running`, `unconfirmed` (broadcast,
+   * receipt not yet conclusively read - non-terminal, keep polling),
+   * `completed`, `failed`. Treat as a lower bound, not a closed set -
+   * decide terminality from `X-Poll-Interval-Hint` (0 = terminal), not
+   * from this string, per KeeperHub's own guidance.
+   */
+  // eslint-disable-next-line @typescript-eslint/ban-types -- see receiptStatus above
+  status: "pending" | "running" | "unconfirmed" | "completed" | "failed" | (string & {});
+  type?: string;
+  /** The chain identifier the original request supplied, stored verbatim as a string. */
+  network?: string;
+  transactionHash?: string;
+  transactionLink?: string;
+  /** True when gas-sponsored/relayer-broadcast - the tx won't appear against the org's own EOA. */
+  sponsored?: boolean;
+  retryCount?: number;
+  /** One entry per transaction hash this execution claimed. Empty for read calls and simulations. */
+  receipts: DirectExecutionReceipt[];
+  gasUsedWei?: string;
+  gasPriceWei?: string;
+  estimatedCostUsd?: string | null;
+  result?: unknown;
+  error?: string | null;
+  createdAt?: string;
+  completedAt?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * `POST /api/execute/*` 409 idempotency error body -
+ * https://docs.keeperhub.com/api/direct-execution#idempotency. Two
+ * distinct codes share this shape: `idempotency_conflict` (same key,
+ * different request body - `retryable: false`, never rotate the key for
+ * a retry of the same intent, see the doc's "A stable key does not by
+ * itself produce a replay") and `idempotency_in_progress` (a duplicate
+ * arrived while the first request is still running - `retryable: true`,
+ * back off and re-send the *same* key).
+ */
+export interface IdempotencyErrorBody {
+  error: string;
+  code: "idempotency_conflict" | "idempotency_in_progress";
+  retryable: boolean;
+  /** Only present on `idempotency_conflict`, and nullable even then per the docs. */
+  originalExecutionId?: string | null;
 }

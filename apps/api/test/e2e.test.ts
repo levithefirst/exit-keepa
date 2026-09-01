@@ -13,12 +13,15 @@ vi.mock("drizzle-orm", async (importOriginal) => {
   return { ...actual, eq, and };
 });
 
-const { callContractFunction } = vi.hoisted(() => ({ callContractFunction: vi.fn() }));
+const { callContractFunction, getDirectExecutionStatus } = vi.hoisted(() => ({
+  callContractFunction: vi.fn(),
+  getDirectExecutionStatus: vi.fn(),
+}));
 vi.mock("../src/keeperhub/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/keeperhub/client")>();
   return {
     ...actual,
-    keeperHubClient: { callContractFunction },
+    keeperHubClient: { callContractFunction, getDirectExecutionStatus },
   };
 });
 
@@ -45,6 +48,7 @@ let token: string;
 
 beforeEach(async () => {
   callContractFunction.mockReset();
+  getDirectExecutionStatus.mockReset();
   // Every safe/strategy/execution in this file is created and acted on by
   // this same session - ownership enforcement (test/auth.e2e.test.ts) has
   // its own dedicated coverage; this file is about the execution lifecycle.
@@ -153,6 +157,132 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     expect(secondBroadcastRes.status).toBe(200);
     expect(secondBroadcastRes.body.txHash).toBe(REAL_HASH);
     expect(callContractFunction).toHaveBeenCalledTimes(2); // not 3
+  });
+
+  it("Safe First-Write Sequence: persists KeeperHub's executionId, polls status, and trusts receipts over the self-reported hash", async () => {
+    const safeRes = await request(app)
+      .post("/api/safe-accounts")
+      .set(authHeader(token))
+      .send({
+        chainId: 8453,
+        safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
+        rolesModifierAddress: "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE",
+        rolesKey: "0x657869745f6b6565706100000000000000000000000000000000000000000000",
+      });
+    const strategyRes = await request(app)
+      .post("/api/exit-strategies")
+      .set(authHeader(token))
+      .send({
+        safeId: safeRes.body.id,
+        name: "Poll-status strategy",
+        condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
+        action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "1000000" },
+      });
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`).set(authHeader(token));
+    const execRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .set(authHeader(token))
+      .send({ currentRateBps: 150 });
+
+    callContractFunction.mockResolvedValueOnce({ success: true, status: "simulated", wouldRevert: false });
+    await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/simulate`)
+      .set(authHeader(token));
+
+    const KH_EXECUTION_ID = "direct_abc123";
+    const REAL_HASH = "0x" + "b".repeat(64);
+    // The synchronous broadcast response carries an executionId but no
+    // conclusively-verified receipt yet - this is the shape the Safe
+    // First-Write Sequence's status step exists for.
+    callContractFunction.mockResolvedValueOnce({
+      status: "completed",
+      executionId: KH_EXECUTION_ID,
+      transactionHash: REAL_HASH,
+      transactionLink: `https://basescan.org/tx/${REAL_HASH}`,
+    });
+    // GET /execute/{executionId}/status: terminal on the first poll,
+    // with a verified receipt - the authoritative source of truth.
+    getDirectExecutionStatus.mockResolvedValueOnce({
+      status: {
+        executionId: KH_EXECUTION_ID,
+        status: "completed",
+        receipts: [{ hash: REAL_HASH, chainId: 8453, verified: true, receiptStatus: "success", blockNumber: 123 }],
+      },
+      pollIntervalHintSeconds: 0,
+    });
+
+    const broadcastRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`)
+      .set(authHeader(token));
+
+    expect(broadcastRes.status).toBe(200);
+    expect(broadcastRes.body.status).toBe("succeeded");
+    expect(broadcastRes.body.txHash).toBe(REAL_HASH);
+    expect(broadcastRes.body.keeperhubExecutionId).toBe(KH_EXECUTION_ID);
+    expect(getDirectExecutionStatus).toHaveBeenCalledWith(KH_EXECUTION_ID);
+
+    // The idempotency key sent on broadcast is the execution row's own
+    // stable id, not something freshly minted per HTTP attempt.
+    expect(callContractFunction.mock.calls[1][1]).toEqual({ idempotencyKey: execRes.body.idempotencyKey });
+  });
+
+  it("Safe First-Write Sequence: a reverted receipt fails the execution even though the self-reported status said completed", async () => {
+    const safeRes = await request(app)
+      .post("/api/safe-accounts")
+      .set(authHeader(token))
+      .send({
+        chainId: 8453,
+        safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
+        rolesModifierAddress: "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE",
+        rolesKey: "0x657869745f6b6565706100000000000000000000000000000000000000000000",
+      });
+    const strategyRes = await request(app)
+      .post("/api/exit-strategies")
+      .set(authHeader(token))
+      .send({
+        safeId: safeRes.body.id,
+        name: "Reverted-receipt strategy",
+        condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
+        action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "1000000" },
+      });
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`).set(authHeader(token));
+    const execRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .set(authHeader(token))
+      .send({ currentRateBps: 150 });
+
+    callContractFunction.mockResolvedValueOnce({ success: true, status: "simulated", wouldRevert: false });
+    await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/simulate`)
+      .set(authHeader(token));
+
+    const KH_EXECUTION_ID = "direct_reverted";
+    const REAL_HASH = "0x" + "c".repeat(64);
+    callContractFunction.mockResolvedValueOnce({
+      status: "completed",
+      executionId: KH_EXECUTION_ID,
+      transactionHash: REAL_HASH,
+      transactionLink: `https://basescan.org/tx/${REAL_HASH}`,
+    });
+    getDirectExecutionStatus.mockResolvedValueOnce({
+      status: {
+        executionId: KH_EXECUTION_ID,
+        status: "failed",
+        receipts: [{ hash: REAL_HASH, chainId: 8453, verified: true, receiptStatus: "reverted", blockNumber: 456 }],
+      },
+      pollIntervalHintSeconds: 0,
+    });
+
+    const broadcastRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`)
+      .set(authHeader(token));
+
+    expect(broadcastRes.status).toBe(502);
+    expect(broadcastRes.body.status).toBe("failed");
+    // Never reports a hash for a reverted receipt, even though KeeperHub's
+    // own synchronous response carried one.
+    expect(broadcastRes.body.txHash).toBeNull();
+    expect(broadcastRes.body.errorMessage).toContain(REAL_HASH);
   });
 
   it("rejects a simulation-rejected execution and never lets it be broadcast", async () => {

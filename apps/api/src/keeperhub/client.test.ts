@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KeeperHubClient } from "./client";
+import {
+  KeeperHubClient,
+  KeeperHubIdempotencyConflictError,
+  KeeperHubIdempotencyInProgressError,
+} from "./client";
 import type { ContractCallRequest, KeeperHubChain } from "./types";
 
 /**
@@ -336,6 +340,161 @@ describe("KeeperHubClient", () => {
         vi.fn().mockRejectedValue(new TypeError("fetch failed")),
       );
       await expect(client.listChains()).rejects.not.toMatchObject({ name: "KeeperHubApiError" });
+    });
+  });
+
+  describe("Idempotency-Key (Safe First-Write Sequence)", () => {
+    const REQUEST = { contractAddress: "0x856dD89c7925977119b5C7330186B5238aD355a0", chainId: 8453, functionName: "execTransactionWithRole" };
+
+    it("attaches the Idempotency-Key header only when a key is supplied", async () => {
+      const fetchMock = mockFetchOnce(200, { result: "0x1" });
+      await client.callContractFunction(REQUEST, { idempotencyKey: "exec-row-123" });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://app.keeperhub.com/api/execute/contract-call",
+        expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": "exec-row-123" }) }),
+      );
+    });
+
+    it("never sends an Idempotency-Key header when none is supplied", async () => {
+      const fetchMock = mockFetchOnce(200, { result: "0x1" });
+      await client.callContractFunction(REQUEST);
+
+      const [, init] = fetchMock.mock.calls[0];
+      expect(Object.keys(init.headers).map((h) => h.toLowerCase())).not.toContain("idempotency-key");
+    });
+
+    it("passes a replayed response straight through - the caller reads idempotentReplay off the parsed body", async () => {
+      mockFetchOnce(200, {
+        status: "completed",
+        executionId: "direct_123",
+        transactionHash: "0x" + "a".repeat(64),
+        idempotentReplay: true,
+      });
+
+      const result = await client.callContractFunction(REQUEST, { idempotencyKey: "exec-row-123" });
+      expect((result as { idempotentReplay?: boolean }).idempotentReplay).toBe(true);
+    });
+
+    it("a replayed failure also carries idempotentReplay - and this must not be mistaken for a fresh error", async () => {
+      // Per the docs: "a retry with the same key and the same request body
+      // returns the original response... plus an idempotentReplay marker
+      // described below" - even a stored FAILURE replays this way, at
+      // 2xx-shaped success semantics for a contract-call body (the field
+      // rides in the body, not the status code).
+      mockFetchOnce(200, {
+        success: false,
+        error: "Contract call failed: Error(LK: not yet due)",
+        idempotentReplay: true,
+      });
+
+      const result = (await client.callContractFunction(REQUEST, { idempotencyKey: "exec-row-123" })) as {
+        idempotentReplay?: boolean;
+        error?: string;
+      };
+      expect(result.idempotentReplay).toBe(true);
+      expect(result.error).toContain("not yet due");
+    });
+
+    it("409 idempotency_conflict throws KeeperHubIdempotencyConflictError carrying originalExecutionId, not the generic KeeperHubApiError", async () => {
+      mockFetchOnce(409, {
+        error: "Idempotency-Key already bound to a different request",
+        code: "idempotency_conflict",
+        retryable: false,
+        originalExecutionId: "direct_original_456",
+      });
+
+      const promise = client.callContractFunction(REQUEST, { idempotencyKey: "exec-row-123" });
+      await expect(promise).rejects.toBeInstanceOf(KeeperHubIdempotencyConflictError);
+      await expect(promise).rejects.toMatchObject({ status: 409, originalExecutionId: "direct_original_456" });
+    });
+
+    it("409 idempotency_conflict with a null originalExecutionId surfaces null, not undefined or a throw", async () => {
+      mockFetchOnce(409, {
+        error: "conflict",
+        code: "idempotency_conflict",
+        retryable: false,
+        originalExecutionId: null,
+      });
+
+      await expect(client.callContractFunction(REQUEST, { idempotencyKey: "exec-row-123" })).rejects.toMatchObject({
+        originalExecutionId: null,
+      });
+    });
+
+    it("409 idempotency_in_progress throws KeeperHubIdempotencyInProgressError, distinct from the conflict error", async () => {
+      mockFetchOnce(409, {
+        error: "A request with this Idempotency-Key is already being processed. Retry the same key shortly; do not rotate it.",
+        code: "idempotency_in_progress",
+        retryable: true,
+      });
+
+      await expect(
+        client.callContractFunction(REQUEST, { idempotencyKey: "exec-row-123" }),
+      ).rejects.toBeInstanceOf(KeeperHubIdempotencyInProgressError);
+    });
+
+    it("a plain 409 with no idempotency code still throws the generic KeeperHubApiError", async () => {
+      mockFetchOnce(409, { error: "some other conflict" });
+      const promise = client.callContractFunction(REQUEST, { idempotencyKey: "exec-row-123" });
+      await expect(promise).rejects.not.toBeInstanceOf(KeeperHubIdempotencyConflictError);
+      await expect(promise).rejects.not.toBeInstanceOf(KeeperHubIdempotencyInProgressError);
+      await expect(promise).rejects.toMatchObject({ name: "KeeperHubApiError", status: 409 });
+    });
+  });
+
+  describe("getDirectExecutionStatus() (GET /execute/:id/status)", () => {
+    it("parses the status body and the X-Poll-Interval-Hint header together", async () => {
+      const fetchMock = mockFetchOnce(
+        200,
+        {
+          executionId: "direct_123",
+          status: "completed",
+          receipts: [
+            { hash: "0x" + "a".repeat(64), chainId: 8453, verified: true, receiptStatus: "success", blockNumber: 123 },
+          ],
+        },
+        { "x-poll-interval-hint": "0" },
+      );
+
+      const result = await client.getDirectExecutionStatus("direct_123");
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://app.keeperhub.com/api/execute/direct_123/status",
+        expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer kh_test_key" }) }),
+      );
+      expect(result.status.status).toBe("completed");
+      expect(result.status.receipts[0].verified).toBe(true);
+      expect(result.pollIntervalHintSeconds).toBe(0);
+    });
+
+    it("returns a non-zero poll interval hint for a non-terminal execution", async () => {
+      mockFetchOnce(200, { executionId: "direct_123", status: "unconfirmed", receipts: [] }, { "x-poll-interval-hint": "3" });
+      const result = await client.getDirectExecutionStatus("direct_123");
+      expect(result.pollIntervalHintSeconds).toBe(3);
+    });
+
+    it("returns null (not 0) when the header is absent, so a caller never mistakes a missing hint for terminal", async () => {
+      mockFetchOnce(200, { executionId: "direct_123", status: "pending", receipts: [] });
+      const result = await client.getDirectExecutionStatus("direct_123");
+      expect(result.pollIntervalHintSeconds).toBeNull();
+    });
+
+    it("throws KeeperHubApiError on a non-2xx status response", async () => {
+      mockFetchOnce(404, { error: "not_found" });
+      await expect(client.getDirectExecutionStatus("missing")).rejects.toMatchObject({
+        name: "KeeperHubApiError",
+        status: 404,
+      });
+    });
+
+    it("URL-encodes the execution id into the path", async () => {
+      const fetchMock = mockFetchOnce(200, { executionId: "a/b", status: "pending", receipts: [] });
+      await client.getDirectExecutionStatus("a/b");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://app.keeperhub.com/api/execute/a%2Fb/status",
+        expect.anything(),
+      );
     });
   });
 });

@@ -47,40 +47,107 @@ all without ever moving their funds out of the Safe they already trust.
 
 KeeperHub is the only thing in this system that ever sends a transaction.
 For every strategy check that passes Exit Keepa's own policy gate
-(`agent/policy.ts`), the flow is:
+(`agent/policy.ts`), the flow is KeeperHub's own documented **Safe
+First-Write Sequence**
+([docs.keeperhub.com/api/direct-execution](https://docs.keeperhub.com/api/direct-execution#safe-first-write-sequence)),
+implemented end-to-end rather than partially:
 
 1. **Simulate** — Exit Keepa calls KeeperHub's contract-call execution
    endpoint with `execTransactionWithRole` and `simulate: true`, against
    the real Roles Modifier, the real Aave Pool, and the real Safe. This
    is a genuine dry run against live chain state, not a local guess —
-   KeeperHub returns either a clean result or the exact revert reason.
-2. **Execute (contract-call)** — once simulation comes back clean, the
-   identical call is re-sent with `simulate: false`. KeeperHub is the
-   thing that actually broadcasts it.
-3. **Receipt** — Exit Keepa only ever records a transaction hash that
-   passes real hex-format validation (never fabricated), and
-   distinguishes "KeeperHub confirmed rejection" from "network/timeout,
-   outcome unknown" so an uncertain broadcast is never mislabeled as a
-   clean success or a clean failure.
+   KeeperHub returns either a clean result (`success: true,
+   wouldRevert: false`) or the exact revert reason. Broadcast only ever
+   proceeds past this gate.
+2. **Execute, with an Idempotency-Key** — once simulation comes back
+   clean, the *identical* request body is re-sent with `simulate`
+   removed and an `Idempotency-Key` header attached. The key is the
+   execution row's own stable id (`keeperhub_executions.idempotency_key`,
+   set once at creation, never regenerated per HTTP attempt), so a
+   retried request replays KeeperHub's original outcome instead of
+   double-broadcasting. `idempotency_in_progress` (409) is retried
+   automatically with the same key, per KeeperHub's own guidance;
+   `idempotency_conflict` (409) is treated as a fail-closed bug signal
+   and never worked around by rotating to a fresh key.
+3. **Persist the executionId, then poll for the receipt** — KeeperHub's
+   own `executionId` (e.g. `direct_123`) is saved on the row as soon as
+   it's known, and `GET /api/execute/{executionId}/status` is polled
+   with backoff (honoring the `X-Poll-Interval-Hint` response header,
+   bounded to a budget so the request can't hang forever) until the
+   execution reaches a terminal state. A separate `refresh-status`
+   endpoint lets the UI keep checking if the inline poll's budget runs
+   out before that happens.
+4. **Receipts are authoritative, never the self-reported fields** — the
+   status response's `receipts[]` (each independently re-fetched from
+   the chain by KeeperHub, not self-reported by the write path) decide
+   success or failure. A `transactionHash` alone is never enough; Exit
+   Keepa only records `succeeded` once a receipt is `verified: true` and
+   `receiptStatus: "success"`, and only ever stores a hash that also
+   passes its own hex-format validation — never fabricated, never
+   inferred.
 
 ## 4. Surfaces used
 
-**REST Direct Execution (contract-call) only** —
-`POST /execute/contract-call` (`apps/api/src/keeperhub/client.ts`'s
-`callContractFunction`), simulate-first then broadcast, with explicit
-handling of KeeperHub's two different HTTP-400 shapes (pre-flight
-validation error vs. `wouldRevert` simulation result). `GET /chains`
-(`listChains`) is also live-verified and used to confirm Base is enabled.
+**REST Direct Execution, end-to-end simulate → broadcast → status:**
 
-**Not used, stated plainly:** MCP, x402, and MPP are documented in
-KeeperHub's own materials, but this codebase has zero code paths that
-call any of them — no MCP client, no x402 handshake. The generic
-workflow endpoints (`POST /workflows`, `.../execute`) are wrapped in the
-client but never called by the execution path; the Safe-specific
-KeeperHub surfaces (pending-tx monitoring, signature tracking) are left
-unimplemented rather than guessed at — see the doc comments in
-`apps/api/src/keeperhub/client.ts` and `docs/keeperhub-integration.md`
-for the full verification trail of what was and wasn't confirmed live.
+- `POST /execute/contract-call` (`apps/api/src/keeperhub/client.ts`'s
+  `callContractFunction`) — simulate-first then broadcast, with explicit
+  handling of KeeperHub's distinct HTTP-400 shapes (pre-flight validation
+  error vs. `wouldRevert` simulation result vs. the ethers.js
+  fragment-mismatch execution error).
+- **`Idempotency-Key`** header on every broadcast, sourced from the
+  execution's own stable id — see §3. Handles `idempotentReplay`,
+  `409 idempotency_conflict`, and `409 idempotency_in_progress` as
+  distinct, typed outcomes (`KeeperHubIdempotencyConflictError` /
+  `KeeperHubIdempotencyInProgressError` in `client.ts`), not generic
+  errors.
+- **`GET /execute/{executionId}/status`** (`getDirectExecutionStatus`) —
+  polled with backoff honoring `X-Poll-Interval-Hint`; its `receipts[]`
+  are the authoritative source for success/failure, per §3.
+- `GET /chains` (`listChains`) — live-verified, used to confirm Base is
+  enabled.
+- **(Documented, not implemented in this app) MCP tools that mirror the
+  same operations for agents** — KeeperHub's hosted MCP server exposes
+  `execute_contract_call`, `execute_check_and_execute`, and
+  `get_direct_execution_status` as the agent-facing equivalents of the
+  three REST calls above, with the identical simulate-first /
+  Idempotency-Key / poll-until-terminal contract
+  ([docs.keeperhub.com/ai-tools/mcp-server](https://docs.keeperhub.com/ai-tools/mcp-server#direct-on-chain-execution)).
+  Exit Keepa's backend calls the REST endpoints directly rather than
+  running an MCP client — noted here only because it's the same
+  underlying execution surface, not because this app runs an MCP server
+  or client anywhere. No MCP code exists in this repo.
+
+**Evaluated and deliberately not used — `check-and-execute`:** KeeperHub's
+`POST /execute/check-and-execute` can conditionally run a write whose
+action is itself an arbitrary contract call, which *would* stay
+Roles-bound (the action leg would still be `execTransactionWithRole` on
+the Roles Modifier, not a different signer). It wasn't wired in because
+KeeperHub requires its condition check to "resolve to exactly one
+supported scalar output" — but Exit Keepa's real trigger condition (Aave
+v3's supply APR) only exists as one field of Aave Pool's
+`getReserveData(address)`, which returns a 15-field struct
+(`ReserveDataLegacy`) with no single-scalar getter for just
+`currentLiquidityRate`. That's exactly the "compound... unsupported ABI
+return shape" the docs say `check-and-execute` rejects with HTTP 400
+before ever reaching the RPC call. Forcing it in would mean either
+computing the condition off-chain and faking a trivial always-true
+on-chain check (pointless — KeeperHub wouldn't actually be gating
+anything) or picking a different, less accurate condition just to fit
+the primitive. Simulate-then-broadcast (§3) already gives the same
+before-you-broadcast safety without that compromise, so this was skipped
+rather than forced — see `docs/keeperhub-integration.md` for the full
+reasoning.
+
+**Not used at all, stated plainly:** x402 and MPP are documented in
+KeeperHub's own materials but have zero code paths in this repo — no
+handshake, no payment logic. The generic workflow endpoints (`POST
+/workflows`, `.../execute`) are wrapped in the client but never called by
+the execution path; the Safe-specific KeeperHub surfaces (pending-tx
+monitoring, signature tracking) are left unimplemented rather than
+guessed at — see the doc comments in `apps/api/src/keeperhub/client.ts`
+and `docs/keeperhub-integration.md` for the full verification trail of
+what was and wasn't confirmed live.
 
 ## 5. Mainnet vs. testnet
 
@@ -133,7 +200,10 @@ Exit Keepa API (Express + Postgres)
    │                 asset/recipient/Roles-configured, agent/policy.ts)
    ▼
 KeeperHub  ── simulate (execTransactionWithRole, simulate:true) ──▶ clean / revert reason
-           ── broadcast (execTransactionWithRole, simulate:false) ──▶ tx hash
+           ── broadcast (execTransactionWithRole, simulate:false,
+                          Idempotency-Key: <execution id>) ──▶ executionId + tx hash
+           ── poll GET /execute/{executionId}/status (backoff,
+                X-Poll-Interval-Hint) ──▶ receipts[] (authoritative)
    ▼
 Zodiac Roles Modifier  ── permission check: is this role allowed to call
                            this target + this selector, with these args?
@@ -214,6 +284,19 @@ values).
 - **Single protocol, single action, by design.** Aave v3 Base USDC
   `withdraw` only — no multi-chain, no other protocol, no chat interface,
   no agent-to-agent negotiation.
+- **The `GET /execute/{executionId}/status` polling path is built directly
+  from KeeperHub's own published API reference, not yet live-exercised
+  against a real polled execution** — the one confirmed real broadcast to
+  date (§6) settled synchronously with a verifiable hash on its initial
+  response, before this session's Idempotency-Key/status-polling work
+  existed. `apps/api/src/keeperhub/client.ts`'s `getDirectExecutionStatus`
+  and the receipts-are-authoritative decision logic
+  (`apps/api/src/execution/statusOutcome.ts`) are covered by unit and
+  integration tests built from the documented response shape, and the
+  existing synchronous-hash path (unaffected when KeeperHub never returns
+  an `executionId` to poll) is unchanged and still covered by the
+  original live-captured-response regression test. Treat the next real
+  broadcast as the live check on the polling path specifically.
 - **Aave oracle/aUSDC-balance reads are verified by static analysis**
   (a real local Keccak-256 computation for the `getReserveData` selector,
   Aave's own source for the `ReserveDataLegacy` field layout and the

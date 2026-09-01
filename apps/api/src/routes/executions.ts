@@ -9,9 +9,10 @@ import { HttpError } from "../middleware/errorHandler";
 import { logger } from "../logger";
 import { env } from "../env";
 import { buildExitTransaction } from "../execution/buildTransaction";
-import { broadcastExitTransaction } from "../execution/executor";
+import { broadcastWithIdempotencyRetry, isAmbiguousKeeperHubError, pollDirectExecutionStatus } from "../execution/executor";
 import { simulatePendingExecution } from "../execution/simulate";
-import { KeeperHubApiError } from "../keeperhub/client";
+import { deriveExecutionOutcomeFromStatus } from "../execution/statusOutcome";
+import { KeeperHubIdempotencyConflictError, KeeperHubIdempotencyInProgressError } from "../keeperhub/client";
 import { evaluateRateCondition } from "../execution/evaluateCondition";
 import { decideBroadcast } from "../execution/stateMachine";
 import { checkAmountExceeded, checkStaleIntent, readAaveUsdcPositionBalance } from "../agent/broadcastGuards";
@@ -286,18 +287,57 @@ executionsRouter.post("/exit-strategies/:id/executions/:executionId/broadcast", 
   const tx = buildExitTransaction(strategy.action as ExitAction, safe);
 
   try {
-    const result = await broadcastExitTransaction(tx, safe.chainId);
+    // Safe First-Write Sequence steps 3-4
+    // (https://docs.keeperhub.com/api/direct-execution#safe-first-write-sequence):
+    // send the exact simulated body once more with `simulate` removed
+    // and an Idempotency-Key attached - sourced from this row's own
+    // stable `idempotencyKey` column (set once at creation, never
+    // regenerated), not minted fresh per HTTP attempt, so a retried
+    // request replays instead of double-broadcasting. Retried
+    // automatically, same key, only for the documented
+    // `idempotency_in_progress` case.
+    const result = await broadcastWithIdempotencyRetry(tx, safe.chainId, execution.idempotencyKey);
+
+    // Step 5-6: persist KeeperHub's own executionId as soon as it's
+    // known, then poll GET /execute/{executionId}/status and treat its
+    // receipts as authoritative - never the self-reported txHash/status
+    // alone. A poll failure (network error, timeout budget exhausted)
+    // leaves the row `executing` rather than guessing success/failure.
+    let outcome: ReturnType<typeof deriveExecutionOutcomeFromStatus>;
+    if (result.keeperhubExecutionId) {
+      const poll = await pollDirectExecutionStatus(result.keeperhubExecutionId).catch((pollErr) => {
+        logger.error(
+          { err: pollErr, executionId: execution.id, keeperhubExecutionId: result.keeperhubExecutionId },
+          "Direct execution status poll failed after broadcast - leaving execution non-terminal for manual follow-up",
+        );
+        return null;
+      });
+      outcome = poll
+        ? deriveExecutionOutcomeFromStatus(poll.status, result.txHash)
+        : { status: "executing", txHash: result.txHash, errorMessage: null };
+    } else {
+      // KeeperHub returned no executionId to poll at all - fall back to
+      // the synchronous broadcast response the same way this route
+      // worked before status polling existed, rather than blocking on
+      // nothing.
+      outcome = {
+        status: result.txHash ? "succeeded" : "failed",
+        txHash: result.txHash,
+        errorMessage: result.txHash
+          ? null
+          : "Broadcast response did not contain a verifiable transaction hash - needs manual verification, not reported as executed",
+      };
+    }
 
     const [updated] = await db
       .update(keeperhubExecutions)
       .set({
-        status: result.txHash ? "succeeded" : "failed",
-        txHash: result.txHash,
-        broadcastAt: result.txHash ? new Date() : null,
+        status: outcome.status,
+        txHash: outcome.txHash,
+        keeperhubExecutionId: result.keeperhubExecutionId ?? execution.keeperhubExecutionId,
+        broadcastAt: outcome.status === "succeeded" ? new Date() : null,
         responsePayload: result.raw as object,
-        errorMessage: result.txHash
-          ? null
-          : "Broadcast response did not contain a verifiable transaction hash - needs manual verification, not reported as executed",
+        errorMessage: outcome.errorMessage,
         updatedAt: new Date(),
       })
       .where(eq(keeperhubExecutions.id, execution.id))
@@ -306,12 +346,90 @@ executionsRouter.post("/exit-strategies/:id/executions/:executionId/broadcast", 
     await db.insert(auditEvents).values({
       entityType: "keeperhub_execution",
       entityId: execution.id,
-      eventType: result.txHash ? "execution.broadcast_succeeded" : "execution.broadcast_unconfirmed",
-      payload: { txHash: result.txHash, result },
+      eventType:
+        outcome.status === "succeeded"
+          ? "execution.broadcast_succeeded"
+          : outcome.status === "failed"
+            ? "execution.broadcast_failed"
+            : "execution.broadcast_unconfirmed",
+      payload: {
+        txHash: outcome.txHash,
+        keeperhubExecutionId: result.keeperhubExecutionId,
+        idempotentReplay: result.idempotentReplay,
+        result,
+      },
     });
 
-    res.status(200).json(updated);
+    res.status(outcome.status === "failed" ? 502 : 200).json(updated);
   } catch (err) {
+    // Per https://docs.keeperhub.com/api/direct-execution#idempotency,
+    // `idempotency_in_progress` means KeeperHub is still processing the
+    // original request under this key even after broadcastWithIdempotencyRetry's
+    // own retries were exhausted - this is NOT a failure, and marking it
+    // `failed` would misreport an execution that may yet succeed. Leave
+    // the row `executing`; a human (or a later status check against this
+    // same executionId) resolves it. `decideBroadcast` already refuses
+    // to let any non-`simulated` row broadcast again, so this can never
+    // silently double-fire.
+    if (err instanceof KeeperHubIdempotencyInProgressError) {
+      const message =
+        `KeeperHub is still processing this execution under Idempotency-Key ${execution.idempotencyKey} - ` +
+        `the request was not lost. Check back shortly rather than creating a new execution for this strategy.`;
+      const [inProgress] = await db
+        .update(keeperhubExecutions)
+        .set({ errorMessage: message, updatedAt: new Date() })
+        .where(eq(keeperhubExecutions.id, execution.id))
+        .returning();
+      await db.insert(auditEvents).values({
+        entityType: "keeperhub_execution",
+        entityId: execution.id,
+        eventType: "execution.broadcast_idempotency_in_progress",
+        payload: { message },
+      });
+      logger.warn({ executionId: execution.id }, "KeeperHub broadcast still in progress under this Idempotency-Key after retries");
+      res.status(202).json(inProgress);
+      return;
+    }
+
+    // A confirmed `409 idempotency_conflict` means KeeperHub bound this
+    // key to a request body that doesn't match the one just sent. This
+    // project's request body is deterministically rebuilt from the same
+    // DB-stored strategy/Safe fields every time for a given execution
+    // row, so this should never legitimately happen - treat it as a
+    // hard, fail-closed bug signal rather than something to work around
+    // by rotating to a new key (which is exactly the documented unsafe
+    // move: https://docs.keeperhub.com/api/direct-execution#a-stable-key-does-not-by-itself-produce-a-replay).
+    if (err instanceof KeeperHubIdempotencyConflictError) {
+      const message =
+        `KeeperHub rejected this broadcast as an Idempotency-Key conflict (409 idempotency_conflict): the key ` +
+        `${execution.idempotencyKey} is already bound to a different request body. This should never happen for ` +
+        `a deterministically-rebuilt transaction and indicates a bug, not a transient failure - not retried with ` +
+        `a new key.` +
+        (err.originalExecutionId ? ` KeeperHub's original execution under this key: ${err.originalExecutionId}.` : "");
+      const [conflicted] = await db
+        .update(keeperhubExecutions)
+        .set({
+          status: "failed",
+          errorMessage: message,
+          keeperhubExecutionId: err.originalExecutionId ?? execution.keeperhubExecutionId,
+          updatedAt: new Date(),
+        })
+        .where(eq(keeperhubExecutions.id, execution.id))
+        .returning();
+      await db.insert(auditEvents).values({
+        entityType: "keeperhub_execution",
+        entityId: execution.id,
+        eventType: "execution.broadcast_idempotency_conflict",
+        payload: { message, originalExecutionId: err.originalExecutionId },
+      });
+      logger.error(
+        { executionId: execution.id, originalExecutionId: err.originalExecutionId },
+        "KeeperHub Idempotency-Key conflict on broadcast",
+      );
+      res.status(502).json(conflicted);
+      return;
+    }
+
     // A confirmed rejection (KeeperHubApiError - the request reached
     // KeeperHub and it explicitly said no) is reported as a plain
     // failure. Anything else - a network error, timeout, or other
@@ -321,8 +439,10 @@ executionsRouter.post("/exit-strategies/:id/executions/:executionId/broadcast", 
     // and `decideBroadcast` must never let a `failed` row be retried
     // through this same execution automatically), but the message makes
     // the ambiguity explicit so a human checks the chain before assuming
-    // nothing happened and creating a fresh execution.
-    const confirmed = err instanceof KeeperHubApiError;
+    // nothing happened and creating a fresh execution. Fail-closed: this
+    // path never retries with a fresh Idempotency-Key for the same
+    // intent, since that is exactly what could double-broadcast.
+    const confirmed = !isAmbiguousKeeperHubError(err);
     const errorMessage = confirmed
       ? (err as Error).message
       : `Broadcast outcome could not be confirmed - KeeperHub may or may not have received this request. ` +
@@ -345,4 +465,70 @@ executionsRouter.post("/exit-strategies/:id/executions/:executionId/broadcast", 
     logger.error({ err, executionId: execution.id, confirmed }, "KeeperHub broadcast call failed");
     res.status(502).json(failed);
   }
+});
+
+/**
+ * Re-checks a non-terminal execution's status against KeeperHub directly
+ * (`GET /api/execute/{executionId}/status`), independent of the poll
+ * already attempted inline during broadcast - for the case where that
+ * poll's bounded budget ran out, or the row was left `executing` after
+ * an `idempotency_in_progress` response. A no-op for a row with no
+ * `keeperhubExecutionId` yet (nothing to poll) or one already terminal
+ * (`succeeded`/`failed`) - returns the row as-is rather than erroring,
+ * so a client can poll this on an interval without special-casing state.
+ */
+executionsRouter.post("/exit-strategies/:id/executions/:executionId/refresh-status", async (req, res) => {
+  const address = await requireSession(req);
+  const { strategy } = await loadStrategyAndSafe(req.params.id, address);
+  const [execution] = await db
+    .select()
+    .from(keeperhubExecutions)
+    .where(
+      and(eq(keeperhubExecutions.id, req.params.executionId), eq(keeperhubExecutions.exitStrategyId, strategy.id)),
+    )
+    .limit(1);
+  if (!execution) throw new HttpError(404, "Execution not found");
+
+  if (!execution.keeperhubExecutionId || execution.status === "succeeded" || execution.status === "failed") {
+    res.status(200).json(execution);
+    return;
+  }
+
+  const poll = await pollDirectExecutionStatus(execution.keeperhubExecutionId, { budgetMs: 15_000 }).catch((pollErr) => {
+    logger.error(
+      { err: pollErr, executionId: execution.id, keeperhubExecutionId: execution.keeperhubExecutionId },
+      "Direct execution status refresh failed",
+    );
+    return null;
+  });
+
+  if (!poll) {
+    res.status(200).json(execution);
+    return;
+  }
+
+  const outcome = deriveExecutionOutcomeFromStatus(poll.status, execution.txHash);
+  const [updated] = await db
+    .update(keeperhubExecutions)
+    .set({
+      status: outcome.status,
+      txHash: outcome.txHash ?? execution.txHash,
+      broadcastAt: outcome.status === "succeeded" ? (execution.broadcastAt ?? new Date()) : execution.broadcastAt,
+      errorMessage: outcome.errorMessage,
+      updatedAt: new Date(),
+    })
+    .where(eq(keeperhubExecutions.id, execution.id))
+    .returning();
+
+  if (outcome.status !== execution.status) {
+    await db.insert(auditEvents).values({
+      entityType: "keeperhub_execution",
+      entityId: execution.id,
+      eventType:
+        outcome.status === "succeeded" ? "execution.status_confirmed" : outcome.status === "failed" ? "execution.status_failed" : "execution.status_still_pending",
+      payload: { status: poll.status, terminal: poll.terminal, timedOut: poll.timedOut },
+    });
+  }
+
+  res.status(200).json(updated);
 });

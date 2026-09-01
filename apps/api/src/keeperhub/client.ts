@@ -4,6 +4,8 @@ import type {
   ContractCallRequest,
   ContractCallResult,
   CreateWorkflowRequest,
+  DirectExecutionStatusResponse,
+  IdempotencyErrorBody,
   KeeperHubChain,
   KeeperHubExecution,
   KeeperHubWorkflow,
@@ -26,6 +28,44 @@ export class KeeperHubApiError extends Error {
   ) {
     super(`KeeperHub API error ${status}: ${body}`);
     this.name = "KeeperHubApiError";
+  }
+}
+
+/**
+ * A confirmed `409 idempotency_conflict` - the Idempotency-Key was reused
+ * with a request body that hashes differently from the one it was first
+ * bound to. Per https://docs.keeperhub.com/api/direct-execution#idempotency
+ * this is `retryable: false` and must NEVER be handled by rotating to a
+ * fresh key for what the caller believes is the same intent - that is
+ * precisely the case that can double-broadcast. Callers should either
+ * canonicalize the request to match the original (see the doc's "Choosing
+ * a stable key"), or - if the work is genuinely different - deliberately
+ * mint a new key for new work. `originalExecutionId` (nullable) is the
+ * execution the key is actually bound to; poll its status instead of
+ * guessing what happened.
+ */
+export class KeeperHubIdempotencyConflictError extends KeeperHubApiError {
+  constructor(
+    status: number,
+    body: string,
+    public readonly originalExecutionId: string | null,
+  ) {
+    super(status, body);
+    this.name = "KeeperHubIdempotencyConflictError";
+  }
+}
+
+/**
+ * A confirmed `409 idempotency_in_progress` - a duplicate request arrived
+ * while the original attempt under this key is still running.
+ * `retryable: true`: the caller should back off and retry with the SAME
+ * key, never rotate it (rotating escapes the in-progress guard and risks
+ * a second broadcast for a request that may already be executing).
+ */
+export class KeeperHubIdempotencyInProgressError extends KeeperHubApiError {
+  constructor(status: number, body: string) {
+    super(status, body);
+    this.name = "KeeperHubIdempotencyInProgressError";
   }
 }
 
@@ -70,6 +110,18 @@ export class KeeperHubApiError extends Error {
  * intentionally left unimplemented. Wire them up once each contract has
  * been confirmed the same way listChains() was - do not fill them in from
  * assumption.
+ *
+ * `Idempotency-Key` support on `callContractFunction()` and
+ * `getDirectExecutionStatus()` (GET /execute/:id/status) were added
+ * directly from KeeperHub's own published Direct Execution API reference
+ * (https://docs.keeperhub.com/api/direct-execution, captured 2026-09-01
+ * - see docs/keeperhub-integration.md) rather than live experimentation,
+ * since the documented request/response shapes and the previously
+ * live-verified broadcast response (the real
+ * 0xc8a00cc2...49fd8b tx, which already carried the `executionId` this
+ * status endpoint expects) agree byte-for-byte. Both are exercised by
+ * this project's Safe First-Write Sequence - see
+ * execution/executor.ts and routes/executions.ts.
  */
 export class KeeperHubClient {
   constructor(
@@ -184,14 +236,35 @@ export class KeeperHubClient {
    * error and still throws; a `wouldRevert`-shaped 400 body is returned
    * as data so callers (see execution/executor.ts) can tell "the
    * permission doesn't allow this yet" apart from "KeeperHub is down."
+   *
+   * `options.idempotencyKey`, when supplied, is sent as the
+   * `Idempotency-Key` header per
+   * https://docs.keeperhub.com/api/direct-execution#idempotency. Per the
+   * docs, "Read-only and dry-run (simulate: true) requests are not
+   * affected" - callers should only supply this for a real broadcast
+   * (`simulate: false`), not for a simulation, and the key must identify
+   * the *work* (stable across a retry of the same attempt), never a
+   * fresh value minted per HTTP call - see execution/executor.ts, which
+   * sources it from the execution row's own `idempotencyKey` column
+   * rather than generating one here.
+   *
+   * A `409` response is parsed into one of two typed errors rather than
+   * the generic `KeeperHubApiError` when its body carries a recognized
+   * idempotency `code` - see `KeeperHubIdempotencyConflictError` /
+   * `KeeperHubIdempotencyInProgressError`. Any other non-2xx (including a
+   * `409` without that shape) still throws the plain `KeeperHubApiError`.
    */
-  async callContractFunction(request: ContractCallRequest): Promise<ContractCallResult> {
+  async callContractFunction(
+    request: ContractCallRequest,
+    options: { idempotencyKey?: string } = {},
+  ): Promise<ContractCallResult> {
     const url = `${this.baseUrl.replace(/\/$/, "")}/execute/contract-call`;
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
+        ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
       },
       body: JSON.stringify(request),
     });
@@ -205,6 +278,20 @@ export class KeeperHubClient {
     }
 
     if (!response.ok) {
+      if (response.status === 409 && body !== null && typeof body === "object" && "code" in body) {
+        const idempotencyBody = body as IdempotencyErrorBody;
+        if (idempotencyBody.code === "idempotency_conflict") {
+          throw new KeeperHubIdempotencyConflictError(
+            response.status,
+            text,
+            idempotencyBody.originalExecutionId ?? null,
+          );
+        }
+        if (idempotencyBody.code === "idempotency_in_progress") {
+          throw new KeeperHubIdempotencyInProgressError(response.status, text);
+        }
+      }
+
       const isSimulatedRevertResult =
         response.status === 400 && body !== null && typeof body === "object" && "wouldRevert" in body;
       if (!isSimulatedRevertResult) {
@@ -214,6 +301,51 @@ export class KeeperHubClient {
     }
 
     return body as ContractCallResult;
+  }
+
+  /**
+   * `GET /api/execute/{executionId}/status` -
+   * https://docs.keeperhub.com/api/direct-execution#get-execution-status.
+   * Returns the parsed status body alongside the `X-Poll-Interval-Hint`
+   * response header (seconds to wait before the next poll; `0` means the
+   * execution reached a terminal state - `completed` or `failed`). Per
+   * the docs, decide terminality from this header, not by string-
+   * matching `status` - see execution/executor.ts's poll loop, which
+   * treats an unrecognized/unhinted status as still non-terminal rather
+   * than guessing.
+   *
+   * NOT yet live-verified against a real polled execution (see the doc
+   * comment on `DirectExecutionStatusResponse`) - modeled directly from
+   * KeeperHub's documented shape, not guessed.
+   */
+  async getDirectExecutionStatus(
+    executionId: string,
+  ): Promise<{ status: DirectExecutionStatusResponse; pollIntervalHintSeconds: number | null }> {
+    const url = `${this.baseUrl.replace(/\/$/, "")}/execute/${encodeURIComponent(executionId)}/status`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+    });
+
+    const text = await response.text();
+    let body: unknown;
+    try {
+      body = text ? JSON.parse(text) : undefined;
+    } catch {
+      body = undefined;
+    }
+
+    if (!response.ok) {
+      logger.error({ url, status: response.status, body: text }, "KeeperHub API request failed");
+      throw new KeeperHubApiError(response.status, text);
+    }
+
+    const hintHeader = response.headers.get("x-poll-interval-hint");
+    const parsedHint = hintHeader !== null && hintHeader !== "" ? Number(hintHeader) : null;
+
+    return {
+      status: body as DirectExecutionStatusResponse,
+      pollIntervalHintSeconds: parsedHint !== null && Number.isFinite(parsedHint) ? parsedHint : null,
+    };
   }
 
   /**

@@ -65,6 +65,13 @@ export const api = {
     request(`/api/exit-strategies/${strategyId}/executions/${executionId}/simulate`, { method: "POST" }),
   broadcastExecution: (strategyId: string, executionId: string) =>
     request(`/api/exit-strategies/${strategyId}/executions/${executionId}/broadcast`, { method: "POST" }),
+  // Re-checks KeeperHub's GET /api/execute/{executionId}/status directly
+  // (the Safe First-Write Sequence's status step) for an execution left
+  // non-terminal after broadcast - a bounded inline poll already runs
+  // during broadcast itself; this lets the UI continue checking without
+  // re-broadcasting.
+  refreshExecutionStatus: (strategyId: string, executionId: string) =>
+    request(`/api/exit-strategies/${strategyId}/executions/${executionId}/refresh-status`, { method: "POST" }),
 
   // Exit Guardian: the autonomous decision layer. evaluateAgent runs the
   // same observe -> decide -> (refuse | approve+simulate) path the

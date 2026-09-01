@@ -142,11 +142,19 @@ against real chain state, under the permission state described above.
    background poller runs this same check on an interval when enabled
    (see "Known limitations").
 7. **Execute (broadcast)** — only enabled once a simulation has actually
-   succeeded; runs the identical call with `simulate: false`. The
-   returned transaction hash is only ever shown/stored if it's a
-   well-formed 66-character hash — never fabricated.
-8. **History** — every execution attempt, its status, and a BaseScan link
-   for any real broadcast, is kept on the strategy detail page.
+   succeeded; runs the identical call with `simulate: false` and an
+   `Idempotency-Key` (KeeperHub's Safe First-Write Sequence), keyed to
+   this execution's own stable id so a retried request replays instead
+   of double-broadcasting. KeeperHub's `executionId` is saved as soon as
+   it's known, then `GET /execute/{executionId}/status` is polled with
+   backoff (honoring `X-Poll-Interval-Hint`) until a receipt confirms the
+   outcome. A transaction hash is only ever shown/stored once a receipt
+   says so — never fabricated, and never trusted from the self-reported
+   status alone.
+8. **History** — every execution attempt, its status, KeeperHub's own
+   execution id, and a BaseScan link for any receipt-confirmed broadcast,
+   is kept on the strategy detail page. A still-confirming broadcast
+   keeps re-checking its status automatically.
 
 ## For judges
 
@@ -315,13 +323,40 @@ npm run db:migrate --workspace apps/api    # apply migrations
 
 ## KeeperHub integration
 
+**KeeperHub surfaces used** (all through the plain REST Direct Execution
+API — no MCP client/server in this repo):
+
+- `POST /execute/contract-call` — `execTransactionWithRole` against the
+  Roles Modifier, `simulate: true` first, then `simulate: false` once
+  clean (`apps/api/src/keeperhub/client.ts`'s `callContractFunction`).
+- **`Idempotency-Key`** header on every broadcast, sourced from the
+  execution row's own stable id — never minted fresh per HTTP attempt.
+  `idempotentReplay`, `409 idempotency_conflict`, and
+  `409 idempotency_in_progress` are each handled as their own case, not
+  folded into a generic error.
+- **`GET /execute/{executionId}/status`** polling with backoff, honoring
+  `X-Poll-Interval-Hint`. `receipts[]` (independently re-fetched from the
+  chain by KeeperHub) are treated as authoritative over the self-reported
+  `status`/`transactionHash` fields.
+- `GET /chains` — confirms Base is enabled.
+- **Evaluated and skipped:** `POST /execute/check-and-execute` — would
+  stay Roles-bound (the action leg is still `execTransactionWithRole`),
+  but its condition check requires a single-scalar contract read, and
+  Exit Keepa's real trigger (Aave's supply APR) only exists inside a
+  15-field struct return with no single-scalar getter. See
+  `docs/SUBMISSION.md` §4 for the full reasoning.
+
 `apps/api/src/keeperhub/client.ts` and `apps/api/src/keeperhub/types.ts`
 document, inline, exactly what was live-verified against KeeperHub's real
 API this session (contract-call resolution, the `functionArgs` JSON-
-stringified-array quirk, the `execTransactionWithRole` simulation
-response shape) versus what remains unverified (the exact response shape
-for a real broadcast). `apps/api/src/execution/executor.ts` is written to
-never trust an unverified shape — see its doc comments.
+stringified-array quirk, the `execTransactionWithRole` simulation and
+real-broadcast response shapes) versus what's implemented directly from
+KeeperHub's own published Direct Execution API reference but not yet
+independently live-exercised by this project (the Idempotency-Key and
+status-polling paths — see `docs/keeperhub-integration.md`'s
+"Documented (2026-09-01)" section and `docs/SUBMISSION.md`'s "what still
+breaks" list for the honest gap). `apps/api/src/execution/executor.ts` is
+written to never trust an unverified shape — see its doc comments.
 
 See `docs/keeperhub-integration.md` and `docs/zodiac-verification-evidence.md`
 for the full research trail.

@@ -51,6 +51,24 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // A broadcast that came back non-terminal (KeeperHub still confirming
+  // the receipt, or still processing under this Idempotency-Key) keeps
+  // getting checked on its own - the same GET
+  // /api/execute/{executionId}/status the Safe First-Write Sequence
+  // calls for, not a re-broadcast - until it settles or the tab closes.
+  useEffect(() => {
+    const pending = executions.find((e) => e.status === "executing" && e.keeperhubExecutionId);
+    if (!pending) return;
+    const timer = setTimeout(() => {
+      api
+        .refreshExecutionStatus(id, pending.id)
+        .then(refresh)
+        .catch(() => {});
+    }, 4000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [executions, id]);
+
   if (error && !strategy) return <p className="text-pretty text-sm text-danger">{error}</p>;
   if (!strategy) return <DetailSkeleton />;
 
@@ -88,6 +106,19 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
     setArmedExecutionId(null);
     try {
       await api.broadcastExecution(id, executionId);
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshStatus(executionId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.refreshExecutionStatus(id, executionId);
       await refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -275,6 +306,12 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
                 <span className="text-xs tabular-nums text-cream-400">{new Date(e.createdAt).toLocaleString()}</span>
               </div>
               {e.errorMessage && <p className="mt-1 text-pretty text-xs text-danger">{e.errorMessage}</p>}
+              {e.keeperhubExecutionId && (
+                <p className="mt-1 flex items-center gap-1 text-pretty text-xs text-cream-400">
+                  KeeperHub execution: <span className="font-mono text-cream-300">{e.keeperhubExecutionId}</span>
+                  <CopyButton value={e.keeperhubExecutionId} label="Copy KeeperHub execution id" />
+                </p>
+              )}
               {e.txHash && (
                 <div className="mt-2 flex items-center gap-1 rounded-lg bg-forest-950/60 px-3 py-2">
                   <a
@@ -287,6 +324,12 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
                   </a>
                   <CopyButton value={e.txHash} label="Copy tx hash" />
                 </div>
+              )}
+              {e.status === "executing" && (
+                <p className="mt-2 text-pretty text-xs text-warning">
+                  Broadcast sent - confirming the receipt on-chain with KeeperHub. This checks automatically every
+                  few seconds.
+                </p>
               )}
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {e.status === "pending" && (
@@ -311,6 +354,11 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
                       Cancel
                     </button>
                   </>
+                )}
+                {e.status === "executing" && e.keeperhubExecutionId && (
+                  <button onClick={() => refreshStatus(e.id)} disabled={busy} className={btnSecondarySmall}>
+                    Check status now
+                  </button>
                 )}
               </div>
             </div>
