@@ -133,10 +133,87 @@ async function readBody(response: Response) {
   return { status: response.status, headers, body };
 }
 
+/** keccak256 selectors for candidate functions, computed locally (viem's
+ * toFunctionSelector), not copied/guessed - see the tx-trace-probe mode
+ * doc comment below. */
+const KNOWN_SELECTORS: Record<string, string> = {
+  "0xc6fe8747": "execTransactionWithRole(address,uint256,bytes,uint8,bytes32,bool)",
+  "0x2b99e506": "execTransactionWithRoleReturnData(address,uint256,bytes,uint8,bytes32,bool)",
+  "0x468721a7": "execTransactionFromModule(address,uint256,bytes,uint8)",
+  "0x5229073f": "execTransactionFromModuleReturnData(address,uint256,bytes,uint8)",
+  "0x6a761202": "execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)",
+  "0x9aefaff8": "execute(address,address,uint256,bytes)",
+  "0x69328dec": "withdraw(address,uint256,address)",
+};
+
 async function main() {
   const mode = process.argv[2];
 
   try {
+    if (mode === "tx-trace-probe") {
+      // Answers exactly one question: what does the top-level call of the
+      // canonical proof tx actually look like on-chain, and what does its
+      // receipt's logs show - ground truth via BASE_RPC_URL (Railway's
+      // network can reach it; this sandbox's cannot), not a guess and not
+      // trust in this app's own prior documentation. Read-only: two
+      // eth_getTransaction*/eth_call-family JSON-RPC reads, no state
+      // change, no KeeperHub call, no funds moved.
+      const txHash = process.argv[3] ?? "0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b";
+
+      async function rpc(method: string, params: unknown[]) {
+        const response = await fetch(env.BASE_RPC_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        });
+        return readBody(response);
+      }
+
+      const txResult = await rpc("eth_getTransactionByHash", [txHash]);
+      const tx = (txResult.body as any)?.result as
+        | { from?: string; to?: string; input?: string; value?: string }
+        | undefined;
+      const topLevelSelector = tx?.input?.slice(0, 10);
+      console.log(
+        `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({
+          resource: "tx-trace-probe:tx",
+          txHash,
+          from: tx?.from,
+          to: tx?.to,
+          topLevelSelector,
+          decodedTopLevelFunction: topLevelSelector ? KNOWN_SELECTORS[topLevelSelector] ?? "UNKNOWN - not in local selector table" : undefined,
+          value: tx?.value,
+          fullInput: tx?.input,
+        })}`,
+      );
+
+      const receiptResult = await rpc("eth_getTransactionReceipt", [txHash]);
+      const receipt = (receiptResult.body as any)?.result as
+        | { status?: string; logs?: Array<{ address: string; topics: string[]; data: string }> }
+        | undefined;
+      console.log(
+        `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({
+          resource: "tx-trace-probe:receipt",
+          status: receipt?.status,
+          logCount: receipt?.logs?.length,
+          logs: receipt?.logs?.map((l) => ({ address: l.address, topic0: l.topics?.[0] })),
+        })}`,
+      );
+
+      // Best-effort: not every public RPC exposes debug/trace namespaces,
+      // so a failure here is expected and non-fatal - the tx/receipt data
+      // above already answers the top-level-call question either way.
+      const traceResult = await rpc("debug_traceTransaction", [txHash, { tracer: "callTracer" }]);
+      console.log(
+        `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({
+          resource: "tx-trace-probe:debug_trace",
+          status: traceResult.status,
+          body: traceResult.body,
+        })}`,
+      );
+      return;
+    }
+
     if (mode && (GET_RESOURCES as readonly string[]).includes(mode)) {
       const result = await getJson(`/${mode}`);
       console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: mode, ...result })}`);
@@ -331,7 +408,7 @@ async function main() {
 
     console.log(
       `KEEPERHUB_VERIFY_ERROR ${JSON.stringify({
-        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe", "execute-bytes-probe", "execute-disambiguation-probe", "zodiac-abi-probe", "zodiac-instance-probe"].join(", ")}`,
+        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe", "execute-bytes-probe", "execute-disambiguation-probe", "zodiac-abi-probe", "zodiac-instance-probe", "tx-trace-probe"].join(", ")}`,
         given: mode,
       })}`,
     );
