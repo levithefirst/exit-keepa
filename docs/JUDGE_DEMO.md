@@ -44,18 +44,16 @@ without a signature — invisible to you, but it's what lets the live demo
 Safe stay usable in demo mode while a real connected wallet gets genuine
 exclusive ownership of its own Safes and strategies.
 
-## 3. Connect the live demo Safe
+## 3. The live demo Safe
 
-Click **Dashboard**. Click **"Fill in the live demo Safe"** — this
-pre-fills the real, on-chain Safe/Roles Modifier/role key:
+Click **Dashboard**. The real, on-chain Safe already used for the proof
+transaction loads automatically — no manual entry needed:
 
 | | |
 |---|---|
 | Safe | `0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9` |
 | Roles Modifier | `0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE` |
 | Role key | `0x657869745f6b6565706100000000000000000000000000000000000000000000` |
-
-Click **"Save Safe"**.
 
 ## 4. Create a strategy that will genuinely refuse
 

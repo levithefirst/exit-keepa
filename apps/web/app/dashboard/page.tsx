@@ -5,31 +5,25 @@ import Link from "next/link";
 import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
 import { getStoredSafeId, setStoredSafeId } from "../../lib/storage";
-import { btnPrimary, btnSecondary, inputBase, linkFocus, card } from "../../lib/ui";
+import { btnPrimary, inputBase, linkFocus, card } from "../../lib/ui";
 import { StatusPill } from "../../components/StatusPill";
 import { CopyButton } from "../../components/CopyButton";
-import { AnalyticsChart } from "../../components/AnalyticsChart";
 
 const BASESCAN = "https://basescan.org";
-const DEMO_SAFE = "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9";
-const DEMO_ROLES_MODIFIER = "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE";
-const DEMO_ROLE_KEY = "0x657869745f6b6565706100000000000000000000000000000000000000000000";
 
-function StrategyRowSkeleton() {
+function DashboardSkeleton() {
   return (
-    <div className="animate-pulse rounded-xl border border-cream-100/10 p-4">
-      <div className="flex items-center justify-between">
-        <div className="h-4 w-40 rounded bg-cream-100/10" />
-        <div className="h-4 w-16 rounded bg-cream-100/10" />
-      </div>
-      <div className="mt-2 h-3 w-56 rounded bg-cream-100/5" />
+    <div className="mx-auto max-w-2xl animate-pulse space-y-6">
+      <div className="h-7 w-40 rounded bg-cream-100/10" />
+      <div className="h-24 rounded-xl border border-cream-100/10 bg-forest-800/40" />
+      <div className="h-16 rounded-xl border border-cream-100/10 bg-forest-800/40" />
     </div>
   );
 }
 
 export default function DashboardPage() {
   const { address, isDemo } = useWallet();
-  const [safeId, setSafeId] = useState<string | null>(null);
+  const [safeId, setSafeId] = useState<string | null | undefined>(undefined); // undefined = still resolving
   const [safe, setSafe] = useState<any>(null);
   const [balances, setBalances] = useState<any>(null);
   const [strategies, setStrategies] = useState<any[]>([]);
@@ -39,8 +33,30 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Resolve which Safe (if any) this address already has, without ever
+  // asking a returning wallet - or the demo identity, which already owns
+  // the pre-registered live-proof Safe - to type an address in again.
+  // Checks local cache first, then falls back to the account's own list
+  // of registered Safes.
   useEffect(() => {
-    if (address) setSafeId(getStoredSafeId(address));
+    if (!address) return;
+    setSafeId(undefined);
+    const cached = getStoredSafeId(address);
+    if (cached) {
+      setSafeId(cached);
+      return;
+    }
+    api
+      .listMySafeAccounts()
+      .then((mine) => {
+        if (mine.length > 0) {
+          setStoredSafeId(address, mine[0].id);
+          setSafeId(mine[0].id);
+        } else {
+          setSafeId(null);
+        }
+      })
+      .catch(() => setSafeId(null));
   }, [address]);
 
   useEffect(() => {
@@ -64,6 +80,8 @@ export default function DashboardPage() {
     );
   }
 
+  if (safeId === undefined) return <DashboardSkeleton />;
+
   async function registerSafe() {
     setError(null);
     try {
@@ -82,7 +100,7 @@ export default function DashboardPage() {
 
   if (!safeId) {
     return (
-      <div className="max-w-md space-y-4">
+      <div className="mx-auto max-w-md space-y-4">
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Connect your Safe</h1>
         <p className="text-pretty text-sm text-cream-300">
           Enter the Safe you want Exit Keepa to protect. If it already has a Zodiac Roles Modifier set up, add its
@@ -125,37 +143,23 @@ export default function DashboardPage() {
           />
         </div>
         {error && <p className="text-pretty text-sm text-danger">{error}</p>}
-        <div className="flex flex-wrap gap-3">
-          <button onClick={registerSafe} className={btnPrimary}>
-            Save Safe
-          </button>
-          {isDemo && (
-            <button
-              onClick={() => {
-                setFormSafeAddress(DEMO_SAFE);
-                setFormRoles(DEMO_ROLES_MODIFIER);
-                setFormRoleKey(DEMO_ROLE_KEY);
-              }}
-              className={btnSecondary}
-            >
-              Fill in the live demo Safe
-            </button>
-          )}
-        </div>
+        <button onClick={registerSafe} className={btnPrimary}>
+          Save Safe
+        </button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8">
+    <div className="mx-auto max-w-2xl space-y-8">
       <div>
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Dashboard</h1>
-        <p className="break-all text-sm text-cream-400">Connected: {address}</p>
+        {isDemo && <p className="text-sm text-cream-400">Demo mode - showing the verified live-proof Safe.</p>}
       </div>
 
       {safe && (
         <div className={card}>
-          <h2 className="mb-2 font-semibold text-cream-50">Safe</h2>
+          <h2 className="mb-2 font-semibold text-cream-50">Your Safe</h2>
           <div className="flex items-center gap-1">
             <p className="break-all font-mono text-sm text-cream-200">{safe.safeAddress}</p>
             <CopyButton value={safe.safeAddress} label="Copy address" />
@@ -172,8 +176,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <AnalyticsChart />
-
       <div className="flex items-center justify-between">
         <h2 className="font-semibold text-cream-50">Your strategies</h2>
         <Link href="/create" className={btnPrimary}>
@@ -181,12 +183,7 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      {loading && (
-        <div className="space-y-3">
-          <StrategyRowSkeleton />
-          <StrategyRowSkeleton />
-        </div>
-      )}
+      {loading && <div className="h-16 animate-pulse rounded-xl border border-cream-100/10 bg-forest-800/40" />}
       {!loading && strategies.length === 0 && (
         <div className="rounded-xl border border-dashed border-cream-100/15 p-6 text-center">
           <p className="text-pretty mb-3 text-sm text-cream-300">No strategies yet. Create one to get started.</p>

@@ -44,6 +44,7 @@ export const api = {
     request<{ token: string; address: string; expiresAt: string }>("/api/auth/demo-session", { method: "POST" }),
 
   createSafeAccount: (input: unknown) => request("/api/safe-accounts", { method: "POST", body: JSON.stringify(input) }),
+  listMySafeAccounts: () => request<any[]>("/api/safe-accounts"),
   getSafeAccount: (id: string) => request(`/api/safe-accounts/${id}`),
   getSafeBalances: (id: string) => request(`/api/safe-accounts/${id}/balances`),
 

@@ -10,7 +10,7 @@ const BASESCAN = "https://basescan.org";
 
 function DetailSkeleton() {
   return (
-    <div className="max-w-2xl animate-pulse space-y-8">
+    <div className="mx-auto max-w-2xl animate-pulse space-y-8">
       <div className="space-y-2">
         <div className="h-7 w-64 rounded bg-cream-100/10" />
         <div className="h-5 w-20 rounded bg-cream-100/10" />
@@ -128,7 +128,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   }
 
   return (
-    <div className="max-w-2xl space-y-8">
+    <div className="mx-auto max-w-2xl space-y-8">
       <div>
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">{strategy.name}</h1>
         <div className="mt-1">

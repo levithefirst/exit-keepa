@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   BRAVE_WALLET_RDNS,
   COINBASE_RDNS,
@@ -134,41 +135,55 @@ export function WalletConnectModal({ open, onClose }: { open: boolean; onClose: 
   // (e.g. an older wallet extension, or a mobile wallet's in-app browser).
   const genericInjectedAvailable = Boolean(ambientEthereum) && Object.keys(discoveredProviders).length === 0;
 
-  return (
+  // Rendered via a portal straight onto <body> rather than in place: this
+  // component is mounted inside <Nav>, and Nav's own `backdrop-blur`
+  // (backdrop-filter) establishes a containing block for any
+  // `position: fixed` descendant per the CSS spec - without the portal,
+  // this modal's "fixed inset-0" was being sized/positioned relative to
+  // the ~70px-tall nav bar instead of the viewport, which is what made it
+  // render squashed into the top of the screen on every viewport size.
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-forest-950/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 overflow-y-auto bg-forest-950/70 p-4 backdrop-blur-sm"
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-        className="w-full max-w-sm rounded-xl border border-cream-100/10 bg-forest-800 p-5 shadow-2xl outline-none"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 id={titleId} className="font-display text-lg font-semibold text-cream-50">
-            Connect a wallet
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className={`flex h-9 w-9 items-center justify-center rounded-lg text-cream-300 hover:bg-cream-100/10 hover:text-cream-50 ${linkFocus}`}
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" d="M6 6l12 12M6 18L18 6" />
-            </svg>
-          </button>
-        </div>
+      {/* min-h-full + flex centers the dialog when it's shorter than the
+          viewport, and lets the *page* (this wrapper, via overflow-y-auto
+          above) scroll when it's taller - a fixed max-h + internal scroll
+          alone still clipped the top of the wallet list on short mobile
+          viewports since the dialog was vertically centered with no room
+          above it. */}
+      <div className="flex min-h-full items-center justify-center">
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          tabIndex={-1}
+          className="my-8 w-full max-w-sm rounded-xl border border-cream-100/10 bg-forest-800 p-5 shadow-2xl outline-none"
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <h2 id={titleId} className="font-display text-lg font-semibold text-cream-50">
+              Connect a wallet
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className={`flex h-9 w-9 items-center justify-center rounded-lg text-cream-300 hover:bg-cream-100/10 hover:text-cream-50 ${linkFocus}`}
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" d="M6 6l12 12M6 18L18 6" />
+              </svg>
+            </button>
+          </div>
 
-        <p className="mb-4 text-sm text-cream-300">Exit Keepa runs on Base. Pick a wallet to sign in with.</p>
+          <p className="mb-4 text-sm text-cream-300">Exit Keepa runs on Base. Pick a wallet to sign in with.</p>
 
-        <ul className="space-y-2">
+          <ul className="space-y-2">
           {WALLET_OPTIONS.map((opt) => {
             const installed =
               Boolean(discoveredProviders[opt.rdns]) || Boolean(opt.ambientFlag && ambientEthereum?.[opt.ambientFlag]);
@@ -262,18 +277,20 @@ export function WalletConnectModal({ open, onClose }: { open: boolean; onClose: 
           </p>
         )}
 
-        <p className="mt-4 text-center text-xs text-cream-400">
-          New to wallets?{" "}
-          <a
-            href="https://ethereum.org/en/wallets/find-wallet/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`text-cream-300 underline hover:text-mint-300 ${linkFocus}`}
-          >
-            Learn more
-          </a>
-        </p>
+          <p className="mt-4 text-center text-xs text-cream-400">
+            New to wallets?{" "}
+            <a
+              href="https://ethereum.org/en/wallets/find-wallet/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`text-cream-300 underline hover:text-mint-300 ${linkFocus}`}
+            >
+              Learn more
+            </a>
+          </p>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

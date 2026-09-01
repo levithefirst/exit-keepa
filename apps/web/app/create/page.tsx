@@ -89,7 +89,7 @@ export default function CreateStrategyPage() {
 
   if (step === "activated") {
     return (
-      <div className="max-w-lg space-y-4">
+      <div className="mx-auto max-w-lg space-y-4">
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Strategy activated</h1>
         <p className="text-pretty text-sm text-cream-300">
           Exit Keepa will run this transaction through your Safe the moment your condition is met.
@@ -104,7 +104,7 @@ export default function CreateStrategyPage() {
   if (step === "review" && preview) {
     const canActivate = Boolean(preview.tx);
     return (
-      <div className="max-w-xl space-y-5">
+      <div className="mx-auto max-w-xl space-y-5">
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Review before you activate</h1>
         <p className="text-pretty text-sm text-cream-300">
           This transaction is rebuilt directly from your strategy every time. Nothing here comes from anything
@@ -197,7 +197,7 @@ export default function CreateStrategyPage() {
   }
 
   return (
-    <div className="max-w-lg space-y-5">
+    <div className="mx-auto max-w-lg space-y-5">
       <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Create exit strategy</h1>
 
       <div>

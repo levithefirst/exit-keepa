@@ -10,6 +10,26 @@ import { requireSafeOwnership, requireSession } from "../auth/session";
 
 export const safeAccountsRouter = Router();
 
+/**
+ * Lists every Safe the current session's address owns, so the frontend
+ * can skip straight to a populated dashboard for a returning wallet (or
+ * the fixed demo identity, which already owns a pre-registered Safe from
+ * migration 0002) instead of always asking for a Safe address again.
+ * Empty for a wallet that has never registered one - the dashboard falls
+ * back to the manual "Connect your Safe" form in that case.
+ */
+safeAccountsRouter.get("/safe-accounts", async (req, res) => {
+  const address = await requireSession(req);
+  const owned = await db.select().from(safeOwners).where(eq(safeOwners.ownerAddress, address));
+  if (owned.length === 0) {
+    res.json([]);
+    return;
+  }
+  const ownedIds = new Set(owned.map((o) => o.safeId));
+  const rows = await db.select().from(safeAccounts);
+  res.json(rows.filter((row) => ownedIds.has(row.id)));
+});
+
 safeAccountsRouter.get("/safe-accounts/:id", async (req, res) => {
   const address = await requireSession(req);
   await requireSafeOwnership(req.params.id, address);

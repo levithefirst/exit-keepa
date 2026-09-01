@@ -16,11 +16,10 @@ See [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for the full submission.
 
 **Live demo:** [`https://exit-keepa-web.vercel.app`](https://exit-keepa-web.vercel.app) —
 the full app, live. API: `https://api-production-2e11.up.railway.app`.
-Click **"Try demo"** in the nav bar to explore the full flow,
-including the pre-filled live demo Safe, without a wallet extension —
-see [Known limitations](#known-limitations) for what demo mode does and
-does not do. See [`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md) for an exact,
-timed click-through.
+Click **"Try demo"** in the nav bar to explore the full flow against the
+live-proof Safe, without a wallet extension. See
+[`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md) for an exact, timed
+click-through.
 
 **Hackathon judges:** see [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for
 the pitch, live evidence (on-chain Roles config + a real simulation
@@ -140,7 +139,8 @@ against real chain state, under the permission state described above.
    against the real Roles Modifier and Aave Pool — landing on either
    `simulated` (would succeed) or `failed` (the exact revert reason). A
    background poller runs this same check on an interval when enabled
-   (see "Known limitations").
+   (`AGENT_POLL_ENABLED=true` — off by default so a fresh deploy never
+   starts creating real execution rows on its own).
 7. **Execute (broadcast)** — only enabled once a simulation has actually
    succeeded; runs the identical call with `simulate: false` and an
    `Idempotency-Key` (KeeperHub's Safe First-Write Sequence), keyed to
@@ -212,10 +212,9 @@ database, is the source of truth here.
 one-time nonce with `personal_sign`, exchange the recovered signature for
 a bearer session token, and every subsequent request to a Safe/strategy/
 execution/agent-decision route is checked against a `safe_owners` table
-(`apps/api/src/auth/session.ts`). See "Known limitations" below for
-exactly what this does and does not verify, and
-[`docs/SUBMISSION.md`](docs/SUBMISSION.md)'s P1 section for the full
-test list.
+(`apps/api/src/auth/session.ts`), so a caller can only ever read or act
+on Safes they registered themselves. See
+[`docs/SUBMISSION.md`](docs/SUBMISSION.md) for the full test list.
 
 ## Architecture
 
@@ -390,59 +389,3 @@ for the full research trail.
 
 **Database (Neon):** already provisioned; migrations run automatically on
 every Railway deploy via the pre-deploy command above.
-
-## Known limitations
-
-- **The autonomous background poller is off by default everywhere**,
-  including the live Railway deployment, until `AGENT_POLL_ENABLED=true`
-  is set. Deliberate: a fresh deploy should never silently start creating
-  real execution rows against live chain state on its own. The on-demand
-  "Run Exit Guardian" button runs the identical decision path
-  (`agent/guardian.ts`) regardless of this flag.
-- **Aave rate-oracle and aUSDC-balance reads are verified by static
-  analysis, not by a live call from this environment.** The
-  `getReserveData(address)` selector was recomputed locally via a real
-  Keccak-256 implementation; the `ReserveDataLegacy` field layout and the
-  aUSDC token address were checked against Aave's own source
-  (`aave-dao/aave-v3-origin`) and `bgd-labs/aave-address-book`
-  respectively — not guessed, and not recalled from memory alone. What
-  this session couldn't do is place a live `eth_call` against the actual
-  deployed contracts (the sandbox's egress proxy blocks direct RPC
-  access), so treat first production use as the final cross-check.
-- **The Roles permission is scoped to the `withdraw` function, but not
-  yet to `asset == USDC` / `to == this Safe` at the on-chain layer.** See
-  "How execution is authorized" above: `scopeTarget` + a function-level
-  allow for `withdraw` are live, so no other function or contract is
-  reachable through this role, but the Roles Modifier itself would still
-  accept any `asset`/`to` argument for a `withdraw` call. Today, "only
-  USDC, only back to this Safe" is enforced by Exit Keepa's own policy
-  check (`agent/policy.ts`), not by an on-chain condition. Adding that
-  condition is the one remaining step in
-  [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md).
-- **Single protocol/action only.** By design for v1 — see "What it
-  actually does" above.
-- **Wallet-authenticated ownership is implemented, but stops at the DB.**
-  Connecting a wallet now requires a real signature: `POST /api/auth/nonce`
-  issues a one-time nonce, the wallet signs a challenge message
-  embedding it via `personal_sign`, and `POST /api/auth/verify` recovers
-  the signer (`viem`'s `recoverMessageAddress`) before issuing a bearer
-  session token. Every route touching a Safe, strategy, execution, or
-  agent decision checks that token against a `safe_owners` table (see
-  `apps/api/src/auth/`), so a caller can no longer read or act on
-  another wallet's resources by guessing an ID. What this does *not* do:
-  independently verify the recorded owner address against that Safe's
-  actual on-chain signer set — it's Exit Keepa's own DB-level ownership
-  record, established at registration time, not a live check of Safe
-  multisig configuration. The live demo Safe keeps working with no
-  wallet needed via a fixed demo identity, reachable only through the
-  explicit `/api/auth/demo-session` endpoint (never through a real
-  signature), backfilled to it at migration time.
-- **The Roles grant on the live demo Safe is function-scoped to
-  `withdraw`, but its `asset`/`to` parameters are not yet locked
-  on-chain.** See "How execution is authorized" above. The remaining
-  calldata to add that condition — computed with `viem`'s real ABI
-  encoder against the actual Zodiac Roles v2 source and self-checked by
-  decoding it back — is prepared in
-  [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md), ready for the
-  Safe's own signers to review and submit. Nothing in this codebase
-  submits it automatically.

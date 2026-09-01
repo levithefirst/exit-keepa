@@ -247,3 +247,40 @@ describe("Ownership enforcement across resource types", () => {
     expect((await request(app).get(`/api/exit-strategies/${strategyId}`).set(ownerAuthHeader)).status).toBe(200);
   });
 });
+
+describe("GET /api/safe-accounts - lets the dashboard auto-resolve a returning wallet's Safe", () => {
+  it("returns only the Safes the calling session's address registered, never another wallet's", async () => {
+    const { verifyRes: owner } = await signIn(generatePrivateKey());
+    const { verifyRes: stranger } = await signIn(generatePrivateKey());
+    const ownerAuthHeader = { Authorization: `Bearer ${owner.body.token}` };
+    const strangerAuthHeader = { Authorization: `Bearer ${stranger.body.token}` };
+
+    const created = await request(app)
+      .post("/api/safe-accounts")
+      .set(ownerAuthHeader)
+      .send({ chainId: 8453, safeAddress: "0x000000000000000000000000000000000000dEaD" });
+    expect(created.status).toBe(201);
+
+    const ownerList = await request(app).get("/api/safe-accounts").set(ownerAuthHeader);
+    expect(ownerList.status).toBe(200);
+    expect(ownerList.body.map((s: { id: string }) => s.id)).toEqual([created.body.id]);
+
+    const strangerList = await request(app).get("/api/safe-accounts").set(strangerAuthHeader);
+    expect(strangerList.status).toBe(200);
+    expect(strangerList.body).toEqual([]);
+  });
+
+  it("returns an empty array (not an error) for a session that owns no Safes yet", async () => {
+    const { verifyRes } = await signIn(generatePrivateKey());
+    const res = await request(app)
+      .get("/api/safe-accounts")
+      .set("Authorization", `Bearer ${verifyRes.body.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("requires a session - 401 with no Authorization header", async () => {
+    const res = await request(app).get("/api/safe-accounts");
+    expect(res.status).toBe(401);
+  });
+});
