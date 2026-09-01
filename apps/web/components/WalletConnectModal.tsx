@@ -1,55 +1,90 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { COINBASE_RDNS, METAMASK_RDNS, useWallet } from "../lib/wallet";
+import {
+  BRAVE_WALLET_RDNS,
+  COINBASE_RDNS,
+  METAMASK_RDNS,
+  OKX_WALLET_RDNS,
+  RABBY_RDNS,
+  RAINBOW_RDNS,
+  TRUST_WALLET_RDNS,
+  useWallet,
+} from "../lib/wallet";
 import { linkFocus } from "../lib/ui";
+import { WalletIcon } from "./WalletIcon";
+import type { WALLET_ICON_SVG } from "../lib/walletIconSvg";
 
 interface WalletOption {
   rdns: string;
   name: string;
   description: string;
   installUrl: string;
-  icon: React.ReactNode;
+  iconId: keyof typeof WALLET_ICON_SVG;
+  /** Ambient `window.ethereum.isX` flag some extensions set even without
+   * an EIP-6963 announcement - checked as a fallback, not the primary
+   * detection path (see `installed` below). */
+  ambientFlag?: "isMetaMask" | "isCoinbaseWallet" | "isBraveWallet" | "isRabby" | "isTrust" | "isTrustWallet";
 }
 
-/** Small inline monogram badges instead of pulling real wallet logos as
- * external images - keeps this self-contained (no CDN image host in the
- * artifact/CSP allowlist to worry about) while still being instantly
- * recognizable next to the wallet's name. */
-function Monogram({ bg, fg, children }: { bg: string; fg: string; children: React.ReactNode }) {
-  return (
-    <span
-      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold"
-      style={{ background: bg, color: fg }}
-      aria-hidden="true"
-    >
-      {children}
-    </span>
-  );
-}
-
+/** Every wallet here is a real EIP-1193 injected provider relevant to an
+ * EVM chain (Base) - no non-EVM wallets (Cosmos/Starknet/Bitcoin-only,
+ * etc.), matching this app's single-chain scope. Icons are each wallet's
+ * own real logomark (see lib/walletIconSvg.ts), not letter monograms. */
 const WALLET_OPTIONS: WalletOption[] = [
   {
     rdns: METAMASK_RDNS,
     name: "MetaMask",
     description: "Connect using the MetaMask browser extension",
     installUrl: "https://metamask.io/download",
-    icon: (
-      <Monogram bg="#f6851b" fg="#1a1200">
-        M
-      </Monogram>
-    ),
+    iconId: "MetaMask",
+    ambientFlag: "isMetaMask",
   },
   {
     rdns: COINBASE_RDNS,
     name: "Coinbase Wallet",
     description: "Connect using the Coinbase Wallet extension",
     installUrl: "https://www.coinbase.com/wallet/downloads",
-    icon: (
-      <Monogram bg="#0052ff" fg="#ffffff">
-        C
-      </Monogram>
-    ),
+    iconId: "CoinbaseWallet",
+    ambientFlag: "isCoinbaseWallet",
+  },
+  {
+    rdns: RABBY_RDNS,
+    name: "Rabby",
+    description: "Connect using the Rabby browser extension",
+    installUrl: "https://rabby.io/",
+    iconId: "Rabby",
+    ambientFlag: "isRabby",
+  },
+  {
+    rdns: RAINBOW_RDNS,
+    name: "Rainbow",
+    description: "Connect using the Rainbow browser extension",
+    installUrl: "https://rainbow.me/extension",
+    iconId: "Rainbow",
+  },
+  {
+    rdns: TRUST_WALLET_RDNS,
+    name: "Trust Wallet",
+    description: "Connect using the Trust Wallet browser extension",
+    installUrl: "https://trustwallet.com/browser-extension",
+    iconId: "TrustWallet",
+    ambientFlag: "isTrust",
+  },
+  {
+    rdns: OKX_WALLET_RDNS,
+    name: "OKX Wallet",
+    description: "Connect using the OKX Wallet browser extension",
+    installUrl: "https://www.okx.com/web3",
+    iconId: "OkxWallet",
+  },
+  {
+    rdns: BRAVE_WALLET_RDNS,
+    name: "Brave Wallet",
+    description: "Connect using Brave's built-in wallet",
+    installUrl: "https://brave.com/wallet/",
+    iconId: "BraveWallet",
+    ambientFlag: "isBraveWallet",
   },
 ];
 
@@ -136,9 +171,7 @@ export function WalletConnectModal({ open, onClose }: { open: boolean; onClose: 
         <ul className="space-y-2">
           {WALLET_OPTIONS.map((opt) => {
             const installed =
-              Boolean(discoveredProviders[opt.rdns]) ||
-              (opt.rdns === METAMASK_RDNS && Boolean(ambientEthereum?.isMetaMask)) ||
-              (opt.rdns === COINBASE_RDNS && Boolean(ambientEthereum?.isCoinbaseWallet));
+              Boolean(discoveredProviders[opt.rdns]) || Boolean(opt.ambientFlag && ambientEthereum?.[opt.ambientFlag]);
             const isPending = connecting && pendingRdns === opt.rdns;
             return (
               <li key={opt.rdns}>
@@ -149,7 +182,7 @@ export function WalletConnectModal({ open, onClose }: { open: boolean; onClose: 
                     onClick={() => handleConnect(opt.rdns)}
                     className={`flex w-full items-center gap-3 rounded-lg border border-cream-100/10 bg-forest-900/60 px-3 py-2.5 text-left transition-colors hover:border-mint-400/40 hover:bg-forest-900 disabled:cursor-not-allowed disabled:opacity-60 ${linkFocus}`}
                   >
-                    {opt.icon}
+                    <WalletIcon id={opt.iconId} label={opt.name} />
                     <span className="flex-1">
                       <span className="block text-sm font-medium text-cream-50">{opt.name}</span>
                       <span className="block text-xs text-cream-400">
@@ -165,7 +198,7 @@ export function WalletConnectModal({ open, onClose }: { open: boolean; onClose: 
                   </button>
                 ) : (
                   <div className="flex w-full items-center gap-3 rounded-lg border border-cream-100/10 bg-forest-900/30 px-3 py-2.5 opacity-80">
-                    {opt.icon}
+                    <WalletIcon id={opt.iconId} label={opt.name} />
                     <span className="flex-1">
                       <span className="block text-sm font-medium text-cream-200">{opt.name}</span>
                       <span className="block text-xs text-cream-400">Not detected in this browser</span>
@@ -192,9 +225,12 @@ export function WalletConnectModal({ open, onClose }: { open: boolean; onClose: 
                 onClick={() => handleConnect(undefined)}
                 className={`flex w-full items-center gap-3 rounded-lg border border-cream-100/10 bg-forest-900/60 px-3 py-2.5 text-left transition-colors hover:border-mint-400/40 hover:bg-forest-900 disabled:cursor-not-allowed disabled:opacity-60 ${linkFocus}`}
               >
-                <Monogram bg="#3a4f42" fg="#e4d8b8">
+                <span
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-forest-700 text-sm font-bold text-cream-100"
+                  aria-hidden="true"
+                >
                   ◆
-                </Monogram>
+                </span>
                 <span className="flex-1">
                   <span className="block text-sm font-medium text-cream-50">Other injected wallet</span>
                   <span className="block text-xs text-cream-400">
