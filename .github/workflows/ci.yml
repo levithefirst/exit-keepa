@@ -21,6 +21,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # packages/shared has no TS project-reference wiring into apps/web
+      # or apps/api - they resolve @exit-keepa/shared via its compiled
+      # dist/ (see packages/shared/package.json's main/types fields), so
+      # it must be built before anything that imports it typechecks,
+      # lints, or runs. Without this step first, a genuinely fresh clone
+      # fails immediately (a bug this CI workflow itself caught on its
+      # first-ever run - dist/ had always been present locally from a
+      # prior build, masking it).
+      - name: Build packages/shared
+        run: npm run build --workspace packages/shared
+
       - name: Typecheck
         run: npm run typecheck
 

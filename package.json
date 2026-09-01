@@ -14,7 +14,7 @@
     "build:web": "npm run build --workspace packages/shared && npm run build --workspace apps/web",
     "build:api": "npm run build --workspace packages/shared && npm run build --workspace apps/api",
     "lint": "npm run lint --workspace apps/web && npm run lint --workspace apps/api",
-    "typecheck": "npm run typecheck --workspace apps/web && npm run typecheck --workspace apps/api && npm run typecheck --workspace packages/shared",
+    "typecheck": "npm run build --workspace packages/shared && npm run typecheck --workspace apps/web && npm run typecheck --workspace apps/api && npm run typecheck --workspace packages/shared",
     "db:generate": "npm run db:generate --workspace apps/api",
     "db:migrate": "npm run db:migrate --workspace apps/api"
   },
