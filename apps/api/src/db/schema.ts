@@ -149,6 +149,44 @@ export const agentDecisions = pgTable("agent_decisions", {
 });
 
 /**
+ * Who owns a Safe *record in Exit Keepa's own database* - the wallet that
+ * proved (via a signed nonce, see routes/auth.ts) it controls
+ * `ownerAddress` at registration time. This is deliberately not the same
+ * claim as "is a signer on the Gnosis Safe itself" - verifying on-chain
+ * Safe-signer status is a separate, harder problem this doesn't attempt.
+ * What it does guarantee: only the wallet that registered a Safe (or the
+ * fixed demo identity, for the one pre-existing demo Safe - see the
+ * backfill in this migration) can read or act on it through this API.
+ * Addresses are always stored lowercased; compare lowercased on every read.
+ */
+export const safeOwners = pgTable("safe_owners", {
+  safeId: uuid("safe_id")
+    .primaryKey()
+    .references(() => safeAccounts.id, { onDelete: "cascade" }),
+  ownerAddress: text("owner_address").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * A one-time-use challenge issued to an address before it can prove key
+ * possession. One row per address (a fresh nonce request overwrites the
+ * previous one, invalidating it) - see routes/auth.ts.
+ */
+export const authNonces = pgTable("auth_nonces", {
+  address: text("address").primaryKey(),
+  nonce: text("nonce").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+/** An issued session: opaque bearer token -> the address it authenticates as. */
+export const authSessions = pgTable("auth_sessions", {
+  token: text("token").primaryKey(),
+  address: text("address").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+/**
  * Append-only audit log for every state-changing action and every inbound
  * KeeperHub webhook. This is the source of truth for "what happened and
  * when" independent of the mutable tables above.

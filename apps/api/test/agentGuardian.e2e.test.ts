@@ -2,6 +2,7 @@ import "./setup";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import request from "supertest";
 import { createFakeDb, eq, and } from "./fakeDb";
+import { createTestSession, authHeader } from "./authHelpers";
 
 const fakeDb = createFakeDb();
 
@@ -58,9 +59,12 @@ const SAFE_ADDRESS = "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9";
 const ROLES_MODIFIER = "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE";
 const ROLE_KEY = "0x657869745f6b6565706100000000000000000000000000000000000000000000";
 
+let token: string;
+
 async function registerSafe() {
   const safeRes = await request(app)
     .post("/api/safe-accounts")
+    .set(authHeader(token))
     .send({ chainId: 8453, safeAddress: SAFE_ADDRESS, rolesModifierAddress: ROLES_MODIFIER, rolesKey: ROLE_KEY });
   return safeRes.body.id as string;
 }
@@ -73,20 +77,22 @@ async function createActiveStrategyWithAmount(amount: string) {
   const safeId = await registerSafe();
   const strategyRes = await request(app)
     .post("/api/exit-strategies")
+    .set(authHeader(token))
     .send({
       safeId,
       name: "Guardian test strategy",
       condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
       action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount },
     });
-  await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`);
+  await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`).set(authHeader(token));
   return strategyRes.body.id as string;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   callContractFunction.mockReset();
   currentSupplyRateBps = 100;
   currentPositionBalance = 10n ** 12n;
+  token = await createTestSession(fakeDb, "0xAbC0000000000000000000000000000000AbC2");
 });
 
 describe("Exit Guardian - approval path", () => {
@@ -94,7 +100,9 @@ describe("Exit Guardian - approval path", () => {
     const strategyId = await createActiveStrategy();
     callContractFunction.mockResolvedValueOnce({ success: true, status: "simulated", wouldRevert: false });
 
-    const res = await request(app).post(`/api/exit-strategies/${strategyId}/agent/evaluate`);
+    const res = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/agent/evaluate`)
+      .set(authHeader(token));
     expect(res.status).toBe(200);
     expect(res.body.decision).toBe("triggered");
     expect(res.body.conditionMet).toBe(true);
@@ -104,7 +112,9 @@ describe("Exit Guardian - approval path", () => {
 
     // The receipt is independently fetchable and carries the full chain of
     // claims: intent, observation, policy check, and simulation result.
-    const receiptRes = await request(app).get(`/api/agent/decisions/${res.body.decisionId}`);
+    const receiptRes = await request(app)
+      .get(`/api/agent/decisions/${res.body.decisionId}`)
+      .set(authHeader(token));
     expect(receiptRes.status).toBe(200);
     expect(receiptRes.body.observation.rateBps).toBe(100);
     expect(receiptRes.body.policyCheck.policyPassed).toBe(true);
@@ -134,13 +144,15 @@ describe("Exit Guardian - refusal path", () => {
     currentPositionBalance = 1_000_000n; // only 1 USDC actually in the position now
     callContractFunction.mockResolvedValueOnce({ success: true, status: "simulated", wouldRevert: false });
 
-    const evalRes = await request(app).post(`/api/exit-strategies/${strategyId}/agent/evaluate`);
+    const evalRes = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/agent/evaluate`)
+      .set(authHeader(token));
     expect(evalRes.body.execution.status).toBe("simulated");
     const executionId = evalRes.body.executionId;
 
-    const broadcastRes = await request(app).post(
-      `/api/exit-strategies/${strategyId}/executions/${executionId}/broadcast`,
-    );
+    const broadcastRes = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/executions/${executionId}/broadcast`)
+      .set(authHeader(token));
     expect(broadcastRes.status).toBe(200);
     expect(broadcastRes.body.status).toBe("blocked");
     expect(broadcastRes.body.errorMessage).toMatch(/Amount exceeded/);
@@ -148,9 +160,9 @@ describe("Exit Guardian - refusal path", () => {
 
     // A blocked row is a dead end - decideBroadcast rejects it same as
     // `failed`, never silently retried.
-    const retryRes = await request(app).post(
-      `/api/exit-strategies/${strategyId}/executions/${executionId}/broadcast`,
-    );
+    const retryRes = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/executions/${executionId}/broadcast`)
+      .set(authHeader(token));
     expect(retryRes.status).toBe(409);
   });
 
@@ -158,7 +170,9 @@ describe("Exit Guardian - refusal path", () => {
     const strategyId = await createActiveStrategy();
     currentSupplyRateBps = 500; // above the 200bps threshold - condition not met
 
-    const res = await request(app).post(`/api/exit-strategies/${strategyId}/agent/evaluate`);
+    const res = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/agent/evaluate`)
+      .set(authHeader(token));
     expect(res.status).toBe(200);
     expect(res.body.decision).toBe("normal");
     expect(res.body.conditionMet).toBe(false);
@@ -172,7 +186,9 @@ describe("Exit Guardian - edge-trigger prevents double execution under repeated 
     const strategyId = await createActiveStrategy();
     callContractFunction.mockResolvedValue({ success: true, status: "simulated", wouldRevert: false });
 
-    const first = await request(app).post(`/api/exit-strategies/${strategyId}/agent/evaluate`);
+    const first = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/agent/evaluate`)
+      .set(authHeader(token));
     expect(first.body.decision).toBe("triggered");
     const firstExecutionId = first.body.executionId;
     expect(firstExecutionId).toBeTruthy();
@@ -180,7 +196,9 @@ describe("Exit Guardian - edge-trigger prevents double execution under repeated 
     // Simulate 5 more poll ticks with the condition still true - none of
     // them may create a second execution or call KeeperHub again.
     for (let i = 0; i < 5; i++) {
-      const held = await request(app).post(`/api/exit-strategies/${strategyId}/agent/evaluate`);
+      const held = await request(app)
+        .post(`/api/exit-strategies/${strategyId}/agent/evaluate`)
+        .set(authHeader(token));
       expect(held.status).toBe(200);
       expect(held.body.decision).toBe("held");
       expect(held.body.executionId).toBeNull();
@@ -188,7 +206,9 @@ describe("Exit Guardian - edge-trigger prevents double execution under repeated 
 
     expect(callContractFunction).toHaveBeenCalledTimes(1); // the one auto-simulate call, never a second
 
-    const executions = await request(app).get(`/api/exit-strategies/${strategyId}/executions`);
+    const executions = await request(app)
+      .get(`/api/exit-strategies/${strategyId}/executions`)
+      .set(authHeader(token));
     expect(executions.body).toHaveLength(1);
     expect(executions.body[0].id).toBe(firstExecutionId);
   });
@@ -197,19 +217,27 @@ describe("Exit Guardian - edge-trigger prevents double execution under repeated 
     const strategyId = await createActiveStrategy();
     callContractFunction.mockResolvedValue({ success: true, status: "simulated", wouldRevert: false });
 
-    const first = await request(app).post(`/api/exit-strategies/${strategyId}/agent/evaluate`);
+    const first = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/agent/evaluate`)
+      .set(authHeader(token));
     expect(first.body.decision).toBe("triggered");
 
     currentSupplyRateBps = 500; // condition clears
-    const cleared = await request(app).post(`/api/exit-strategies/${strategyId}/agent/evaluate`);
+    const cleared = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/agent/evaluate`)
+      .set(authHeader(token));
     expect(cleared.body.decision).toBe("normal");
 
     currentSupplyRateBps = 50; // crosses true again - a genuinely new occurrence
-    const second = await request(app).post(`/api/exit-strategies/${strategyId}/agent/evaluate`);
+    const second = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/agent/evaluate`)
+      .set(authHeader(token));
     expect(second.body.decision).toBe("triggered");
     expect(second.body.executionId).not.toBe(first.body.executionId);
 
-    const executions = await request(app).get(`/api/exit-strategies/${strategyId}/executions`);
+    const executions = await request(app)
+      .get(`/api/exit-strategies/${strategyId}/executions`)
+      .set(authHeader(token));
     expect(executions.body).toHaveLength(2);
   });
 });

@@ -15,12 +15,15 @@ import { KeeperHubApiError } from "../keeperhub/client";
 import { evaluateRateCondition } from "../execution/evaluateCondition";
 import { decideBroadcast } from "../execution/stateMachine";
 import { checkAmountExceeded, checkStaleIntent, readAaveUsdcPositionBalance } from "../agent/broadcastGuards";
+import { requireSafeOwnership, requireSession } from "../auth/session";
 
 export const executionsRouter = Router();
 
-async function loadStrategyAndSafe(strategyId: string) {
+async function loadStrategyAndSafe(strategyId: string, address: string) {
   const [strategy] = await db.select().from(exitStrategies).where(eq(exitStrategies.id, strategyId)).limit(1);
   if (!strategy) throw new HttpError(404, `Exit strategy ${strategyId} not found`);
+
+  await requireSafeOwnership(strategy.safeId, address);
 
   const [safe] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, strategy.safeId)).limit(1);
   if (!safe) throw new HttpError(404, `Safe account ${strategy.safeId} not found`);
@@ -29,6 +32,9 @@ async function loadStrategyAndSafe(strategyId: string) {
 }
 
 executionsRouter.get("/exit-strategies/:id/executions", async (req, res) => {
+  const address = await requireSession(req);
+  await loadStrategyAndSafe(req.params.id, address);
+
   const rows = await db
     .select()
     .from(keeperhubExecutions)
@@ -47,8 +53,9 @@ executionsRouter.get("/exit-strategies/:id/executions", async (req, res) => {
 const createExecutionSchema = z.object({ currentRateBps: z.number().int() });
 
 executionsRouter.post("/exit-strategies/:id/executions", async (req, res) => {
+  const address = await requireSession(req);
   const { currentRateBps } = createExecutionSchema.parse(req.body);
-  const { strategy, safe } = await loadStrategyAndSafe(req.params.id);
+  const { strategy, safe } = await loadStrategyAndSafe(req.params.id, address);
 
   if (strategy.status !== "active") {
     throw new HttpError(409, `Strategy is ${strategy.status}, not active - cannot execute`);
@@ -106,7 +113,8 @@ executionsRouter.post("/exit-strategies/:id/executions", async (req, res) => {
 });
 
 executionsRouter.post("/exit-strategies/:id/executions/:executionId/simulate", async (req, res) => {
-  const { strategy, safe } = await loadStrategyAndSafe(req.params.id);
+  const address = await requireSession(req);
+  const { strategy, safe } = await loadStrategyAndSafe(req.params.id, address);
   const [execution] = await db
     .select()
     .from(keeperhubExecutions)
@@ -136,7 +144,8 @@ executionsRouter.post("/exit-strategies/:id/executions/:executionId/simulate", a
  * circuited rather than causing a second broadcast.
  */
 executionsRouter.post("/exit-strategies/:id/executions/:executionId/broadcast", async (req, res) => {
-  const { strategy, safe } = await loadStrategyAndSafe(req.params.id);
+  const address = await requireSession(req);
+  const { strategy, safe } = await loadStrategyAndSafe(req.params.id, address);
   const [execution] = await db
     .select()
     .from(keeperhubExecutions)

@@ -108,6 +108,17 @@ export function createFakeDb() {
         },
       };
     },
+    delete(table: unknown) {
+      return {
+        where(pred: Predicate) {
+          const rows = rowsFor(table);
+          const remaining = rows.filter((r) => !pred(r));
+          const deletedCount = rows.length - remaining.length;
+          tables.set(table, remaining);
+          return Promise.resolve({ rowCount: deletedCount });
+        },
+      };
+    },
     update(table: unknown) {
       return {
         set(patch: Row) {

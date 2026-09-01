@@ -14,6 +14,18 @@ was explicitly granted permission to do. This isn't a design on paper: a
 real Aave v3 USDC withdraw has already executed end-to-end through this
 exact path on Base mainnet — see "Live proof" below.
 
+**No LLM anywhere in this codebase decides anything, or translates
+anything, ever.** Every decision Exit Guardian makes — whether the
+condition is met, whether the policy check passes, whether a broadcast is
+stale or amount-exceeded — is a plain, hand-written boolean/arithmetic
+comparison against known values (`agent/policy.ts`, `agent/decisionStateMachine.ts`,
+`agent/broadcastGuards.ts`, `execution/evaluateCondition.ts`). A strategy's
+condition and action are structured form input validated by a Zod schema
+(`createExitStrategySchema`), not natural language interpreted by a model
+- there is no translation step, LLM or otherwise, anywhere between what a
+user configures and what gets executed. Grepping the repo for any AI SDK
+dependency, prompt, or completion call returns nothing; there is none.
+
 ## Architecture
 
 ```
@@ -111,23 +123,41 @@ Independently verified against the chain itself via
   the label.
 
 **P1 — partially done, honestly:**
-- **Zodiac Roles scope** — **not tightened.** The live demo Safe's
-  on-chain grant is still the broader `allowTarget`, not the narrower
-  `scopeFunction` with asset/recipient conditions. This requires a
-  Safe-signer-approved transaction through the Roles app; Exit Keepa
-  deliberately never submits Roles configuration itself (see the "Roles
-  permission" panel's own deep link), so this isn't something this
-  session could do headlessly. Stated here, not papered over.
-- **Wallet-authenticated ownership boundary** — **not implemented.**
-  What *was* fixed: `GET /api/exit-strategies` with no `safeId` used to
-  return every strategy in the database to any caller; it now requires
-  `safeId`. What's still true: nothing in this API checks that a caller
-  acting on a given strategy/execution/Safe ID is the wallet that
-  actually owns it. A real fix needs signature-based auth (e.g. SIWE) tying
-  a session to a wallet address, which is a substantial, security-critical
-  feature in its own right — attempting it under this session's remaining
-  time budget risked shipping something half-verified, which is worse
-  than shipping nothing. Left as the top item for the next session.
+- **Zodiac Roles scope** — **not tightened, but the transaction is now
+  prepared.** The live demo Safe's on-chain grant is still the broader
+  `allowTarget`, not the narrower `scopeFunction` with asset/recipient
+  conditions. Exit Keepa deliberately never submits Roles configuration
+  itself, so this isn't something any session can do headlessly.
+  [`docs/ROLES_TIGHTENING.md`](ROLES_TIGHTENING.md) now has the exact
+  `scopeTarget`/`scopeFunction` calldata for both transactions, computed
+  with `viem`'s real ABI encoder against the actual Zodiac Roles v2
+  source and self-checked by round-tripping the encoded calldata back
+  through a decoder — ready for the Safe's own signers to review and
+  submit, not yet submitted by anyone.
+- **Wallet-authenticated ownership boundary** — **done.** A real
+  SIWE-style flow: `POST /api/auth/nonce` issues a single-use nonce for an
+  address, the wallet signs a human-readable message embedding it via
+  `personal_sign`, `POST /api/auth/verify` recovers the signer with
+  `viem`'s `recoverMessageAddress` (real EIP-191 recovery, no RPC call
+  needed), and a bearer session token is issued only on a match. Every
+  route that touches a Safe, strategy, execution, or agent decision
+  (`safeAccounts.ts`, `exitStrategies.ts`, `executions.ts`, `agent.ts`)
+  now calls `requireSession` and then `requireSafeOwnership`, checked
+  against a `safe_owners` table populated at Safe-registration time. The
+  existing live demo Safe keeps working post-migration via a backfill to
+  a fixed, unreachable-by-signature sentinel address, reached only through
+  the explicit `/api/auth/demo-session` endpoint — so "Try demo" is
+  unchanged for a judge, but a real wallet now gets genuine exclusive
+  ownership. 113 backend tests pass, including 11 dedicated to this flow:
+  real key-pair signing via `viem/accounts`, wrong-key and wrong-message
+  rejection, nonce replay protection, nonce and session expiry, and an
+  end-to-end proof that a second wallet gets 403 on every resource
+  belonging to the first. What this does *not* cover, stated plainly: it
+  proves possession of a private key and Exit Keepa's own DB-level
+  ownership record, not actual on-chain Gnosis Safe signer status — an
+  address recorded as a Safe's owner in this database is not
+  independently checked against that Safe's real multisig configuration
+  onchain. That's a separate, harder problem, out of scope here.
 - **Stale-intent detection** — **done.** `checkStaleIntent` in
   `broadcastGuards.ts`, run at broadcast time against the strategy's own
   `updatedAt` and the approving decision's age.
@@ -170,10 +200,12 @@ implementation supersedes it.
   see P1 above. A technical judge who checks the on-chain Roles config via
   Gnosis Guild's subgraph will find `allowTarget`, not a `scopeFunction`
   with conditions. This is a real gap, stated plainly.
-- **No wallet-authenticated ownership boundary** — see P1 above. Anyone
-  who knows a strategy or execution ID can still act on it. The
-  worst-case version of this (enumerate every strategy with no ID at all)
-  is fixed; the general case is not.
+- **Wallet-authenticated ownership stops at the DB, not the chain** — see
+  P1 above. Exit Keepa checks that the caller controls the private key
+  for the address recorded as a Safe's owner in its own database; it does
+  not independently verify that address against the Safe's actual
+  on-chain signer set. Anyone who is recorded as an owner at
+  registration time keeps access even if the Safe's real signers change.
 - **The autonomous poller is off by default everywhere**, including the
   live Railway deployment, until someone sets
   `AGENT_POLL_ENABLED=true`. This is a deliberate safety default (a fresh

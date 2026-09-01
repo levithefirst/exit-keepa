@@ -38,7 +38,11 @@ not part of the demo. Fall back to the API directly:
 
 Click **"Try demo"** in the top nav. No wallet prompt appears — you're
 using a fixed local demo identity, clearly labeled **"Demo mode"** in the
-nav.
+nav. Under the hood this now goes through the same session-token exchange
+a real wallet connection does (`POST /api/auth/demo-session`), just
+without a signature — invisible to you, but it's what lets the live demo
+Safe stay usable in demo mode while a real connected wallet gets genuine
+exclusive ownership of its own Safes and strategies.
 
 ## 3. Connect the live demo Safe
 

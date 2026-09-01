@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { api, setAuthToken } from "./api";
 
 declare global {
   interface Window {
@@ -31,12 +32,18 @@ interface WalletState {
    * fixed local demo identity instead of blocking the whole UI on wallet
    * availability.
    */
-  enterDemoMode: () => void;
+  enterDemoMode: () => Promise<void>;
 }
 
 const DEMO_IDENTITY = "demo-mode";
 
 const WalletContext = createContext<WalletState | null>(null);
+
+/** UTF-8 string -> 0x-prefixed hex, the wire format personal_sign expects. */
+function toHex(message: string): string {
+  const bytes = new TextEncoder().encode(message);
+  return "0x" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
@@ -48,9 +55,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!hasProvider) return;
     const eth = window.ethereum!;
-    const onAccountsChanged = (...args: unknown[]) => {
-      const accounts = args[0] as string[];
-      setAddress(accounts[0] ?? null);
+    const onAccountsChanged = () => {
+      // The account changing invalidates any session signed for the old
+      // one - never keep acting as an address the wallet no longer has
+      // selected. A full reconnect (with a fresh signature) is required.
+      setAuthToken(null);
+      setAddress(null);
     };
     const onChainChanged = (...args: unknown[]) => {
       setChainId(parseInt(args[0] as string, 16));
@@ -63,6 +73,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     };
   }, [hasProvider]);
 
+  /**
+   * Proves the connected address actually controls that key: request a
+   * one-time nonce, sign a human-readable challenge embedding it via
+   * personal_sign, exchange the signature for a session token. Every API
+   * call after this attaches that token - see lib/api.ts. Never sets
+   * `address` unless this succeeds, so the rest of the app never has to
+   * handle a "wallet connected but not authenticated" state.
+   */
+  async function signIn(walletAddress: string): Promise<void> {
+    const { message } = await api.authNonce(walletAddress);
+    const signature = (await window.ethereum!.request({
+      method: "personal_sign",
+      params: [toHex(message), walletAddress],
+    })) as string;
+    const { token } = await api.authVerify(walletAddress, signature);
+    setAuthToken(token);
+  }
+
   const connect = useCallback(async () => {
     if (!hasProvider) {
       setError("No wallet extension detected. Install MetaMask, Coinbase Wallet, or another injected wallet.");
@@ -72,12 +100,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     try {
       const accounts = (await window.ethereum!.request({ method: "eth_requestAccounts" })) as string[];
-      setAddress(accounts[0] ?? null);
+      const account = accounts[0];
+      if (!account) throw new Error("No account was returned by the wallet");
+
+      // Prove key possession before this address is trusted anywhere in
+      // the app - a rejected or failed signature means connection failed,
+      // not "connected but unauthenticated."
+      await signIn(account);
+
+      setAddress(account);
       const chainHex = (await window.ethereum!.request({ method: "eth_chainId" })) as string;
       setChainId(parseInt(chainHex, 16));
     } catch (err) {
-      // Handles a rejected connection request explicitly rather than
-      // leaving the UI stuck on "connecting".
+      setAuthToken(null);
+      // Handles a rejected connection/signature request explicitly rather
+      // than leaving the UI stuck on "connecting".
       setError((err as { message?: string }).message ?? "Wallet connection was rejected");
     } finally {
       setConnecting(false);
@@ -85,14 +122,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [hasProvider]);
 
   const disconnect = useCallback(() => {
+    setAuthToken(null);
     setAddress(null);
     setChainId(null);
   }, []);
 
-  const enterDemoMode = useCallback(() => {
+  const enterDemoMode = useCallback(async () => {
     setError(null);
-    setAddress(DEMO_IDENTITY);
-    setChainId(8453);
+    try {
+      const { token } = await api.authDemoSession();
+      setAuthToken(token);
+      setAddress(DEMO_IDENTITY);
+      setChainId(8453);
+    } catch (err) {
+      setError((err as Error).message ?? "Could not start demo mode");
+    }
   }, []);
 
   const switchToBase = useCallback(async () => {

@@ -173,6 +173,18 @@ due to a hash-extraction bug (fixed — see the executor tests) even though
 the on-chain transaction had already succeeded; the chain, not the
 database, is the source of truth here.
 
+## Wallet-authenticated ownership
+
+`GET /api/auth/nonce`, `POST /api/auth/verify`, `POST /api/auth/demo-session`
+(`apps/api/src/routes/auth.ts`) implement a SIWE-style flow: sign a
+one-time nonce with `personal_sign`, exchange the recovered signature for
+a bearer session token, and every subsequent request to a Safe/strategy/
+execution/agent-decision route is checked against a `safe_owners` table
+(`apps/api/src/auth/session.ts`). See "Known limitations" below for
+exactly what this does and does not verify, and
+[`docs/SUBMISSION.md`](docs/SUBMISSION.md)'s P1 section for the full
+test list.
+
 ## Architecture
 
 ```
@@ -232,7 +244,7 @@ npm run test --workspace apps/api
 npm run test --workspace packages/shared
 ```
 
-70 tests total: chain-boundary enforcement (rejecting a Safe registered on any chain other than Base before building a Base-targeted transaction), calldata correctness (against independently-computed hex
+113 tests total: chain-boundary enforcement (rejecting a Safe registered on any chain other than Base before building a Base-targeted transaction), calldata correctness (against independently-computed hex
 fixtures, not the encoder checking itself), condition-comparator logic,
 execution state-transition/idempotency rules, KeeperHub response parsing
 (including refusing to trust a malformed hash, and distinguishing a
@@ -346,14 +358,29 @@ every Railway deploy via the pre-deploy command above.
   being hand-encoded here.
 - **Single protocol/action only.** By design for v1 — see "What it
   actually does" above.
-- **No per-user authentication or ownership boundary.** Any caller who
-  knows a Safe/strategy/execution ID can still read or act on it — there
-  is no session, no login, no concept of "this strategy belongs to this
-  wallet" enforced server-side. `GET /api/exit-strategies` used to make
-  this worse by returning every strategy in the database to a caller who
-  supplied no ID at all (now fixed: `safeId` is required). Real
-  wallet-authenticated auth (e.g. SIWE) is the natural next step before
-  this could hold third-party funds at scale; not attempted this session
-  because a half-verified auth layer is a worse outcome than none.
+- **Wallet-authenticated ownership is implemented, but stops at the DB.**
+  Connecting a wallet now requires a real signature: `POST /api/auth/nonce`
+  issues a one-time nonce, the wallet signs a challenge message
+  embedding it via `personal_sign`, and `POST /api/auth/verify` recovers
+  the signer (`viem`'s `recoverMessageAddress`) before issuing a bearer
+  session token. Every route touching a Safe, strategy, execution, or
+  agent decision checks that token against a `safe_owners` table (see
+  `apps/api/src/auth/`), so a caller can no longer read or act on
+  another wallet's resources by guessing an ID. What this does *not* do:
+  independently verify the recorded owner address against that Safe's
+  actual on-chain signer set — it's Exit Keepa's own DB-level ownership
+  record, established at registration time, not a live check of Safe
+  multisig configuration. The live demo Safe keeps working with no
+  wallet needed via a fixed demo identity, reachable only through the
+  explicit `/api/auth/demo-session` endpoint (never through a real
+  signature), backfilled to it at migration time.
+- **The Roles grant on the live demo Safe is still the broad
+  `allowTarget`, not the narrower `scopeFunction`.** See "How execution
+  is authorized" above. The exact calldata to tighten it — both
+  transactions, computed with `viem`'s real ABI encoder against the
+  actual Zodiac Roles v2 source and self-checked by decoding it back —
+  is prepared in [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md),
+  ready for the Safe's own signers to review and submit. Nothing in this
+  codebase submits it automatically.
 - **Frontend deploy is a manual step** for the reason described in
   Deployment above.

@@ -2,20 +2,25 @@ import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { createSafeAccountSchema } from "@exit-keepa/shared";
 import { db } from "../db";
-import { auditEvents, safeAccounts } from "../db/schema";
+import { auditEvents, safeAccounts, safeOwners } from "../db/schema";
 import { HttpError } from "../middleware/errorHandler";
 import { logger } from "../logger";
 import { env } from "../env";
+import { requireSafeOwnership, requireSession } from "../auth/session";
 
 export const safeAccountsRouter = Router();
 
 safeAccountsRouter.get("/safe-accounts/:id", async (req, res) => {
+  const address = await requireSession(req);
+  await requireSafeOwnership(req.params.id, address);
+
   const [row] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, req.params.id)).limit(1);
   if (!row) throw new HttpError(404, `Safe account ${req.params.id} not found`);
   res.json(row);
 });
 
 safeAccountsRouter.post("/safe-accounts", async (req, res) => {
+  const address = await requireSession(req);
   const input = createSafeAccountSchema.parse(req.body);
 
   const [row] = await db
@@ -28,14 +33,20 @@ safeAccountsRouter.post("/safe-accounts", async (req, res) => {
     })
     .returning();
 
+  // The caller who registers a Safe is its owner in Exit Keepa's own
+  // database from this point on - every later read or action on this Safe
+  // (and everything hanging off it: strategies, executions, agent
+  // decisions) requires a session authenticating as this exact address.
+  await db.insert(safeOwners).values({ safeId: row.id, ownerAddress: address }).returning();
+
   await db.insert(auditEvents).values({
     entityType: "safe",
     entityId: row.id,
     eventType: "safe_account.created",
-    payload: { input },
+    payload: { input, ownerAddress: address },
   });
 
-  logger.info({ safeId: row.id }, "Safe account registered");
+  logger.info({ safeId: row.id, ownerAddress: address }, "Safe account registered");
   res.status(201).json(row);
 });
 
@@ -46,6 +57,9 @@ safeAccountsRouter.post("/safe-accounts", async (req, res) => {
  * anything before trying to activate a strategy against it.
  */
 safeAccountsRouter.get("/safe-accounts/:id/balances", async (req, res) => {
+  const address = await requireSession(req);
+  await requireSafeOwnership(req.params.id, address);
+
   const [row] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, req.params.id)).limit(1);
   if (!row) throw new HttpError(404, `Safe account ${req.params.id} not found`);
 

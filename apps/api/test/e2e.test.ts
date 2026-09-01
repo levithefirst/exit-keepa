@@ -2,6 +2,7 @@ import "./setup";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import request from "supertest";
 import { createFakeDb, eq, and } from "./fakeDb";
+import { createTestSession, authHeader } from "./authHelpers";
 import { KeeperHubApiError } from "../src/keeperhub/client";
 
 const fakeDb = createFakeDb();
@@ -40,8 +41,14 @@ const { createApp } = await import("../src/app");
 const AAVE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const app = createApp();
 
-beforeEach(() => {
+let token: string;
+
+beforeEach(async () => {
   callContractFunction.mockReset();
+  // Every safe/strategy/execution in this file is created and acted on by
+  // this same session - ownership enforcement (test/auth.e2e.test.ts) has
+  // its own dedicated coverage; this file is about the execution lifecycle.
+  token = await createTestSession(fakeDb, "0xAbC0000000000000000000000000000000AbC1");
 });
 
 describe("end-to-end: create strategy -> condition true -> simulate -> execute -> recorded", () => {
@@ -50,6 +57,7 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     //    minimal-scope permission from the Roles spec had been granted).
     const safeRes = await request(app)
       .post("/api/safe-accounts")
+      .set(authHeader(token))
       .send({
         chainId: 8453,
         safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
@@ -62,6 +70,7 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     // 2. Create the strategy.
     const strategyRes = await request(app)
       .post("/api/exit-strategies")
+      .set(authHeader(token))
       .send({
         safeId,
         name: "Exit when USDC supply APR drops below 2%",
@@ -73,13 +82,17 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     expect(strategyRes.body.status).toBe("draft");
 
     // 3. Preview the exact transaction before doing anything irreversible.
-    const previewRes = await request(app).get(`/api/exit-strategies/${strategyId}/preview`);
+    const previewRes = await request(app)
+      .get(`/api/exit-strategies/${strategyId}/preview`)
+      .set(authHeader(token));
     expect(previewRes.status).toBe(200);
     expect(previewRes.body.tx.to).toBe("0xA238Dd80C259a72e81d7e4664a9801593F98d1c5");
     expect(previewRes.body.tx.data.startsWith("0x69328dec")).toBe(true);
 
     // 4. Activate.
-    const activateRes = await request(app).post(`/api/exit-strategies/${strategyId}/activate`);
+    const activateRes = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/activate`)
+      .set(authHeader(token));
     expect(activateRes.status).toBe(200);
     expect(activateRes.body.status).toBe("active");
 
@@ -88,6 +101,7 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     //    itself rather than trusting the caller's claim blindly.
     const createExecRes = await request(app)
       .post(`/api/exit-strategies/${strategyId}/executions`)
+      .set(authHeader(token))
       .send({ currentRateBps: 150 });
     expect(createExecRes.status).toBe(201);
     const executionId = createExecRes.body.id;
@@ -96,6 +110,7 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     // A rate that does NOT satisfy the condition must be rejected.
     const rejectedRes = await request(app)
       .post(`/api/exit-strategies/${strategyId}/executions`)
+      .set(authHeader(token))
       .send({ currentRateBps: 500 });
     expect(rejectedRes.status).toBe(422);
 
@@ -105,9 +120,9 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
       status: "simulated",
       wouldRevert: false,
     });
-    const simRes = await request(app).post(
-      `/api/exit-strategies/${strategyId}/executions/${executionId}/simulate`,
-    );
+    const simRes = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/executions/${executionId}/simulate`)
+      .set(authHeader(token));
     expect(simRes.status).toBe(200);
     expect(simRes.body.status).toBe("simulated");
     expect(callContractFunction.mock.calls[0][0].simulate).toBe(true);
@@ -115,24 +130,26 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     // 7. Broadcast (authorized execution) - KeeperHub returns a real hash.
     const REAL_HASH = "0x" + "a".repeat(64);
     callContractFunction.mockResolvedValueOnce({ result: REAL_HASH });
-    const broadcastRes = await request(app).post(
-      `/api/exit-strategies/${strategyId}/executions/${executionId}/broadcast`,
-    );
+    const broadcastRes = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/executions/${executionId}/broadcast`)
+      .set(authHeader(token));
     expect(broadcastRes.status).toBe(200);
     expect(broadcastRes.body.status).toBe("succeeded");
     expect(broadcastRes.body.txHash).toBe(REAL_HASH);
     expect(callContractFunction.mock.calls[1][0].simulate).toBe(false);
 
     // 8. The result is recorded and visible.
-    const listRes = await request(app).get(`/api/exit-strategies/${strategyId}/executions`);
+    const listRes = await request(app)
+      .get(`/api/exit-strategies/${strategyId}/executions`)
+      .set(authHeader(token));
     expect(listRes.status).toBe(200);
     expect(listRes.body[0].txHash).toBe(REAL_HASH);
 
     // 9. Idempotency: retrying the broadcast must NEVER call KeeperHub
     //    again or change the recorded hash.
-    const secondBroadcastRes = await request(app).post(
-      `/api/exit-strategies/${strategyId}/executions/${executionId}/broadcast`,
-    );
+    const secondBroadcastRes = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/executions/${executionId}/broadcast`)
+      .set(authHeader(token));
     expect(secondBroadcastRes.status).toBe(200);
     expect(secondBroadcastRes.body.txHash).toBe(REAL_HASH);
     expect(callContractFunction).toHaveBeenCalledTimes(2); // not 3
@@ -141,6 +158,7 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
   it("rejects a simulation-rejected execution and never lets it be broadcast", async () => {
     const safeRes = await request(app)
       .post("/api/safe-accounts")
+      .set(authHeader(token))
       .send({
         chainId: 8453,
         safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
@@ -149,15 +167,17 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
       });
     const strategyRes = await request(app)
       .post("/api/exit-strategies")
+      .set(authHeader(token))
       .send({
         safeId: safeRes.body.id,
         name: "Rejected-simulation strategy",
         condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
         action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "max" },
       });
-    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`);
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`).set(authHeader(token));
     const execRes = await request(app)
       .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .set(authHeader(token))
       .send({ currentRateBps: 100 });
 
     callContractFunction.mockResolvedValueOnce({
@@ -165,14 +185,14 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
       wouldRevert: true,
       revertReason: "TargetAddressNotAllowed",
     });
-    const simRes = await request(app).post(
-      `/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/simulate`,
-    );
+    const simRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/simulate`)
+      .set(authHeader(token));
     expect(simRes.body.status).toBe("failed");
 
-    const broadcastRes = await request(app).post(
-      `/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`,
-    );
+    const broadcastRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`)
+      .set(authHeader(token));
     expect(broadcastRes.status).toBe(409);
     expect(callContractFunction).toHaveBeenCalledTimes(1); // simulate only, never broadcast
   });
@@ -180,6 +200,7 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
   it("distinguishes a confirmed KeeperHub rejection from an ambiguous network failure on broadcast, and never lets either be retried through the same execution", async () => {
     const safeRes = await request(app)
       .post("/api/safe-accounts")
+      .set(authHeader(token))
       .send({
         chainId: 8453,
         safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
@@ -188,19 +209,23 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
       });
     const strategyRes = await request(app)
       .post("/api/exit-strategies")
+      .set(authHeader(token))
       .send({
         safeId: safeRes.body.id,
         name: "Ambiguous-broadcast-failure strategy",
         condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
         action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "max" },
       });
-    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`);
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`).set(authHeader(token));
     const execRes = await request(app)
       .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .set(authHeader(token))
       .send({ currentRateBps: 100 });
 
     callContractFunction.mockResolvedValueOnce({ success: true, status: "simulated", wouldRevert: false });
-    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/simulate`);
+    await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/simulate`)
+      .set(authHeader(token));
 
     // Broadcast fails with a network-level error - no HTTP response was
     // ever received, so whether KeeperHub actually processed it is
@@ -208,9 +233,9 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     // but the message must say the outcome is unconfirmed rather than
     // flatly "failed" as if nothing happened.
     callContractFunction.mockRejectedValueOnce(new TypeError("fetch failed"));
-    const ambiguousRes = await request(app).post(
-      `/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`,
-    );
+    const ambiguousRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`)
+      .set(authHeader(token));
     expect(ambiguousRes.status).toBe(502);
     expect(ambiguousRes.body.status).toBe("failed");
     expect(ambiguousRes.body.errorMessage).toMatch(/could not be confirmed/i);
@@ -219,9 +244,9 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     // Whatever the ambiguity, a `failed` row must never be silently
     // retried through the same execution - the state machine only
     // proceeds from `simulated`.
-    const retryRes = await request(app).post(
-      `/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`,
-    );
+    const retryRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`)
+      .set(authHeader(token));
     expect(retryRes.status).toBe(409);
     expect(callContractFunction).toHaveBeenCalledTimes(2); // simulate + the one ambiguous broadcast attempt, never a third
   });
@@ -229,6 +254,7 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
   it("reports a confirmed KeeperHub rejection plainly, without the ambiguous-outcome wording", async () => {
     const safeRes = await request(app)
       .post("/api/safe-accounts")
+      .set(authHeader(token))
       .send({
         chainId: 8453,
         safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
@@ -237,26 +263,30 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
       });
     const strategyRes = await request(app)
       .post("/api/exit-strategies")
+      .set(authHeader(token))
       .send({
         safeId: safeRes.body.id,
         name: "Confirmed-rejection strategy",
         condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
         action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "max" },
       });
-    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`);
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`).set(authHeader(token));
     const execRes = await request(app)
       .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .set(authHeader(token))
       .send({ currentRateBps: 100 });
 
     callContractFunction.mockResolvedValueOnce({ success: true, status: "simulated", wouldRevert: false });
-    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/simulate`);
+    await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/simulate`)
+      .set(authHeader(token));
 
     // KeeperHub itself responded with a real HTTP error - the request
     // definitely reached it and it definitely rejected. No ambiguity.
     callContractFunction.mockRejectedValueOnce(new KeeperHubApiError(500, "internal server error"));
-    const rejectedRes = await request(app).post(
-      `/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`,
-    );
+    const rejectedRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`)
+      .set(authHeader(token));
     expect(rejectedRes.status).toBe(502);
     expect(rejectedRes.body.status).toBe("failed");
     expect(rejectedRes.body.errorMessage).not.toMatch(/could not be confirmed/i);
@@ -266,6 +296,7 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
   it("returns the same in-flight execution instead of opening a second one on a duplicate create request", async () => {
     const safeRes = await request(app)
       .post("/api/safe-accounts")
+      .set(authHeader(token))
       .send({
         chainId: 8453,
         safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
@@ -274,16 +305,18 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
       });
     const strategyRes = await request(app)
       .post("/api/exit-strategies")
+      .set(authHeader(token))
       .send({
         safeId: safeRes.body.id,
         name: "Duplicate-create-guard strategy",
         condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
         action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "max" },
       });
-    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`);
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`).set(authHeader(token));
 
     const first = await request(app)
       .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .set(authHeader(token))
       .send({ currentRateBps: 100 });
     expect(first.status).toBe(201);
 
@@ -292,11 +325,14 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     // that could independently be simulated and broadcast.
     const duplicate = await request(app)
       .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .set(authHeader(token))
       .send({ currentRateBps: 100 });
     expect(duplicate.status).toBe(200);
     expect(duplicate.body.id).toBe(first.body.id);
 
-    const listRes = await request(app).get(`/api/exit-strategies/${strategyRes.body.id}/executions`);
+    const listRes = await request(app)
+      .get(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .set(authHeader(token));
     expect(listRes.body.length).toBe(1);
   });
 });

@@ -1,9 +1,23 @@
 import { clientEnv } from "./env";
 
+// Set by lib/wallet.tsx once a sign-in (or demo-session) completes.
+// Module-level rather than passed through every call site so every page's
+// existing api.* calls stay untouched by the auth rollout - this is the
+// one place that knows "who is calling right now."
+let authToken: string | null = null;
+
+export function setAuthToken(token: string | null) {
+  authToken = token;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${clientEnv.NEXT_PUBLIC_API_URL}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      ...init?.headers,
+    },
   });
   const body = await response.json().catch(() => null);
   if (!response.ok) {
@@ -14,6 +28,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // Sign-in: request a nonce, sign it with the wallet, exchange the
+  // signature for a session token - see lib/wallet.tsx for the full flow.
+  authNonce: (address: string) =>
+    request<{ nonce: string; message: string; expiresAt: string }>("/api/auth/nonce", {
+      method: "POST",
+      body: JSON.stringify({ address }),
+    }),
+  authVerify: (address: string, signature: string) =>
+    request<{ token: string; address: string; expiresAt: string }>("/api/auth/verify", {
+      method: "POST",
+      body: JSON.stringify({ address, signature }),
+    }),
+  authDemoSession: () =>
+    request<{ token: string; address: string; expiresAt: string }>("/api/auth/demo-session", { method: "POST" }),
+
   createSafeAccount: (input: unknown) => request("/api/safe-accounts", { method: "POST", body: JSON.stringify(input) }),
   getSafeAccount: (id: string) => request(`/api/safe-accounts/${id}`),
   getSafeBalances: (id: string) => request(`/api/safe-accounts/${id}/balances`),

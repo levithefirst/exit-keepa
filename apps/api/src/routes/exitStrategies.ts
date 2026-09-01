@@ -7,27 +7,24 @@ import { HttpError } from "../middleware/errorHandler";
 import { logger } from "../logger";
 import { buildExitTransaction } from "../execution/buildTransaction";
 import { buildRolesPermissionSpec } from "../execution/rolesPermission";
+import { requireSafeOwnership, requireSession } from "../auth/session";
 
 export const exitStrategiesRouter = Router();
 
-/**
- * Requires safeId. This app has no wallet-authenticated ownership boundary
- * yet (see README "Known limitations" - anyone who knows a strategy or
- * execution ID can still act on it), so the one thing this route can and
- * must do without that is refuse to hand out every strategy from every
- * Safe in the database to an unauthenticated caller who supplies no
- * scoping at all.
- */
 exitStrategiesRouter.get("/exit-strategies", async (req, res) => {
+  const address = await requireSession(req);
   const safeId = typeof req.query.safeId === "string" ? req.query.safeId : undefined;
   if (!safeId) {
     throw new HttpError(400, "safeId query parameter is required");
   }
+  await requireSafeOwnership(safeId, address);
+
   const rows = await db.select().from(exitStrategies).where(eq(exitStrategies.safeId, safeId));
   res.json(rows);
 });
 
 exitStrategiesRouter.get("/exit-strategies/:id", async (req, res) => {
+  const address = await requireSession(req);
   const [row] = await db
     .select()
     .from(exitStrategies)
@@ -37,16 +34,19 @@ exitStrategiesRouter.get("/exit-strategies/:id", async (req, res) => {
   if (!row) {
     throw new HttpError(404, `Exit strategy ${req.params.id} not found`);
   }
+  await requireSafeOwnership(row.safeId, address);
   res.json(row);
 });
 
 exitStrategiesRouter.post("/exit-strategies", async (req, res) => {
+  const address = await requireSession(req);
   const input = createExitStrategySchema.parse(req.body);
 
   const [safe] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, input.safeId)).limit(1);
   if (!safe) {
     throw new HttpError(404, `Safe account ${input.safeId} not found`);
   }
+  await requireSafeOwnership(input.safeId, address);
 
   const [row] = await db
     .insert(exitStrategies)
@@ -69,9 +69,12 @@ exitStrategiesRouter.post("/exit-strategies", async (req, res) => {
   res.status(201).json(row);
 });
 
-async function loadStrategyAndSafe(strategyId: string) {
+/** Loads the strategy + its Safe and enforces that `address` owns that Safe. */
+export async function loadOwnedStrategyAndSafe(strategyId: string, address: string) {
   const [row] = await db.select().from(exitStrategies).where(eq(exitStrategies.id, strategyId)).limit(1);
   if (!row) throw new HttpError(404, `Exit strategy ${strategyId} not found`);
+
+  await requireSafeOwnership(row.safeId, address);
 
   const [safe] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, row.safeId)).limit(1);
   if (!safe) throw new HttpError(404, `Safe account ${row.safeId} not found`);
@@ -86,7 +89,8 @@ async function loadStrategyAndSafe(strategyId: string) {
  * ever simulates or activates anything.
  */
 exitStrategiesRouter.get("/exit-strategies/:id/preview", async (req, res) => {
-  const { strategy, safe } = await loadStrategyAndSafe(req.params.id);
+  const address = await requireSession(req);
+  const { strategy, safe } = await loadOwnedStrategyAndSafe(req.params.id, address);
 
   const rolesPermission = buildRolesPermissionSpec({
     chainId: safe.chainId,
@@ -114,7 +118,8 @@ exitStrategiesRouter.get("/exit-strategies/:id/preview", async (req, res) => {
  * NOT simulate or execute anything - see routes/executions.ts for that.
  */
 exitStrategiesRouter.post("/exit-strategies/:id/activate", async (req, res) => {
-  const { strategy, safe } = await loadStrategyAndSafe(req.params.id);
+  const address = await requireSession(req);
+  const { strategy, safe } = await loadOwnedStrategyAndSafe(req.params.id, address);
 
   // Throws 409 if the Safe has no Roles Modifier / role key yet - a
   // strategy can never be activated without a real, buildable transaction
@@ -138,7 +143,8 @@ exitStrategiesRouter.post("/exit-strategies/:id/activate", async (req, res) => {
 });
 
 exitStrategiesRouter.post("/exit-strategies/:id/pause", async (req, res) => {
-  const { strategy } = await loadStrategyAndSafe(req.params.id);
+  const address = await requireSession(req);
+  const { strategy } = await loadOwnedStrategyAndSafe(req.params.id, address);
 
   const [updated] = await db
     .update(exitStrategies)
