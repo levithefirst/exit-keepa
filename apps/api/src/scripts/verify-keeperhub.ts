@@ -150,6 +150,18 @@ async function main() {
   const mode = process.argv[2];
 
   try {
+    if (mode === "kh-execution-status-probe") {
+      // Independently re-confirms the canonical proof tx's KeeperHub
+      // executionId is real and still resolves, straight from KeeperHub's
+      // own API - not just replayed from this repo's test fixture
+      // comments. GET /execute/{executionId}/status, per
+      // https://docs.keeperhub.com/api/direct-execution#get-execution-status.
+      const executionId = process.argv[3] ?? "u9zr4vzbfurjvzgwz687g";
+      const result = await getJson(`/execute/${executionId}/status`);
+      console.log(`KEEPERHUB_VERIFY_RESULT ${JSON.stringify({ resource: mode, executionId, ...result })}`);
+      return;
+    }
+
     if (mode === "tx-trace-probe") {
       // Answers exactly one question: what does the top-level call of the
       // canonical proof tx actually look like on-chain, and what does its

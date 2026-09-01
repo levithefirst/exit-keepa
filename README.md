@@ -275,16 +275,21 @@ npm run test --workspace apps/api
 npm run test --workspace packages/shared
 ```
 
-113 tests total: chain-boundary enforcement (rejecting a Safe registered on any chain other than Base before building a Base-targeted transaction), calldata correctness (against independently-computed hex
-fixtures, not the encoder checking itself), condition-comparator logic,
-execution state-transition/idempotency rules, KeeperHub response parsing
-(including refusing to trust a malformed hash, and distinguishing a
-confirmed KeeperHub rejection from an ambiguous network/timeout failure
-where the broadcast outcome is unknown), and end-to-end tests
-(`apps/api/test/e2e.test.ts`) that walk create strategy → activate →
-condition check → simulate → broadcast → duplicate-broadcast rejection →
-recorded transaction hash, against an in-memory fake of the database and
-a mocked KeeperHub client.
+167 tests total (158 in `apps/api`, 9 in `packages/shared`, verified by
+running both commands above): chain-boundary enforcement (rejecting a
+Safe registered on any chain other than Base before building a
+Base-targeted transaction), calldata correctness (against
+independently-computed hex fixtures, not the encoder checking itself),
+condition-comparator logic, execution state-transition/idempotency
+rules, KeeperHub response parsing (including refusing to trust a
+malformed hash, distinguishing a confirmed KeeperHub rejection from an
+ambiguous network/timeout failure, and the Safe First-Write Sequence's
+Idempotency-Key/status-polling handling), and end-to-end tests
+(`apps/api/test/e2e.test.ts`, `apps/api/test/auth.e2e.test.ts`) that
+walk create strategy → activate → condition check → simulate →
+broadcast → duplicate-broadcast rejection → recorded transaction hash,
+against an in-memory fake of the database and a mocked KeeperHub
+client.
 
 ## Environment variables
 

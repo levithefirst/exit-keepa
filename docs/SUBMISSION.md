@@ -240,10 +240,10 @@ values).
   touching a Safe, strategy, execution, or agent decision requires that
   token and checks it against a `safe_owners` table
   (`apps/api/src/auth/`), so a caller can only ever act on Safes they
-  registered themselves. 155 backend tests pass, including a dedicated
-  end-to-end cross-wallet ownership proof. The live demo Safe stays
-  reachable in demo mode with no wallet needed via
-  `/api/auth/demo-session`.
+  registered themselves. 167 tests pass (158 in `apps/api`, 9 in
+  `packages/shared`), including a dedicated end-to-end cross-wallet
+  ownership proof. The live demo Safe stays reachable in demo mode with
+  no wallet needed via `/api/auth/demo-session`.
 - **Roles permission is genuinely scoped, not a rubber stamp.** The live
   grant on the demo Safe is `scopeTarget` (function-level, not
   whole-target) plus a single-selector allow for `withdraw` — no other
