@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useWallet } from "../lib/wallet";
 import { btnPrimarySmall, btnGhost, linkFocus } from "../lib/ui";
 import { Logo } from "./Logo";
+import { WalletConnectModal } from "./WalletConnectModal";
 
 function short(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -17,10 +18,10 @@ const NAV_LINKS = [
 ];
 
 export function Nav() {
-  const { address, connecting, error, connect, disconnect, chainId, switchToBase, isDemo, enterDemoMode } =
-    useWallet();
+  const { address, connecting, error, disconnect, chainId, switchToBase, isDemo, enterDemoMode } = useWallet();
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
   const menuId = useId();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -74,7 +75,7 @@ export function Nav() {
       <button onClick={enterDemoMode} className={btnGhost}>
         Try demo
       </button>
-      <button onClick={connect} disabled={connecting} className={btnPrimarySmall}>
+      <button onClick={() => setWalletModalOpen(true)} disabled={connecting} className={btnPrimarySmall}>
         {connecting ? "Connecting…" : "Connect wallet"}
       </button>
     </div>
@@ -149,7 +150,10 @@ export function Nav() {
         </div>
       )}
 
-      {error && <p className="mx-auto max-w-5xl px-6 pb-2 text-xs text-pretty text-danger">{error}</p>}
+      {error && !walletModalOpen && (
+        <p className="mx-auto max-w-5xl px-6 pb-2 text-xs text-pretty text-danger">{error}</p>
+      )}
+      <WalletConnectModal open={walletModalOpen} onClose={() => setWalletModalOpen(false)} />
     </nav>
   );
 }

@@ -335,4 +335,54 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
       .set(authHeader(token));
     expect(listRes.body.length).toBe(1);
   });
+
+  it("never creates two in-flight executions for genuinely concurrent create requests (P0 race)", async () => {
+    // Unlike the sequential double-click test above, this fires both
+    // requests without awaiting the first - exercising the actual
+    // read-then-write race window in POST /exit-strategies/:id/executions,
+    // not just a retry after the first request has already completed. The
+    // DB-level partial unique index (migration 0003, simulated by fakeDb)
+    // is what makes this safe even though the in-memory "existing" check
+    // itself is not atomic.
+    const safeRes = await request(app)
+      .post("/api/safe-accounts")
+      .set(authHeader(token))
+      .send({
+        chainId: 8453,
+        safeAddress: "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9",
+        rolesModifierAddress: "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE",
+        rolesKey: "0x657869745f6b6565706100000000000000000000000000000000000000000000",
+      });
+    const strategyRes = await request(app)
+      .post("/api/exit-strategies")
+      .set(authHeader(token))
+      .send({
+        safeId: safeRes.body.id,
+        name: "Concurrent-create-guard strategy",
+        condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
+        action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "max" },
+      });
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`).set(authHeader(token));
+
+    const [a, b] = await Promise.all([
+      request(app)
+        .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+        .set(authHeader(token))
+        .send({ currentRateBps: 100 }),
+      request(app)
+        .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+        .set(authHeader(token))
+        .send({ currentRateBps: 100 }),
+    ]);
+
+    // Both requests succeed (one 201 "created", one 200 "here's the one
+    // that won"), and they name the same execution row.
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+    expect(a.body.id).toBe(b.body.id);
+
+    const listRes = await request(app)
+      .get(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .set(authHeader(token));
+    expect(listRes.body.length).toBe(1);
+  });
 });

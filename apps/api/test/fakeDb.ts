@@ -44,8 +44,22 @@ function applyInsertDefaults(table: unknown, values: Row): Row {
   if (table === schema.exitStrategies && row.agentState === undefined) row.agentState = "normal";
   if (table === schema.exitStrategies && row.agentStateUpdatedAt === undefined) row.agentStateUpdatedAt = now;
   if (table === schema.keeperhubExecutions && row.status === undefined) row.status = "pending";
+  if (table === schema.keeperhubExecutions && row.createdVia === undefined) row.createdVia = "manual";
   if (table === schema.auditEvents && row.payload === undefined) row.payload = {};
   return row;
+}
+
+/** Mirrors migration 0003's partial unique index: at most one non-terminal
+ * (pending/simulating/simulated/executing) keeperhub_executions row may
+ * exist per exit_strategy_id. Lets tests exercise the real DB-level race
+ * guard instead of only the application-level check-then-insert. */
+const IN_FLIGHT_STATUSES = new Set(["pending", "simulating", "simulated", "executing"]);
+
+class FakeUniqueViolation extends Error {
+  code = "23505";
+  constructor() {
+    super("duplicate key value violates unique constraint (fakeDb simulation of 0003_execution_race_guard)");
+  }
 }
 
 /**
@@ -101,6 +115,20 @@ export function createFakeDb() {
           const row = applyInsertDefaults(table, values);
           return {
             returning() {
+              if (
+                table === schema.keeperhubExecutions &&
+                row.createdVia === "manual" &&
+                typeof row.status === "string" &&
+                IN_FLIGHT_STATUSES.has(row.status)
+              ) {
+                const clash = rowsFor(table).some(
+                  (r) =>
+                    r.exitStrategyId === row.exitStrategyId &&
+                    r.createdVia === "manual" &&
+                    IN_FLIGHT_STATUSES.has(r.status as string),
+                );
+                if (clash) return Promise.reject(new FakeUniqueViolation());
+              }
               rowsFor(table).push(row);
               return Promise.resolve([{ ...row }]);
             },

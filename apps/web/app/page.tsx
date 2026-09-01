@@ -7,13 +7,15 @@ import { useWallet } from "../lib/wallet";
 import { btnPrimary, btnSecondary, linkFocus } from "../lib/ui";
 import { FeatureSwitcher } from "../components/FeatureSwitcher";
 import { Faq } from "../components/Faq";
+import { WalletConnectModal } from "../components/WalletConnectModal";
 
 const PROOF_TX = "0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b";
 
 export default function HomePage() {
-  const { address, connect, connecting, enterDemoMode } = useWallet();
+  const { address, connecting, enterDemoMode } = useWallet();
   const router = useRouter();
   const [startingDemo, setStartingDemo] = useState(false);
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
 
   async function startDemo() {
     setStartingDemo(true);
@@ -47,9 +49,10 @@ export default function HomePage() {
             </Link>
           ) : (
             <>
-              <button onClick={connect} disabled={connecting} className={btnPrimary}>
+              <button onClick={() => setWalletModalOpen(true)} disabled={connecting} className={btnPrimary}>
                 {connecting ? "Connecting…" : "Connect wallet"}
               </button>
+              <WalletConnectModal open={walletModalOpen} onClose={() => setWalletModalOpen(false)} />
               <button onClick={startDemo} disabled={startingDemo} className={btnSecondary}>
                 {startingDemo ? "Starting demo…" : "Try the demo, no wallet needed"}
               </button>

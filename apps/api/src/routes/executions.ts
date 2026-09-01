@@ -19,6 +19,12 @@ import { requireSafeOwnership, requireSession } from "../auth/session";
 
 export const executionsRouter = Router();
 
+/** Postgres error code 23505 = unique_violation. neon-http surfaces the
+ * driver error with `.code` set the same way node-postgres does. */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
+}
+
 async function loadStrategyAndSafe(strategyId: string, address: string) {
   const [strategy] = await db.select().from(exitStrategies).where(eq(exitStrategies.id, strategyId)).limit(1);
   if (!strategy) throw new HttpError(404, `Exit strategy ${strategyId} not found`);
@@ -91,16 +97,46 @@ executionsRouter.post("/exit-strategies/:id/executions", async (req, res) => {
   // be set on the same insert as `id`.
   const executionId = crypto.randomUUID();
 
-  const [row] = await db
-    .insert(keeperhubExecutions)
-    .values({
-      id: executionId,
-      exitStrategyId: strategy.id,
-      idempotencyKey: executionId,
-      status: "pending",
-      requestPayload: { tx, currentRateBps },
-    })
-    .returning();
+  let row: typeof keeperhubExecutions.$inferSelect;
+  try {
+    [row] = await db
+      .insert(keeperhubExecutions)
+      .values({
+        id: executionId,
+        exitStrategyId: strategy.id,
+        idempotencyKey: executionId,
+        createdVia: "manual",
+        status: "pending",
+        requestPayload: { tx, currentRateBps },
+      })
+      .returning();
+  } catch (err) {
+    // Belt-and-suspenders against the read-then-write race above: two
+    // concurrent requests can both pass the "no in-flight execution" check
+    // before either has inserted, and both attempt to insert. The DB-level
+    // partial unique index (one non-terminal execution per strategy - see
+    // migration 0003) is what actually prevents two rows from existing; a
+    // unique-violation here means we lost that race, not that the request
+    // failed, so return whichever row won instead of erroring.
+    if (isUniqueViolation(err)) {
+      const rows = await db
+        .select()
+        .from(keeperhubExecutions)
+        .where(eq(keeperhubExecutions.exitStrategyId, strategy.id));
+      const winningRow = rows.find((e) =>
+        (["pending", "simulating", "simulated", "executing"] as string[]).includes(e.status),
+      );
+      if (winningRow) {
+        res.status(200).json(winningRow);
+        return;
+      }
+      // Extremely unlikely (the winning row would have to already be
+      // terminal by the time we look), but fail loudly rather than silently
+      // swallow an unexplained constraint violation.
+      throw new HttpError(409, "Another execution attempt for this strategy is already in flight");
+    }
+    throw err;
+  }
 
   await db.insert(auditEvents).values({
     entityType: "keeperhub_execution",

@@ -3,17 +3,32 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, setAuthToken } from "./api";
 
+interface Eip1193Provider {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on?: (event: string, handler: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
+  isMetaMask?: boolean;
+  isCoinbaseWallet?: boolean;
+}
+
 declare global {
   interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-      on?: (event: string, handler: (...args: unknown[]) => void) => void;
-      removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
-    };
+    ethereum?: Eip1193Provider;
   }
 }
 
+/** EIP-6963 "announce provider" event payload - the standard way multiple
+ * injected wallet extensions coexist without clobbering `window.ethereum`. */
+export interface Eip6963ProviderDetail {
+  info: { uuid: string; name: string; icon: string; rdns: string };
+  provider: Eip1193Provider;
+}
+
 const BASE_CHAIN_ID_HEX = "0x2105"; // 8453
+
+/** Well-known rdns identifiers for the wallets this app surfaces explicitly. */
+export const METAMASK_RDNS = "io.metamask";
+export const COINBASE_RDNS = "com.coinbase.wallet";
 
 interface WalletState {
   address: string | null;
@@ -21,9 +36,19 @@ interface WalletState {
   connecting: boolean;
   error: string | null;
   hasProvider: boolean;
+  /** Providers discovered via EIP-6963, keyed by rdns. Empty on wallets/browsers
+   * that don't announce (older MetaMask, some mobile in-app browsers) - callers
+   * should still fall back to plain `window.ethereum` detection in that case. */
+  discoveredProviders: Record<string, Eip6963ProviderDetail>;
   /** True when `address` is a demo identity, not a real connected wallet. */
   isDemo: boolean;
-  connect: () => Promise<void>;
+  /**
+   * Connect and sign in. `rdns` picks a specific EIP-6963-announced provider
+   * (e.g. MetaMask vs Coinbase Wallet when both are installed); omit it to
+   * use the ambient `window.ethereum` (single-wallet browsers, or a generic
+   * injected fallback).
+   */
+  connect: (rdns?: string) => Promise<void>;
   disconnect: () => void;
   switchToBase: () => Promise<void>;
   /**
@@ -50,11 +75,33 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [chainId, setChainId] = useState<number | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const hasProvider = typeof window !== "undefined" && Boolean(window.ethereum);
+  const [discoveredProviders, setDiscoveredProviders] = useState<Record<string, Eip6963ProviderDetail>>({});
+  const hasProvider =
+    (typeof window !== "undefined" && Boolean(window.ethereum)) || Object.keys(discoveredProviders).length > 0;
+
+  // EIP-6963: listen for every injected wallet extension announcing itself,
+  // so MetaMask + Coinbase Wallet (etc.) installed side by side are both
+  // detectable instead of only whichever one last clobbered `window.ethereum`.
+  useEffect(() => {
+    function onAnnounce(event: Event) {
+      const detail = (event as CustomEvent<Eip6963ProviderDetail>).detail;
+      if (!detail?.info?.rdns) return;
+      setDiscoveredProviders((prev) => ({ ...prev, [detail.info.rdns]: detail }));
+    }
+    window.addEventListener("eip6963:announceProvider", onAnnounce);
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+    return () => window.removeEventListener("eip6963:announceProvider", onAnnounce);
+  }, []);
+
+  // The provider actually driving the current session - set on a successful
+  // connect so disconnect/switchToBase/event-listeners target the wallet the
+  // user picked in the modal rather than assuming `window.ethereum` (which
+  // may be a *different* extension when more than one is installed).
+  const [activeProvider, setActiveProvider] = useState<Eip1193Provider | null>(null);
 
   useEffect(() => {
-    if (!hasProvider) return;
-    const eth = window.ethereum!;
+    const eth = activeProvider ?? (typeof window !== "undefined" ? window.ethereum : undefined);
+    if (!eth) return;
     const onAccountsChanged = () => {
       // The account changing invalidates any session signed for the old
       // one - never keep acting as an address the wallet no longer has
@@ -71,7 +118,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       eth.removeListener?.("accountsChanged", onAccountsChanged);
       eth.removeListener?.("chainChanged", onChainChanged);
     };
-  }, [hasProvider]);
+  }, [activeProvider]);
 
   /**
    * Proves the connected address actually controls that key: request a
@@ -81,9 +128,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
    * `address` unless this succeeds, so the rest of the app never has to
    * handle a "wallet connected but not authenticated" state.
    */
-  async function signIn(walletAddress: string): Promise<void> {
+  async function signIn(provider: Eip1193Provider, walletAddress: string): Promise<void> {
     const { message } = await api.authNonce(walletAddress);
-    const signature = (await window.ethereum!.request({
+    const signature = (await provider.request({
       method: "personal_sign",
       params: [toHex(message), walletAddress],
     })) as string;
@@ -91,40 +138,46 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setAuthToken(token);
   }
 
-  const connect = useCallback(async () => {
-    if (!hasProvider) {
-      setError("No wallet extension detected. Install MetaMask, Coinbase Wallet, or another injected wallet.");
-      return;
-    }
-    setConnecting(true);
-    setError(null);
-    try {
-      const accounts = (await window.ethereum!.request({ method: "eth_requestAccounts" })) as string[];
-      const account = accounts[0];
-      if (!account) throw new Error("No account was returned by the wallet");
+  const connect = useCallback(
+    async (rdns?: string) => {
+      const provider = (rdns ? discoveredProviders[rdns]?.provider : undefined) ?? window.ethereum;
+      if (!provider) {
+        setError("No wallet extension detected. Install MetaMask, Coinbase Wallet, or another injected wallet.");
+        return;
+      }
+      setConnecting(true);
+      setError(null);
+      try {
+        const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+        const account = accounts[0];
+        if (!account) throw new Error("No account was returned by the wallet");
 
-      // Prove key possession before this address is trusted anywhere in
-      // the app - a rejected or failed signature means connection failed,
-      // not "connected but unauthenticated."
-      await signIn(account);
+        // Prove key possession before this address is trusted anywhere in
+        // the app - a rejected or failed signature means connection failed,
+        // not "connected but unauthenticated."
+        await signIn(provider, account);
 
-      setAddress(account);
-      const chainHex = (await window.ethereum!.request({ method: "eth_chainId" })) as string;
-      setChainId(parseInt(chainHex, 16));
-    } catch (err) {
-      setAuthToken(null);
-      // Handles a rejected connection/signature request explicitly rather
-      // than leaving the UI stuck on "connecting".
-      setError((err as { message?: string }).message ?? "Wallet connection was rejected");
-    } finally {
-      setConnecting(false);
-    }
-  }, [hasProvider]);
+        setActiveProvider(provider);
+        setAddress(account);
+        const chainHex = (await provider.request({ method: "eth_chainId" })) as string;
+        setChainId(parseInt(chainHex, 16));
+      } catch (err) {
+        setAuthToken(null);
+        // Handles a rejected connection/signature request explicitly rather
+        // than leaving the UI stuck on "connecting".
+        setError((err as { message?: string }).message ?? "Wallet connection was rejected");
+      } finally {
+        setConnecting(false);
+      }
+    },
+    [discoveredProviders],
+  );
 
   const disconnect = useCallback(() => {
     setAuthToken(null);
     setAddress(null);
     setChainId(null);
+    setActiveProvider(null);
   }, []);
 
   const enterDemoMode = useCallback(async () => {
@@ -140,16 +193,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const switchToBase = useCallback(async () => {
-    if (!hasProvider) return;
+    const provider = activeProvider ?? window.ethereum;
+    if (!provider) return;
     try {
-      await window.ethereum!.request({
+      await provider.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: BASE_CHAIN_ID_HEX }],
       });
     } catch (err) {
       setError((err as { message?: string }).message ?? "Could not switch network to Base");
     }
-  }, [hasProvider]);
+  }, [activeProvider]);
 
   const isDemo = address === DEMO_IDENTITY;
 
@@ -160,13 +214,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       connecting,
       error,
       hasProvider,
+      discoveredProviders,
       isDemo,
       connect,
       disconnect,
       switchToBase,
       enterDemoMode,
     }),
-    [address, chainId, connecting, error, hasProvider, isDemo, connect, disconnect, switchToBase, enterDemoMode],
+    [
+      address,
+      chainId,
+      connecting,
+      error,
+      hasProvider,
+      discoveredProviders,
+      isDemo,
+      connect,
+      disconnect,
+      switchToBase,
+      enterDemoMode,
+    ],
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;

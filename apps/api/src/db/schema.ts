@@ -96,6 +96,15 @@ export const keeperhubExecutions = pgTable("keeperhub_executions", {
   // trigger nonce). Unique so a retried request can never cause a second
   // broadcast of the same occurrence — see routes/execution.ts.
   idempotencyKey: text("idempotency_key").notNull().unique(),
+  // Which code path created this row - "guardian" (agent/guardian.ts, one
+  // row per edge-trigger crossing; several non-terminal rows for the same
+  // strategy over time is normal and expected there - see
+  // decisionStateMachine.ts) or "manual" (routes/executions.ts's directly-
+  // called create endpoint, whose own contract is "at most one in-flight
+  // execution per strategy at a time" - see the partial unique index in
+  // migration 0003, scoped to this value so it never fights Guardian's
+  // legitimate multi-execution-over-time model).
+  createdVia: text("created_via").notNull().default("manual"),
   keeperhubWorkflowId: text("keeperhub_workflow_id"),
   keeperhubExecutionId: text("keeperhub_execution_id"),
   status: keeperhubExecutionStatusEnum("status").notNull().default("pending"),

@@ -233,6 +233,7 @@ export async function evaluateStrategy(strategyId: string, source: DecisionSourc
         id: executionId,
         exitStrategyId: strategy.id,
         idempotencyKey: executionId,
+        createdVia: "guardian",
         status: "refused",
         requestPayload: { observation, policy, intent, source },
         errorMessage: refusalReasons.join("; ") || "Refused by Exit Guardian policy check",
@@ -254,6 +255,7 @@ export async function evaluateStrategy(strategyId: string, source: DecisionSourc
         id: executionId,
         exitStrategyId: strategy.id,
         idempotencyKey: executionId,
+        createdVia: "guardian",
         status: "pending",
         requestPayload: { tx, observation, source },
       })
