@@ -718,6 +718,56 @@ project has (§ "Live-verified (2026-08-31)" mentioned throughout
 entirely, so it never exercised this path. Treat the next real broadcast
 through this updated code as the actual live check.
 
+## Live-verified (2026-09-01): the canonical proof tx's real call structure
+
+An external audit reading the live BaseScan page for the canonical proof
+tx (`0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b`)
+found that the top-level call is not the Safe calling
+`execTransactionWithRole` on itself, as `docs/SUBMISSION.md` previously
+described. Verified independently via two channels (this session's
+sandbox still can't reach `basescan.org` or `mainnet.base.org` directly,
+so both went through the established Railway `preDeployCommand` relay
+pattern):
+
+1. **Raw RPC**: `eth_getTransactionByHash` +
+   `eth_getTransactionReceipt` against `BASE_RPC_URL`, decoded with
+   `viem` (`tx-trace-probe` mode in `verify-keeperhub.ts`). Top-level
+   call: `from` an unlabeled EOA (`0x803f5380...c6734`), `to`
+   `0x5af5194b...277f07d` (not the Roles Modifier, not the Safe),
+   function `execute(address,address,uint256,bytes)` (selector
+   `0x9aefaff8`) with args `(0xc68f0E22...968Ac` [the executor/role-member
+   identity], `0x694C3F61...4dBbBE` [the Roles Modifier], `0`, a
+   441-byte payload). Decoding that payload finds
+   `execTransactionWithRole(to: AavePool, value: 0, data:
+   withdraw(USDC, max, Safe), operation: 0, roleKey: "exit_keepa",
+   shouldRevert: true)` starting 85 bytes in - i.e. this project's own
+   exact `executor.ts` request, forwarded verbatim. `debug_traceTransaction`
+   was attempted for a full internal-call trace and correctly rejected
+   (`rpc method is unsupported`) by this public RPC endpoint - expected,
+   not an error in the probe.
+2. **KeeperHub's own execution record**: `GET
+   /execute/u9zr4vzbfurjvzgwz687g/status` (`kh-execution-status-probe`
+   mode) - `u9zr4vzbfurjvzgwz687g` is the `executionId` KeeperHub's real
+   broadcast response returned for this exact tx (already captured,
+   just never queried again until now). Returns `status: "completed"`,
+   `sponsored: true`, `receipts: [{ verified: true, receiptStatus:
+   "success", blockNumber: 50697644 }]`, and an `executedCall` block
+   whose `topLevelTo` (`0x5af5194b...277f07d`), `functionName`
+   (`execTransactionWithRole`), and `contractAddress` (the Roles
+   Modifier) match the RPC decode exactly.
+
+**Conclusion**: KeeperHub broadcast this as a gas-sponsored/relayed
+execution (`sponsored: true`, matching KeeperHub's own documented
+"Sponsored Executions" behavior - see the Direct Execution API reference
+section above), not a plain EOA-to-Roles-Modifier call. The semantic
+operation (`execTransactionWithRole` against this project's own Roles
+Modifier, forwarding a `withdraw` call to the Aave Pool) is exactly what
+this project has always claimed and is independently confirmed twice
+over; the literal top-level `from`/`to` on BaseScan is KeeperHub's own
+relay infrastructure, not the Safe. `docs/SUBMISSION.md` §6 and
+`docs/JUDGE_DEMO.md` step 8 are corrected to describe the literal trace
+a judge will actually see, not the logical architecture.
+
 ## Temporary verification infrastructure (remove when no longer needed)
 
 - `apps/api/src/scripts/verify-keeperhub.ts` - one-off script run as a

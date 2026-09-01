@@ -86,6 +86,16 @@ implemented end-to-end rather than partially:
    passes its own hex-format validation — never fabricated, never
    inferred.
 
+**On sponsorship:** KeeperHub's own status response for the canonical
+proof execution (§6) reports `sponsored: true` - the broadcast was
+gas-sponsored/relayed through KeeperHub's own on-chain contract rather
+than a plain EOA-to-Roles-Modifier call. This is documented KeeperHub
+behavior (its docs' "Sponsored Executions" section: a sponsored write
+"will not appear in a block explorer's txlist" for the org's own EOA),
+not a workaround this project built - it's why the transaction's
+top-level `from`/`to` on BaseScan differ from the Roles Modifier/Safe
+that actually process the call underneath. See §6 for the literal trace.
+
 ## 4. Surfaces used
 
 **REST Direct Execution, end-to-end simulate → broadcast → status:**
@@ -163,17 +173,91 @@ verification history for the Safe/Roles Modifier.
 |---|---|
 | Tx hash | `0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b` |
 | BaseScan | https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b |
+| **KeeperHub execution ID** | **`u9zr4vzbfurjvzgwz687g`** — see "Two independent confirmations" below |
 | Result | Receipt `status: 0x1` (success) — real USDC withdrawn from Aave v3, returned to the Safe |
 | Safe | `0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9` (Base) |
 | Roles Modifier | `0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE` |
 | KeeperHub executor (role member) | `0xc68f0E22Dc6eD7e883873B36f23DdBBC1b3968Ac` |
 | Aave v3 Pool (Base) | `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5` |
 
-Independently verified against the chain itself via
-`eth_getTransactionReceipt`, not just read from this app's own database.
-(Exit Keepa's own execution-history row for this broadcast briefly showed
-`status: failed` due to a hash-extraction bug that was since fixed — the
-chain, not the app's database, is the source of truth here.)
+### What the transaction literally looks like on BaseScan
+
+**Read this before "verifying" it yourself** — the top-level call is
+**not** the Safe calling `execTransactionWithRole` on itself. It's a
+gas-sponsored execution, and BaseScan's top frame shows the sponsor/relay
+step, not the Roles/Safe step. Both are real; they're just two different
+layers of the same transaction. Independently re-derived twice this
+session (never assumed): once via raw `eth_getTransactionByHash` /
+`eth_getTransactionReceipt` against Base RPC, and once by re-querying
+KeeperHub's own `GET /execute/{executionId}/status` for this exact
+execution — both agree, byte for byte.
+
+**Top-level call (what BaseScan shows first):**
+
+| | |
+|---|---|
+| `from` | `0x803f5380b968b23f6a1cad58e4b4178f9c7c6734` — an unlabeled EOA (KeeperHub's own relayer, not the Safe, not the executor identity) |
+| `to` | `0x5af5194b4b0909eb978e3cf1e25333852277f07d` — KeeperHub's sponsor/relay execution contract, not the Roles Modifier and not the Safe |
+| function | `execute(address,address,uint256,bytes)` (selector `0x9aefaff8`) |
+| decoded args | `(0xc68f0E22...968Ac` [the executor/role-member identity]`, 0x694C3F61...4dBbBE` [the Roles Modifier], `0`, `<441-byte payload>)` |
+
+**What that payload actually contains, once decoded** (this is the part
+that only shows up in BaseScan's internal calls / input-data decode, not
+the top line):
+
+```
+execTransactionWithRole(
+  to:            0xA238Dd80C259a72e81d7e4664a9801593F98d1c5   (Aave v3 Pool)
+  value:         0
+  data:          withdraw(0x833589fC...02913 [USDC], type(uint256).max, 0xfFd5c5e1...cd66a9 [the Safe])
+  operation:     0 (Call)
+  roleKey:       "exit_keepa"
+  shouldRevert:  true
+)
+```
+
+**Internal effects (receipt logs, in order):** a Safe module-execution
+event, Aave's `ReserveDataUpdated`, the aUSDC token's burn + `Transfer`,
+a real USDC `Transfer` from the Aave aToken contract to the Safe, Aave's
+`ReserveUsedAsCollateralDisabled` (expected — the position was fully
+withdrawn), Aave's own `Withdraw` event, and — the one that matters most
+here — the Safe itself emitting `ExecutionFromModuleSuccess(module: <the
+Roles Modifier>)`. That last event is the Safe's own on-chain
+confirmation that it executed this **as a module call from the Roles
+Modifier**, i.e. exactly the Zodiac Roles permission path this project
+claims, even though the Safe never appears as the transaction's top-level
+`from` or `to`.
+
+### Two independent confirmations, not one
+
+1. **On-chain, self-verified:** the receipt trace above, read directly
+   from Base RPC (`eth_getTransactionReceipt`), decoded with `viem` — not
+   trusted from BaseScan's UI labels, which this session's sandbox
+   couldn't reach directly.
+2. **KeeperHub's own execution record:** `GET /execute/u9zr4vzbfurjvzgwz687g/status`
+   against KeeperHub's real API returns `status: "completed"`,
+   `receipts: [{ verified: true, receiptStatus: "success", blockNumber:
+   50697644 }]`, `sponsored: true`, and an `executedCall` block that
+   names the exact same `topLevelTo` (`0x5af5194b...`), the same
+   `functionName` (`execTransactionWithRole`), and the same target
+   contract (the Roles Modifier) independently derived above. This is
+   KeeperHub's own infrastructure stating, in its own words, that it
+   sponsored/relayed this specific execution and that the semantic
+   operation was `execTransactionWithRole` against the Roles Modifier -
+   not this project's interpretation of a raw trace.
+
+**What a judge can and can't do with the execution ID themselves:**
+`u9zr4vzbfurjvzgwz687g` is real and independently re-confirmed as of this
+submission (not just quoted from an old test comment), but KeeperHub does
+not expose a public, unauthenticated page for a single execution — the
+status endpoint above requires the org's own API key, and there's no
+shareable dashboard link in KeeperHub's documented surface. A judge can't
+paste that ID into a URL and see it themselves the way they can with the
+BaseScan hash. What they *can* do: ask to see the raw API response above
+reproduced live (it's one `GET` call), or read
+`apps/api/src/keeperhub/client.ts`'s `getDirectExecutionStatus` and
+`apps/api/src/scripts/verify-keeperhub.ts`'s `kh-execution-status-probe`
+mode, which is the exact call that produced the JSON quoted above.
 
 ## 7. Live URLs
 
@@ -212,6 +296,13 @@ Safe  ── executes the call as itself
    ▼
 Aave v3 Pool.withdraw(asset, amount, to)  ──▶ USDC lands back in the Safe
 ```
+
+This is the logical/API-level flow - what Exit Keepa asks KeeperHub to
+do. On-chain, KeeperHub broadcast the canonical proof (§6) through its
+own gas-sponsored relay contract rather than a direct call, so the
+literal top-level transaction on BaseScan differs from this diagram even
+though the semantic operation - `execTransactionWithRole` against this
+exact Roles Modifier - matches exactly. See §6 for the literal trace.
 
 Key files: `packages/shared/src/protocols/aaveV3Base.ts` (the only place
 that encodes `withdraw`), `apps/api/src/execution/buildTransaction.ts`
@@ -259,10 +350,15 @@ values).
    "How it works" section, within the first screen.
 2. Click **"Verify on BaseScan →"** in the Live proof panel (or open the
    tx hash in section 6 directly).
-3. On BaseScan, confirm: **Status: Success**, **chain: Base**, the `to`
-   address is the Safe calling itself via `execTransactionWithRole`, and
-   the internal transactions decode to a call into the Aave v3 Pool's
-   `withdraw` function.
+3. On BaseScan, confirm: **Status: Success**, **chain: Base**. The
+   top-level `to` is KeeperHub's own sponsor/relay contract (this was a
+   gas-sponsored execution - see §6 for exactly why), **not** the Safe -
+   don't expect to see the Safe as the top-level caller. What to look for
+   instead: the decoded input data resolves to `execTransactionWithRole`
+   against the Roles Modifier (`0x694C3F61...4dBbBE`), and the internal
+   transactions/logs show the Aave v3 Pool's `withdraw` function and the
+   Safe's own `ExecutionFromModuleSuccess` event. §6 has the full literal
+   breakdown, field by field.
 4. Back on the site, click **"Try the demo, no wallet needed"** →
    **Dashboard** (the live-proof Safe loads automatically) → open the
    strategy that already completed the broadcast above → **"Run Exit

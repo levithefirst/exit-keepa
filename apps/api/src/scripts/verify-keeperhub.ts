@@ -150,6 +150,51 @@ async function main() {
   const mode = process.argv[2];
 
   try {
+    if (mode === "demo-safe-position-probe") {
+      // De-risks DEMO_VIDEO_SCRIPT.md/JUDGE_DEMO.md's success-case step:
+      // the canonical proof tx already withdrew the demo Safe's entire
+      // Aave USDC position, so re-running "Run Exit Guardian" against that
+      // same already-completed strategy today would simulate against
+      // whatever the Safe holds *now*, not what it held at proof-tx time.
+      // Read-only aUSDC balanceOf via BASE_RPC_URL - answers "does the
+      // demo script's success case still have a real position to
+      // withdraw" before anyone records against it.
+      const DEMO_SAFE = "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9";
+      const AAVE_V3_BASE_AUSDC = "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB";
+      const BALANCE_OF_SELECTOR = "0x70a08231";
+      const padded = DEMO_SAFE.slice(2).toLowerCase().padStart(64, "0");
+
+      async function rpc(method: string, params: unknown[]) {
+        const response = await fetch(env.BASE_RPC_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        });
+        return readBody(response);
+      }
+
+      const balanceResult = await rpc("eth_call", [
+        { to: AAVE_V3_BASE_AUSDC, data: BALANCE_OF_SELECTOR + padded },
+        "latest",
+      ]);
+      const hexBalance = (balanceResult.body as any)?.result as string | undefined;
+      const balanceWei = hexBalance ? BigInt(hexBalance) : null;
+
+      const ethBalanceResult = await rpc("eth_getBalance", [DEMO_SAFE, "latest"]);
+      const ethHex = (ethBalanceResult.body as any)?.result as string | undefined;
+
+      console.log(
+        `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({
+          resource: mode,
+          safeAddress: DEMO_SAFE,
+          aUsdcBalanceWei: balanceWei?.toString(),
+          aUsdcBalanceUsdc: balanceWei !== null ? Number(balanceWei) / 1e6 : null,
+          ethBalanceWei: ethHex ? BigInt(ethHex).toString() : undefined,
+        })}`,
+      );
+      return;
+    }
+
     if (mode === "kh-execution-status-probe") {
       // Independently re-confirms the canonical proof tx's KeeperHub
       // executionId is real and still resolves, straight from KeeperHub's
@@ -420,7 +465,7 @@ async function main() {
 
     console.log(
       `KEEPERHUB_VERIFY_ERROR ${JSON.stringify({
-        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe", "execute-bytes-probe", "execute-disambiguation-probe", "zodiac-abi-probe", "zodiac-instance-probe", "tx-trace-probe"].join(", ")}`,
+        message: `mode must be one of ${[...GET_RESOURCES, "execute-probe", "execute-args-probe", "execute-bytes-probe", "execute-disambiguation-probe", "zodiac-abi-probe", "zodiac-instance-probe", "tx-trace-probe", "kh-execution-status-probe", "demo-safe-position-probe"].join(", ")}`,
         given: mode,
       })}`,
     );

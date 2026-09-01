@@ -175,11 +175,24 @@ to record is at [`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md).
   it yourself with **any other Safe address** and you'll see the same
   simulate step correctly refuse to broadcast until those two conditions
   are met for that Safe.
-- The **"Run Exit Guardian"** control on the strategy detail page runs
-  the real autonomous decision path on demand, live: it reads the actual
-  Aave rate from Base, not a value you type in. Every decision (including
-  ones that don't act) is recorded and independently inspectable via its
-  full receipt — intent, observation, policy check, simulation result.
+- **What runs unattended today, precisely:** by default
+  (`AGENT_POLL_ENABLED=false`, every environment including production),
+  nothing decides on its own - Exit Guardian only evaluates a strategy
+  when the **"Run Exit Guardian"** button on the strategy detail page is
+  clicked. That click runs the exact same code
+  (`agent/guardian.ts`'s `evaluateStrategy`) that the autonomous poller
+  (`agent/poller.ts`) would call on a timer if enabled - reads the live
+  Aave rate from Base, not a value typed in, and every decision (including
+  ones that don't act) is recorded with a full receipt: intent,
+  observation, policy check, simulation result. Setting
+  `AGENT_POLL_ENABLED=true` makes that identical evaluation run on its
+  own every `AGENT_POLL_INTERVAL_MS` (default 30s) for every active
+  strategy, with zero additional risk of an unwanted broadcast: the
+  poller's own code has no path to `broadcast` at all (see
+  `agent/guardian.ts` and `agent/poller.ts`) - a real transaction still
+  requires a separate, explicit "Confirm broadcast" click. Today it's
+  triggered-and-reviewed by default; flipping one env var makes it
+  genuinely unattended for observation and simulation.
 
 ## Live proof
 

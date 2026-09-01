@@ -119,9 +119,21 @@ Open it. Confirm independently:
 
 - Status: success
 - Chain: Base
-- `to`: the Safe, calling itself via `execTransactionWithRole`
-- Internal calls decode to a call into the Aave v3 Pool's `withdraw`
-  function
+- **`to` is KeeperHub's own sponsor/relay contract, not the Safe** - this
+  was a gas-sponsored execution (KeeperHub's own status API confirms
+  `sponsored: true` for this exact execution), so the top-level caller on
+  BaseScan is never the Safe or the Roles Modifier directly. Don't expect
+  otherwise.
+- What actually proves the claim: the decoded input data resolves to
+  `execTransactionWithRole` against the Roles Modifier
+  (`0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE`), the internal calls
+  reach the Aave v3 Pool's `withdraw` function, and the Safe itself emits
+  `ExecutionFromModuleSuccess` in the logs - its own on-chain
+  confirmation that it executed this as a module call from the Roles
+  Modifier.
+- See `docs/SUBMISSION.md` §6 for the full field-by-field trace,
+  independently re-derived both from raw Base RPC and from KeeperHub's
+  own execution-status API (execution ID `u9zr4vzbfurjvzgwz687g`).
 
 This transaction was executed by the same simulate → broadcast path you
 just exercised in steps 5-6, on this same demo Safe, before this demo
