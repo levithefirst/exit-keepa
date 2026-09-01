@@ -364,7 +364,10 @@ values).
    strategy that already completed the broadcast above → **"Run Exit
    Guardian"** to watch the identical simulate step run again live,
    against the same real Roles Modifier and Aave Pool, without
-   re-broadcasting.
+   re-broadcasting. **Expect a refusal, not a clean result:** the Safe's
+   Aave position is currently empty (this exact tx already withdrew it),
+   so the live simulation correctly comes back `wouldRevert: true` — a
+   second real safety catch, not a bug. See `JUDGE_DEMO.md` §6 for why.
 
 See [`JUDGE_DEMO.md`](JUDGE_DEMO.md) for the full click-by-click version
 (under 5 minutes), including a deliberate refusal case.
@@ -376,6 +379,6 @@ Issues: https://github.com/levithefirst/exit-keepa/issues
 
 ## 12. Demo video
 
-Shot list and 90–120s voiceover script for a human to record:
+Shot list and 150–180s voiceover script for a human to record:
 [`DEMO_VIDEO_SCRIPT.md`](DEMO_VIDEO_SCRIPT.md).
 
