@@ -89,23 +89,42 @@ Open **"Inspect the full receipt"** — every claim in this paragraph is
 independently checkable there: the exact observed rate, the exact policy
 check results, the exact simulation response.
 
-## 6. Now watch it succeed — on the strategy that already worked
+## 6. About "watching it succeed" live
 
-Navigate to the strategy that already holds the real completed
-withdraw (or create a fresh one with `amount: "max"`, which self-limits
-to whatever the Safe actually holds instead of an exact number). Click
-**"Run Exit Guardian"**.
+**Read this before demoing the success case — the Safe's Aave position
+is currently empty**, verified live (aUSDC balance: `0`) right before
+this revision. The canonical proof tx (step 8) already withdrew it, and
+nothing has re-supplied it since. This changes what a live re-run
+against the already-completed strategy actually shows:
 
-**Expected result:** same observe → decide → policy-check sequence, and
-this time simulation returns `wouldRevert: false`. The execution lands on
-**Simulated, not sent** automatically — Exit Guardian never broadcasts on
-its own. An **"Execute (broadcast)"** button appears below.
+Navigate to the strategy that already holds the real completed withdraw
+and click **"Run Exit Guardian"** anyway. **Expected result today:**
+another real refusal — `wouldRevert: true`, because there is nothing
+left to withdraw. This is not a bug in the demo; it's the exact same
+safety mechanism from step 5 catching a second real failure mode (a
+stale strategy pointed at a position that no longer exists), live,
+unscripted. Frame it that way rather than expecting a clean simulate.
+
+**To show an actual clean `wouldRevert: false` simulation live**, the
+Safe needs a real Aave USDC position again first — supply USDC to the
+Aave v3 Pool through this Safe (outside Exit Keepa's own scope; use the
+Safe's normal signing flow) before recording, then create a fresh
+strategy with `amount: "max"`. That's a real fund-moving action only the
+Safe's own signers can take, not something to script blindly.
+
+**If you don't re-fund it:** treat the pre-existing BaseScan transaction
+(step 8) as the success evidence — it's a real, already-confirmed
+success on this exact path — and present the live demo as two real
+refusals (oversized amount, then empty position) plus that existing
+proof, rather than forcing a third live call that will also revert.
 
 ## 7. Do not re-broadcast the demo Safe
 
-**Do not click "Confirm broadcast" during judging.** The Safe's real
-position was already withdrawn once (see step 8) — a second broadcast is
-a real mainnet transaction and isn't needed to prove the claim. Instead:
+**Do not click "Confirm broadcast" during judging** in either case above
+— even the empty-position run reaches only `Simulated`/`Failed`, never a
+real broadcast, but if you do fund a fresh position and get a clean
+simulation, a broadcast from it is a real mainnet transaction and isn't
+needed to prove the claim already proven in step 8. Instead:
 
 ## 8. Verify the existing on-chain proof
 
