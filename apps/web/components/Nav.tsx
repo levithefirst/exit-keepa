@@ -7,6 +7,7 @@ import { useWallet } from "../lib/wallet";
 import { btnPrimarySmall, btnGhost, linkFocus } from "../lib/ui";
 import { Logo } from "./Logo";
 import { WalletConnectModal } from "./WalletConnectModal";
+import { ProfileLoginModal, GoogleIcon, XIcon } from "./ProfileLoginModal";
 import { ThemeToggle } from "./ThemeToggle";
 
 function short(addr: string) {
@@ -19,10 +20,23 @@ const NAV_LINKS = [
 ];
 
 export function Nav() {
-  const { address, connecting, error, disconnect, chainId, switchToBase, isDemo, enterDemoMode } = useWallet();
+  const {
+    address,
+    connecting,
+    error,
+    disconnect,
+    chainId,
+    switchToBase,
+    isDemo,
+    enterDemoMode,
+    isSocial,
+    socialProvider,
+    socialLabel,
+  } = useWallet();
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
   const menuId = useId();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -52,7 +66,7 @@ export function Nav() {
 
   const walletControls = address ? (
     <div className="flex flex-wrap items-center gap-2">
-      {!isDemo && chainId !== 8453 && (
+      {!isDemo && !isSocial && chainId !== 8453 && (
         <button
           onClick={switchToBase}
           className={`min-h-11 rounded-lg bg-warning/15 px-2 text-xs text-warning ${linkFocus}`}
@@ -62,19 +76,27 @@ export function Nav() {
       )}
       {isDemo ? (
         <span className="rounded-lg bg-warning/15 px-3 py-1 text-xs text-warning">Demo mode</span>
+      ) : isSocial ? (
+        <span className="flex items-center gap-1.5 rounded-lg bg-forest-700 px-3 py-1 text-xs text-cream-200">
+          {socialProvider === "google" ? <GoogleIcon className="h-3.5 w-3.5" /> : <XIcon className="h-3.5 w-3.5" />}
+          {socialLabel}
+        </span>
       ) : (
         <span className="data-mono rounded-lg bg-forest-700 px-3 py-1 font-mono text-xs text-cream-200">
           {short(address)}
         </span>
       )}
       <button onClick={disconnect} className={`min-h-11 px-1 text-xs text-cream-300 hover:text-cream-50 ${linkFocus}`}>
-        {isDemo ? "Exit demo" : "Disconnect"}
+        {isDemo ? "Exit demo" : isSocial ? "Sign out" : "Disconnect"}
       </button>
     </div>
   ) : (
     <div className="flex flex-wrap items-center gap-2">
       <button onClick={() => enterDemoMode().catch(() => {})} className={btnGhost}>
         Try demo
+      </button>
+      <button onClick={() => setProfileModalOpen(true)} className={btnGhost}>
+        Profile
       </button>
       <button onClick={() => setWalletModalOpen(true)} disabled={connecting} className={btnPrimarySmall}>
         {connecting ? "Connecting…" : "Connect wallet"}
@@ -161,6 +183,7 @@ export function Nav() {
         <p className="mx-auto max-w-5xl px-6 pb-2 text-xs text-pretty text-danger">{error}</p>
       )}
       <WalletConnectModal open={walletModalOpen} onClose={() => setWalletModalOpen(false)} />
+      <ProfileLoginModal open={profileModalOpen} onClose={() => setProfileModalOpen(false)} />
     </nav>
   );
 }

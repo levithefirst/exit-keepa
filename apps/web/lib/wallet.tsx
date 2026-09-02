@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, setAuthToken } from "./api";
+import { clientEnv } from "./env";
 
 interface Eip1193Provider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -51,6 +52,13 @@ interface WalletState {
   discoveredProviders: Record<string, Eip6963ProviderDetail>;
   /** True when `address` is a demo identity, not a real connected wallet. */
   isDemo: boolean;
+  /** True when signed in via Google/X rather than a wallet or demo mode. */
+  isSocial: boolean;
+  /** Which social provider, when `isSocial` - drives the Nav badge/icon. */
+  socialProvider: "google" | "x" | null;
+  /** A human label for the signed-in social account (email or @handle),
+   * shown in place of a wallet's short hex address. */
+  socialLabel: string | null;
   /**
    * Connect and sign in. `rdns` picks a specific EIP-6963-announced provider
    * (e.g. MetaMask vs Coinbase Wallet when both are installed); omit it to
@@ -69,6 +77,22 @@ interface WalletState {
    * /api/auth/demo-session) never shared with any other visitor.
    */
   enterDemoMode: () => Promise<void>;
+  /**
+   * Starts "Sign in with Google"/"Sign in with X" - a full-page redirect
+   * to this API's own OAuth start route (which itself redirects to the
+   * provider), never a popup, so it works the same in every browser.
+   * Returns to /auth/callback on this site once the provider's consent
+   * screen is done; see completeSocialLogin below for the other half.
+   */
+  loginWithGoogle: () => void;
+  loginWithX: () => void;
+  /**
+   * Finishes a social sign-in: called once, by the /auth/callback page,
+   * with the token/identity/label the API redirected back with in the
+   * URL fragment (see routes/oauth.ts's successRedirectUrl). Never called
+   * directly by anything else.
+   */
+  completeSocialLogin: (input: { token: string; provider: "google" | "x"; identity: string; label: string }) => void;
 }
 
 const DEMO_IDENTITY = "demo-mode";
@@ -87,6 +111,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [discoveredProviders, setDiscoveredProviders] = useState<Record<string, Eip6963ProviderDetail>>({});
+  const [socialProvider, setSocialProvider] = useState<"google" | "x" | null>(null);
+  const [socialLabel, setSocialLabel] = useState<string | null>(null);
   const hasProvider =
     (typeof window !== "undefined" && Boolean(window.ethereum)) || Object.keys(discoveredProviders).length > 0;
 
@@ -189,6 +215,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setAddress(null);
     setChainId(null);
     setActiveProvider(null);
+    setSocialProvider(null);
+    setSocialLabel(null);
   }, []);
 
   const enterDemoMode = useCallback(async () => {
@@ -207,6 +235,25 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const loginWithGoogle = useCallback(() => {
+    window.location.href = `${clientEnv.NEXT_PUBLIC_API_URL}/api/auth/oauth/google/start`;
+  }, []);
+
+  const loginWithX = useCallback(() => {
+    window.location.href = `${clientEnv.NEXT_PUBLIC_API_URL}/api/auth/oauth/x/start`;
+  }, []);
+
+  const completeSocialLogin = useCallback(
+    ({ token, provider, identity, label }: { token: string; provider: "google" | "x"; identity: string; label: string }) => {
+      setAuthToken(token);
+      setAddress(identity);
+      setChainId(8453);
+      setSocialProvider(provider);
+      setSocialLabel(label);
+    },
+    [],
+  );
+
   const switchToBase = useCallback(async () => {
     const provider = activeProvider ?? window.ethereum;
     if (!provider) return;
@@ -221,6 +268,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [activeProvider]);
 
   const isDemo = address === DEMO_IDENTITY;
+  const isSocial = socialProvider !== null;
 
   const value = useMemo(
     () => ({
@@ -231,10 +279,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       hasProvider,
       discoveredProviders,
       isDemo,
+      isSocial,
+      socialProvider,
+      socialLabel,
       connect,
       disconnect,
       switchToBase,
       enterDemoMode,
+      loginWithGoogle,
+      loginWithX,
+      completeSocialLogin,
     }),
     [
       address,
@@ -244,10 +298,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       hasProvider,
       discoveredProviders,
       isDemo,
+      isSocial,
+      socialProvider,
+      socialLabel,
       connect,
       disconnect,
       switchToBase,
       enterDemoMode,
+      loginWithGoogle,
+      loginWithX,
+      completeSocialLogin,
     ],
   );
 

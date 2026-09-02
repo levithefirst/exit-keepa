@@ -25,7 +25,7 @@ const HERO_BADGES = [
 const STATS = [
   { value: "1", label: "function the executor can ever call" },
   { value: "$0", label: "gas cost on the exit, sponsored" },
-  { value: "171", label: "tests passing, run on every push" },
+  { value: "185", label: "tests passing, run on every push" },
   { value: "0", label: "LLM calls anywhere in the decision path" },
 ];
 

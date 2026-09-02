@@ -288,7 +288,7 @@ npm run test --workspace apps/api
 npm run test --workspace packages/shared
 ```
 
-171 tests total (162 in `apps/api`, 9 in `packages/shared`, verified by
+185 tests total (176 in `apps/api`, 9 in `packages/shared`, verified by
 running both commands above): chain-boundary enforcement (rejecting a
 Safe registered on any chain other than Base before building a
 Base-targeted transaction), calldata correctness (against
@@ -318,6 +318,60 @@ to boot with missing/malformed required configuration.
 | `BASE_CHAIN_ID` / `BASE_RPC_URL` | API | Default to Base mainnet |
 | `CORS_ORIGINS` | API | Set to `*` in production (this API has no cookie/session auth to protect) - unset means CORS is fully disabled and every browser request from the deployed frontend fails |
 | `NEXT_PUBLIC_API_URL` | Web | Must point at the deployed API's public URL |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | API | Optional - Google sign-in answers "not configured" until both are set. See "Social sign-in setup" below |
+| `X_CLIENT_ID` / `X_CLIENT_SECRET` | API | Optional - X sign-in answers "not configured" until both are set. See "Social sign-in setup" below |
+| `OAUTH_STATE_SECRET` | API | Optional - required by either social provider above; any long random string |
+| `OAUTH_API_BASE_URL` | API | Optional - required by either social provider above; must exactly match the redirect URI registered with each provider |
+| `WEB_APP_URL` | API | Where a completed/failed social sign-in redirects back to; defaults to the deployed frontend's URL |
+
+## Social sign-in setup
+
+The Nav's **"Profile"** button (`apps/web/components/ProfileLoginModal.tsx`)
+offers "Continue with Google" and "Continue with X" as an alternate login
+method alongside "Connect wallet" - a persistent account for someone who
+wants to build and review strategies without a wallet extension, backed by
+a real OAuth 2.0 Authorization Code + PKCE flow
+(`apps/api/src/routes/oauth.ts`). The code is fully wired and tested; what's
+left is provisioning real OAuth app credentials, which only an account
+holder on each provider's own developer console can do - this repo has no
+access to create them.
+
+**Until the env vars below are set, both buttons correctly answer "not
+configured" rather than doing nothing or faking a login** - safe to deploy
+as-is with this feature dark.
+
+### 1. Google
+
+1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) →
+   create (or pick) a project → **Create Credentials → OAuth client ID**.
+2. Application type: **Web application**.
+3. **Authorized redirect URI**, exactly:
+   `https://api-production-2e11.up.railway.app/api/auth/oauth/google/callback`
+   (or your own `OAUTH_API_BASE_URL` + `/api/auth/oauth/google/callback`).
+4. Copy the generated **Client ID** and **Client secret** into
+   `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` on the Railway API service.
+5. If the OAuth consent screen is still in "Testing" mode, add the Google
+   accounts you want to test with under **Audience → Test users** - a
+   consent screen in Testing mode rejects anyone not on that list.
+
+### 2. X (Twitter)
+
+1. [X Developer Portal](https://developer.x.com/en/portal/dashboard) →
+   create a Project and App (the Free tier is enough) → **App settings →
+   User authentication settings → Set up**.
+2. App permissions: **Read** only. Type of app: **Web App**.
+3. **Callback URI / Redirect URL**, exactly:
+   `https://api-production-2e11.up.railway.app/api/auth/oauth/x/callback`
+   (or your own `OAUTH_API_BASE_URL` + `/api/auth/oauth/x/callback`).
+4. Copy the **OAuth 2.0 Client ID** and **Client Secret** (Keys and tokens
+   tab) into `X_CLIENT_ID` / `X_CLIENT_SECRET` on the Railway API service.
+
+### 3. Finish
+
+Set `OAUTH_STATE_SECRET` (any long random string - `openssl rand -hex 32`
+works) and confirm `OAUTH_API_BASE_URL`/`WEB_APP_URL` match your actual
+deployment, then redeploy the API. Both buttons in the Profile modal work
+immediately - no code change needed.
 
 ## Database
 
