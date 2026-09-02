@@ -157,25 +157,39 @@ export default function CreateStrategyPage() {
         )}
 
         {preview.rolesPermission && (
-          <div className={`${card} space-y-2`}>
+          <div className={`${card} space-y-3`}>
             <h2 className="font-semibold text-cream-50">Roles permission required</h2>
-            <p className="text-pretty text-xs text-cream-400">{preview.rolesPermission.note}</p>
-            <div className="data-mono space-y-1 font-mono text-xs text-cream-300">
-              <p>Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})</p>
-              <p>Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})</p>
-              {preview.rolesPermission.conditions.map((c: any) => (
-                <p key={c.param}>· {c.param} ({c.type}): {c.rule}</p>
-              ))}
-              <p>Execution options: {preview.rolesPermission.executionOptions}</p>
+            <p className="text-pretty text-sm text-cream-300">{preview.rolesPermission.note}</p>
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-cream-400 hover:text-cream-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
+                Technical details
+                <svg className="faq-chevron h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                </svg>
+              </summary>
+              <div className="data-mono mt-2 space-y-1 font-mono text-xs text-cream-300">
+                <p>Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})</p>
+                <p>Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})</p>
+                {preview.rolesPermission.conditions.map((c: any) => (
+                  <p key={c.param}>· {c.param} ({c.type}): {c.rule}</p>
+                ))}
+                <p>Execution options: {preview.rolesPermission.executionOptions}</p>
+              </div>
+            </details>
+            <div>
+              <a
+                href={preview.rolesPermission.safeAppUrl}
+                target="_blank"
+                rel="noreferrer"
+                className={`inline-flex ${btnSecondary}`}
+              >
+                Open Zodiac Roles app for this Safe →
+              </a>
+              <p className="text-pretty mt-1.5 text-xs text-cream-500">
+                Opens Safe&apos;s own app in a new tab, where this Safe&apos;s actual owners grant the permission.
+                Nothing to do here if you&apos;re just trying the demo.
+              </p>
             </div>
-            <a
-              href={preview.rolesPermission.safeAppUrl}
-              target="_blank"
-              rel="noreferrer"
-              className={`inline-flex ${btnSecondary}`}
-            >
-              Open Zodiac Roles app for this Safe →
-            </a>
           </div>
         )}
 

@@ -5,6 +5,7 @@ import { api } from "../../../lib/api";
 import { btnPrimary, btnPrimarySmall, btnSecondarySmall, btnDanger, card } from "../../../lib/ui";
 import { StatusPill } from "../../../components/StatusPill";
 import { CopyButton } from "../../../components/CopyButton";
+import { ErrorDetail } from "../../../components/ErrorDetail";
 
 const BASESCAN = "https://basescan.org";
 
@@ -167,27 +168,41 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
           <p className="text-pretty text-xs text-cream-300">{preview.txError}</p>
           {preview.rolesPermission && (
             <>
-              <div className="data-mono space-y-1 font-mono text-xs text-cream-300">
-                <p>
-                  Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})
-                </p>
-                <p>
-                  Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})
-                </p>
-                {preview.rolesPermission.conditions.map((c: any) => (
-                  <p key={c.param}>
-                    · {c.param} ({c.type}): {c.rule}
+              <details className="group">
+                <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-cream-400 hover:text-cream-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
+                  Technical details
+                  <svg className="faq-chevron h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                  </svg>
+                </summary>
+                <div className="data-mono mt-2 space-y-1 font-mono text-xs text-cream-300">
+                  <p>
+                    Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})
                   </p>
-                ))}
+                  <p>
+                    Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})
+                  </p>
+                  {preview.rolesPermission.conditions.map((c: any) => (
+                    <p key={c.param}>
+                      · {c.param} ({c.type}): {c.rule}
+                    </p>
+                  ))}
+                </div>
+              </details>
+              <div>
+                <a
+                  href={preview.rolesPermission.safeAppUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`inline-flex ${btnSecondarySmall}`}
+                >
+                  Open Zodiac Roles app for this Safe →
+                </a>
+                <p className="text-pretty mt-1.5 text-xs text-cream-500">
+                  Opens Safe&apos;s own app in a new tab, for this Safe&apos;s actual owners. Nothing to do here if
+                  you&apos;re just trying the demo.
+                </p>
               </div>
-              <a
-                href={preview.rolesPermission.safeAppUrl}
-                target="_blank"
-                rel="noreferrer"
-                className={`inline-flex ${btnSecondarySmall}`}
-              >
-                Open Zodiac Roles app for this Safe →
-              </a>
             </>
           )}
         </div>
@@ -255,7 +270,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
               <div className="space-y-1 rounded-lg border border-danger/20 bg-danger/5 p-3 text-xs text-danger">
                 {receipt.policyCheck.refusalReasons?.map((reason: string) => <p key={reason}>{reason}</p>)}
                 {receipt.simulationResult?.status === "failed" && receipt.simulationResult?.errorMessage && (
-                  <p>Simulation reverted: {receipt.simulationResult.errorMessage}</p>
+                  <ErrorDetail message={receipt.simulationResult.errorMessage} />
                 )}
               </div>
             )}
@@ -305,7 +320,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
                 <StatusPill status={e.status} />
                 <span className="text-xs tabular-nums text-cream-400">{new Date(e.createdAt).toLocaleString()}</span>
               </div>
-              {e.errorMessage && <p className="mt-1 text-pretty text-xs text-danger">{e.errorMessage}</p>}
+              {e.errorMessage && <ErrorDetail message={e.errorMessage} className="mt-1" />}
               {e.keeperhubExecutionId && (
                 <p className="mt-1 flex items-center gap-1 text-pretty text-xs text-cream-400">
                   KeeperHub execution: <span className="font-mono text-cream-300">{e.keeperhubExecutionId}</span>

@@ -157,6 +157,8 @@ export default function DashboardPage() {
         {isDemo && <p className="text-sm text-cream-400">Demo mode - showing the verified live-proof Safe.</p>}
       </div>
 
+      {error && <p className="text-pretty text-sm text-danger">{error}</p>}
+
       {safe && (
         <div className={card}>
           <h2 className="mb-2 font-semibold text-cream-50">Your Safe</h2>

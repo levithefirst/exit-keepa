@@ -130,9 +130,18 @@ export function WalletConnectModal({ open, onClose }: { open: boolean; onClose: 
 
   const ambientEthereum = typeof window !== "undefined" ? window.ethereum : undefined;
 
-  // "Other injected wallet" is only worth showing when there's an ambient
-  // `window.ethereum` that isn't already covered by an EIP-6963 announcement
-  // (e.g. an older wallet extension, or a mobile wallet's in-app browser).
+  // Any real, installed wallet this app doesn't have a curated card for
+  // (Zerion, Frame, Backpack, whatever else announces itself) - rendered
+  // with its own self-announced name/icon per the EIP-6963 spec, rather
+  // than only ever showing the 7 wallets hardcoded above. A wallet that's
+  // genuinely installed and standards-compliant should never be invisible
+  // here just because it isn't one of those 7.
+  const curatedRdns = new Set(WALLET_OPTIONS.map((o) => o.rdns));
+  const otherDiscovered = Object.values(discoveredProviders).filter((d) => !curatedRdns.has(d.info.rdns));
+
+  // "Other injected wallet" (no name/icon to show) is the last-resort
+  // fallback: an ambient `window.ethereum` with zero EIP-6963 announcements
+  // at all (an older extension, or a mobile wallet's in-app browser).
   const genericInjectedAvailable = Boolean(ambientEthereum) && Object.keys(discoveredProviders).length === 0;
 
   // Rendered via a portal straight onto <body> rather than in place: this
@@ -228,6 +237,37 @@ export function WalletConnectModal({ open, onClose }: { open: boolean; onClose: 
                     </a>
                   </div>
                 )}
+              </li>
+            );
+          })}
+
+          {otherDiscovered.map((d) => {
+            const isPending = connecting && pendingRdns === d.info.rdns;
+            return (
+              <li key={d.info.rdns}>
+                <button
+                  type="button"
+                  disabled={connecting}
+                  onClick={() => handleConnect(d.info.rdns)}
+                  className={`flex w-full items-center gap-3 rounded-lg border border-cream-100/10 bg-forest-900/60 px-3 py-2.5 text-left transition-colors hover:border-mint-400/40 hover:bg-forest-900 disabled:cursor-not-allowed disabled:opacity-60 ${linkFocus}`}
+                >
+                  {/* Self-announced EIP-6963 icon - always a data: URI per spec,
+                      not a remote fetch. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={d.info.icon} alt="" className="h-9 w-9 shrink-0 rounded-lg" aria-hidden="true" />
+                  <span className="flex-1">
+                    <span className="block text-sm font-medium text-cream-50">{d.info.name}</span>
+                    <span className="block text-xs text-cream-400">
+                      {isPending ? "Confirm in your wallet…" : "Detected in this browser"}
+                    </span>
+                  </span>
+                  {isPending && (
+                    <span
+                      className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-cream-100/30 border-t-mint-400"
+                      aria-hidden="true"
+                    />
+                  )}
+                </button>
               </li>
             );
           })}
