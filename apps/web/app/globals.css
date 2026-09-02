@@ -2,11 +2,108 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   Theme tokens
+   Light values live on the bare :root. Dark values are declared
+   twice: once behind prefers-color-scheme (system default), guarded
+   so an explicit [data-theme="light"] always wins, and once behind
+   [data-theme="dark"] so the in-app toggle wins in the other
+   direction too. Every token that changes between themes is
+   declared here, in :root, before either override block — nothing
+   is defined only inside a media/attribute block.
+   ============================================================ */
+:root {
+  color-scheme: light;
+
+  --forest-950: 247 245 238; /* page background */
+  --forest-900: 239 236 224; /* nav / footer */
+  --forest-800: 255 255 255; /* card surfaces */
+  --forest-700: 228 224 209; /* chips, small filled surfaces */
+  --forest-600: 214 208 189;
+  --forest-500: 196 188 163;
+
+  --cream-50: 20 23 29; /* headings */
+  --cream-100: 28 32 39; /* primary text */
+  --cream-200: 58 63 74; /* secondary text */
+  --cream-300: 86 92 104; /* muted body copy */
+  --cream-400: 123 129 142; /* faint labels, placeholders */
+  --cream-500: 156 161 172; /* faintest — arrows, decoration */
+
+  --mint-300: 63 143 76;
+  --mint-400: 37 107 52; /* primary accent */
+  --mint-500: 28 82 40;
+  --mint-600: 18 58 28;
+
+  --warning: 166 106 18;
+  --danger: 193 74 53;
+  --info: 31 111 163;
+
+  /* Always dark, in both themes — see tailwind.config.ts. */
+  --ink-on-accent: 8 23 17;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --forest-950: 8 23 17;
+    --forest-900: 12 32 24;
+    --forest-800: 18 41 31;
+    --forest-700: 26 55 41;
+    --forest-600: 37 73 54;
+    --forest-500: 53 97 73;
+
+    --cream-50: 250 247 238;
+    --cream-100: 242 234 212;
+    --cream-200: 228 216 184;
+    --cream-300: 207 192 154;
+    --cream-400: 168 155 122;
+    --cream-500: 138 126 98;
+
+    --mint-300: 201 247 168;
+    --mint-400: 163 238 110;
+    --mint-500: 138 222 81;
+    --mint-600: 108 189 58;
+
+    --warning: 232 185 94;
+    --danger: 232 132 106;
+    --info: 142 200 232;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --forest-950: 8 23 17;
+  --forest-900: 12 32 24;
+  --forest-800: 18 41 31;
+  --forest-700: 26 55 41;
+  --forest-600: 37 73 54;
+  --forest-500: 53 97 73;
+
+  --cream-50: 250 247 238;
+  --cream-100: 242 234 212;
+  --cream-200: 228 216 184;
+  --cream-300: 207 192 154;
+  --cream-400: 168 155 122;
+  --cream-500: 138 126 98;
+
+  --mint-300: 201 247 168;
+  --mint-400: 163 238 110;
+  --mint-500: 138 222 81;
+  --mint-600: 108 189 58;
+
+  --warning: 232 185 94;
+  --danger: 232 132 106;
+  --info: 142 200 232;
+}
+
 body {
-  background: theme("colors.forest.950");
-  color: theme("colors.cream.100");
+  background: rgb(var(--forest-950));
+  color: rgb(var(--cream-100));
   font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .data-mono {
@@ -19,4 +116,13 @@ body {
 }
 details[open] .faq-chevron {
   transform: rotate(180deg);
+}
+
+/* Respect reduced-motion for the ambient hero grid/badge drift. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

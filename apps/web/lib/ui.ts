@@ -12,7 +12,7 @@ const btnBase =
   "disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100";
 
 /** The one accent-colored action per view — reserve for the primary CTA. */
-export const btnPrimary = `${btnBase} bg-mint-400 text-forest-950 hover:bg-mint-300 focus-visible:ring-mint-400/70`;
+export const btnPrimary = `${btnBase} bg-mint-400 text-ink-on-accent hover:bg-mint-300 focus-visible:ring-mint-400/70`;
 
 /** Neutral — for secondary/alternate actions so they never compete with the primary CTA. */
 export const btnSecondary = `${btnBase} border border-cream-100/20 text-cream-100 hover:border-cream-100/40 focus-visible:ring-cream-100/40`;

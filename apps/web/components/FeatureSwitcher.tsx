@@ -11,7 +11,7 @@ const FEATURES = [
     // Tailwind's class scanner only picks up complete, literal class
     // strings - it can't see a name built with `${f.id}` at runtime, so
     // each variant is written out in full here rather than interpolated.
-    pillActive: "group-has-[#feature-exit:checked]:bg-mint-400 group-has-[#feature-exit:checked]:text-forest-950",
+    pillActive: "group-has-[#feature-exit:checked]:bg-mint-400 group-has-[#feature-exit:checked]:text-ink-on-accent",
     panelVisible: "hidden group-has-[#feature-exit:checked]:grid",
     tab: "Set your exit",
     heading: "Set your exit",
@@ -33,7 +33,7 @@ const FEATURES = [
   },
   {
     id: "feature-simulate",
-    pillActive: "group-has-[#feature-simulate:checked]:bg-mint-400 group-has-[#feature-simulate:checked]:text-forest-950",
+    pillActive: "group-has-[#feature-simulate:checked]:bg-mint-400 group-has-[#feature-simulate:checked]:text-ink-on-accent",
     panelVisible: "hidden group-has-[#feature-simulate:checked]:grid",
     tab: "Simulate first",
     heading: "Test it before it's real",
@@ -58,7 +58,7 @@ const FEATURES = [
   },
   {
     id: "feature-execute",
-    pillActive: "group-has-[#feature-execute:checked]:bg-mint-400 group-has-[#feature-execute:checked]:text-forest-950",
+    pillActive: "group-has-[#feature-execute:checked]:bg-mint-400 group-has-[#feature-execute:checked]:text-ink-on-accent",
     panelVisible: "hidden group-has-[#feature-execute:checked]:grid",
     tab: "Protected execution",
     heading: "Your keys never leave your hands",
@@ -66,7 +66,7 @@ const FEATURES = [
     bullets: [
       "KeeperHub can only call one function, execTransactionWithRole. Nothing else.",
       "Your Safe's Roles Modifier allows exactly one function, withdraw() on the Aave Pool. Everything else is blocked by default.",
-      "Exit Keepa always builds the withdraw to return funds to the Safe that owns them; locking that at the Roles layer itself is the documented next step.",
+      "The asset and recipient are locked at the Roles layer itself — USDC only, back to this Safe only. A different token or a different destination is rejected onchain before it ever reaches Aave.",
     ],
     media: (
       <div className="flex flex-col gap-1.5 font-mono text-xs text-cream-300">

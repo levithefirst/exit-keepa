@@ -7,6 +7,7 @@ import { useWallet } from "../lib/wallet";
 import { btnPrimarySmall, btnGhost, linkFocus } from "../lib/ui";
 import { Logo } from "./Logo";
 import { WalletConnectModal } from "./WalletConnectModal";
+import { ThemeToggle } from "./ThemeToggle";
 
 function short(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -104,26 +105,32 @@ export function Nav() {
           })}
         </div>
 
-        <div className="hidden md:block">{walletControls}</div>
+        <div className="hidden items-center gap-3 md:flex">
+          {walletControls}
+          <ThemeToggle />
+        </div>
 
-        {/* Mobile hamburger */}
-        <button
-          ref={menuButtonRef}
-          type="button"
-          className={`flex h-11 w-11 items-center justify-center rounded-lg text-cream-100 md:hidden ${linkFocus}`}
-          aria-expanded={menuOpen}
-          aria-controls={menuId}
-          aria-label={menuOpen ? "Close menu" : "Open menu"}
-          onClick={() => setMenuOpen((v) => !v)}
-        >
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
-            {menuOpen ? (
-              <path strokeLinecap="round" d="M6 6l12 12M6 18L18 6" />
-            ) : (
-              <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
-            )}
-          </svg>
-        </button>
+        {/* Mobile: theme toggle stays visible, hamburger opens the rest */}
+        <div className="flex items-center gap-1 md:hidden">
+          <ThemeToggle />
+          <button
+            ref={menuButtonRef}
+            type="button"
+            className={`flex h-11 w-11 items-center justify-center rounded-lg text-cream-100 ${linkFocus}`}
+            aria-expanded={menuOpen}
+            aria-controls={menuId}
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
+              {menuOpen ? (
+                <path strokeLinecap="round" d="M6 6l12 12M6 18L18 6" />
+              ) : (
+                <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
+              )}
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Mobile panel */}

@@ -11,6 +11,74 @@ import { WalletConnectModal } from "../components/WalletConnectModal";
 
 const PROOF_TX = "0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b";
 
+// Positioned only in the gutter to the right of the (max-w-3xl) headline
+// column, well inside the (max-w-5xl) hero's own box — never a negative
+// offset, so nothing depends on viewport width beyond the lg breakpoint
+// or risks pushing the page into horizontal scroll.
+const HERO_BADGES = [
+  { label: "Simulate-first", pos: "lg:right-2 lg:top-0", rotate: "rotate-3" },
+  { label: "Zodiac Roles", pos: "lg:right-8 lg:top-24", rotate: "-rotate-6" },
+  { label: "Sponsored gas", pos: "lg:right-0 lg:top-48", rotate: "-rotate-2" },
+  { label: "No LLM in the loop", pos: "lg:right-10 lg:top-72", rotate: "rotate-2" },
+];
+
+const STATS = [
+  { value: "1", label: "function the executor can ever call" },
+  { value: "$0", label: "gas cost on the exit — sponsored" },
+  { value: "167", label: "tests passing, run on every push" },
+  { value: "0", label: "LLM calls anywhere in the decision path" },
+];
+
+const PIPELINE = [
+  {
+    step: "1",
+    who: "Your Safe",
+    what: "Holds the funds and the Aave position, start to finish. It never sends its private key anywhere.",
+  },
+  {
+    step: "2",
+    who: "Zodiac Roles Modifier",
+    what: "Pre-authorizes one narrow slice of power: withdraw(asset, amount, to) on the Aave Pool, asset locked to USDC, recipient locked to this exact Safe.",
+  },
+  {
+    step: "3",
+    who: "KeeperHub",
+    what: "The only thing that ever broadcasts. Simulates the exact call against live chain state first — broadcast only unlocks after that comes back clean.",
+  },
+  {
+    step: "4",
+    who: "Aave v3 Pool",
+    what: "Executes the withdraw. USDC lands back in the Safe that owned it the whole time.",
+  },
+];
+
+const GUARANTEES = [
+  {
+    title: "Scoped, not trusted",
+    body: "KeeperHub's permission is enforced onchain by the Roles Modifier itself — one function, one contract, one recipient. Not a promise in a README.",
+  },
+  {
+    title: "Simulate before it's real",
+    body: "Every exit is dry-run against live chain state through KeeperHub first. Broadcast only unlocks once that simulation comes back clean.",
+  },
+  {
+    title: "Deterministic, always",
+    body: "The policy check is plain boolean and arithmetic comparisons — no model, no prompt, nothing that could interpret a condition differently twice.",
+  },
+  {
+    title: "Wallet-authenticated",
+    body: "Ownership is a real EIP-191 signature, recovered server-side. You can only ever act on a Safe you actually registered.",
+  },
+  {
+    title: "Receipts, not self-reports",
+    body: "Success is only ever recorded once a receipt independently re-fetched from the chain confirms it — never from a hash alone.",
+  },
+  {
+    title: "Revocable anytime",
+    body: "The Roles permission lives on your Safe. Editing or revoking it takes effect immediately, no coordination with Exit Keepa required.",
+  },
+];
+
 export default function HomePage() {
   const { address, connecting, enterDemoMode } = useWallet();
   const router = useRouter();
@@ -28,15 +96,26 @@ export default function HomePage() {
   }
 
   return (
-    <main className="space-y-24">
+    <main className="space-y-28">
       {/* Hero */}
-      <section className="space-y-5 pt-6 text-center sm:text-left">
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-cream-100/15 bg-forest-800/60 px-3 py-1 text-xs font-medium text-cream-300">
+      <section className="relative space-y-5 pb-4 pt-6 text-center sm:text-left">
+        <div className="pointer-events-none absolute inset-0 hidden lg:block" aria-hidden="true">
+          {HERO_BADGES.map((b) => (
+            <span
+              key={b.label}
+              className={`absolute ${b.pos} ${b.rotate} rounded-full border border-cream-100/15 bg-forest-800/90 px-3 py-1.5 text-xs font-medium text-cream-200 shadow-lg backdrop-blur-sm`}
+            >
+              {b.label}
+            </span>
+          ))}
+        </div>
+
+        <span className="relative inline-flex items-center gap-1.5 rounded-full border border-cream-100/15 bg-forest-800/60 px-3 py-1 text-xs font-medium text-cream-300">
           <span className="h-1.5 w-1.5 rounded-full bg-mint-400" />
           Live on Base, real Aave withdrawals
         </span>
-        <h1 className="text-balance mx-auto max-w-3xl font-display text-4xl font-bold leading-tight text-cream-50 sm:mx-0 sm:text-5xl">
-          Set your exit once. Never miss it again.
+        <h1 className="text-balance relative mx-auto max-w-3xl font-display text-4xl font-bold leading-tight text-cream-50 sm:mx-0 sm:text-5xl lg:text-6xl">
+          Set your exit <span className="font-accent italic text-mint-400">once</span>. Never miss it again.
         </h1>
         <p className="text-pretty mx-auto max-w-2xl text-lg text-cream-300 sm:mx-0">
           Exit Keepa watches your Aave USDC position for the rate you choose. The moment it&apos;s hit, a
@@ -59,6 +138,16 @@ export default function HomePage() {
             </>
           )}
         </div>
+      </section>
+
+      {/* Stats strip */}
+      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-cream-100/10 bg-cream-100/10 sm:grid-cols-4">
+        {STATS.map((s) => (
+          <div key={s.label} className="bg-forest-950 px-4 py-6 text-center sm:px-5">
+            <p className="data-mono font-display text-3xl font-bold text-mint-400">{s.value}</p>
+            <p className="text-pretty mt-1 text-xs text-cream-400">{s.label}</p>
+          </div>
+        ))}
       </section>
 
       {/* Live proof */}
@@ -109,24 +198,53 @@ export default function HomePage() {
         <FeatureSwitcher />
       </section>
 
-      {/* Plain-language + technical layer */}
-      <section className="grid gap-4 sm:grid-cols-2">
-        <div className="rounded-xl border border-cream-100/10 bg-forest-800/60 p-6">
-          <h3 className="mb-2 font-semibold text-cream-50">In plain terms</h3>
-          <p className="text-pretty text-sm text-cream-300">
-            You set the condition. Exit Keepa watches it and prepares the exit for you. It never holds your funds
-            or your keys. Your Safe stays in control the whole time.
+      {/* Under the hood — the literal pipeline */}
+      <section>
+        <div className="mb-8 text-center">
+          <h2 className="text-balance font-display text-2xl font-bold text-cream-50 sm:text-3xl">
+            What actually runs, in order
+          </h2>
+          <p className="text-pretty mx-auto mt-2 max-w-xl text-cream-300">
+            No step is hidden behind &quot;magic.&quot; Here&apos;s the literal call chain, once your condition is
+            hit.
           </p>
         </div>
-        <div className="rounded-xl border border-cream-100/10 bg-forest-800/60 p-6">
-          <h3 className="mb-2 font-semibold text-cream-50">Technically</h3>
-          <p className="text-pretty text-sm text-cream-300">
-            Every execution routes through KeeperHub and is constrained by a Zodiac Roles Modifier before it ever
-            reaches your Safe. The role can call exactly one function, <code>withdraw</code>, on one contract, the
-            Aave Pool &mdash; nothing else is reachable. Locking the asset and recipient into that same onchain
-            permission is the next tightening step; today that guarantee is enforced by Exit Keepa&apos;s own
-            checks.
+        <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {PIPELINE.map((p, i) => (
+            <li key={p.step} className="relative rounded-xl border border-cream-100/10 bg-forest-800/60 p-5">
+              <span className="data-mono font-display text-2xl font-bold text-mint-400/50">{p.step}</span>
+              <h3 className="mt-2 font-semibold text-cream-50">{p.who}</h3>
+              <p className="text-pretty mt-1.5 text-sm text-cream-300">{p.what}</p>
+              {i < PIPELINE.length - 1 && (
+                <span
+                  className="absolute -right-4 top-1/2 hidden -translate-y-1/2 text-cream-500 sm:block lg:right-[-1.1rem]"
+                  aria-hidden="true"
+                >
+                  →
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      {/* Safety guarantees */}
+      <section>
+        <div className="mb-8 text-center">
+          <h2 className="text-balance font-display text-2xl font-bold text-cream-50 sm:text-3xl">
+            Why it&apos;s safe to let this run
+          </h2>
+          <p className="text-pretty mx-auto mt-2 max-w-xl text-cream-300">
+            Six guarantees, each one you can go check in the code or on the chain — not a marketing claim.
           </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {GUARANTEES.map((g) => (
+            <div key={g.title} className="rounded-xl border border-cream-100/10 bg-forest-800/60 p-5">
+              <h3 className="mb-1.5 font-semibold text-cream-50">{g.title}</h3>
+              <p className="text-pretty text-sm text-cream-300">{g.body}</p>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -147,6 +265,24 @@ export default function HomePage() {
           Common questions
         </h2>
         <Faq />
+      </section>
+
+      {/* Closing CTA */}
+      <section className="rounded-xl border border-cream-100/10 bg-forest-800/60 p-8 text-center sm:p-12">
+        <h2 className="text-balance mx-auto max-w-xl font-display text-2xl font-bold text-cream-50 sm:text-3xl">
+          Your Safe already knows how to protect itself. <span className="font-accent italic text-mint-400">Give it the order.</span>
+        </h2>
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          {address ? (
+            <Link href="/dashboard" className={btnPrimary}>
+              Go to dashboard
+            </Link>
+          ) : (
+            <button onClick={startDemo} disabled={startingDemo} className={btnPrimary}>
+              {startingDemo ? "Starting demo…" : "Try the demo, no wallet needed"}
+            </button>
+          )}
+        </div>
       </section>
     </main>
   );
