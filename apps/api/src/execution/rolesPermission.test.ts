@@ -54,5 +54,16 @@ describe("buildRolesPermissionSpec", () => {
       roleKey: null,
     });
     expect(spec.note).toContain("no Roles Modifier enabled");
+    expect(spec.needsModifier).toBe(true);
+  });
+
+  it("clears needsModifier once the Safe already has a Roles Modifier", () => {
+    const spec = buildRolesPermissionSpec({
+      chainId: 8453,
+      safeAddress: "0x1111111111111111111111111111111111111111",
+      rolesModifierAddress: "0x2222222222222222222222222222222222222222",
+      roleKey: "0xabc",
+    });
+    expect(spec.needsModifier).toBe(false);
   });
 });

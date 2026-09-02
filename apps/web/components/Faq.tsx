@@ -28,6 +28,10 @@ const FAQ_ITEMS = [
     a: "A Zodiac Roles Modifier. By default it can do nothing. The live permission scopes the role to exactly one function, withdraw() on Aave's Pool on Base, with the asset locked to USDC and the recipient locked to this exact Safe. No other function, contract, token, or destination is reachable through it, enforced onchain by the Roles Modifier itself.",
   },
   {
+    q: "How do I set up the Zodiac Roles permission for my own Safe?",
+    a: "You don't have to figure this out from scratch. Register your Safe on the Dashboard, and if it doesn't have Roles enabled yet, Exit Keepa shows a step-by-step panel there and on every strategy: a link that opens the official Zodiac Roles app for your exact Safe, and a Check again button once you've granted it. Your Safe's own owners sign it there, in Safe's own app, nowhere on Exit Keepa. If you just want to see the product first, Demo mode already has this fully set up, so you never have to touch it to try Exit Keepa.",
+  },
+  {
     q: "Does Exit Keepa control my funds?",
     a: "No. Your Safe holds your funds at all times. Exit Keepa, through KeeperHub, can only trigger the one narrow action your Roles permission allows. It can't move funds outside that scope, and it never takes custody.",
   },

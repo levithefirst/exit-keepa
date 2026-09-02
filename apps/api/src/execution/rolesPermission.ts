@@ -1,4 +1,4 @@
-import { AAVE_V3_BASE, AAVE_V3_WITHDRAW_SELECTOR } from "@exit-keepa/shared";
+import { AAVE_V3_BASE, AAVE_V3_WITHDRAW_SELECTOR, buildRolesSafeAppUrl } from "@exit-keepa/shared";
 
 /**
  * Describes (but never encodes/broadcasts) the minimal Zodiac Roles
@@ -30,6 +30,10 @@ export interface RolesPermissionSpec {
   /** Deep link into Safe{Wallet}'s UI, opening the official Zodiac Roles Safe App for this exact Safe. */
   safeAppUrl: string;
   note: string;
+  /** True when this Safe has no Roles Modifier at all yet (the bigger, one-time step); false when the
+   * Modifier already exists and only this specific permission still needs adding. The frontend uses this
+   * to pick copy/steps instead of pattern-matching `note`'s text. */
+  needsModifier: boolean;
 }
 
 export function buildRolesPermissionSpec(params: {
@@ -38,12 +42,7 @@ export function buildRolesPermissionSpec(params: {
   rolesModifierAddress: string | null;
   roleKey: string | null;
 }): RolesPermissionSpec {
-  // EIP-3770 short chain name Safe{Wallet} uses in its URLs; "base" for
-  // Base mainnet (chainId 8453) - confirmed via Safe's own chain short-name
-  // convention, not assumed.
-  const chainShortName = params.chainId === 8453 ? "base" : String(params.chainId);
-  const rolesAppUrl = "https://roles.gnosisguild.org";
-  const safeAppUrl = `https://app.safe.global/apps/open?safe=${chainShortName}:${params.safeAddress}&appUrl=${encodeURIComponent(rolesAppUrl)}`;
+  const safeAppUrl = buildRolesSafeAppUrl(params.chainId, params.safeAddress);
 
   return {
     roleKey: params.roleKey ?? "(choose a role key when enabling Roles for this Safe, e.g. in the Zodiac Roles app)",
@@ -61,5 +60,6 @@ export function buildRolesPermissionSpec(params: {
     note: params.rolesModifierAddress
       ? "Open the official Zodiac Roles app (as a Safe App, so your Safe's own signers approve it) and add exactly this permission for the role key above. Exit Keepa does not submit this transaction on your behalf."
       : "This Safe has no Roles Modifier enabled yet. Enable Zodiac's Roles Modifier on this Safe first (also done through the Zodiac Roles app), then add the permission described here.",
+    needsModifier: !params.rolesModifierAddress,
   };
 }

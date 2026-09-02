@@ -6,6 +6,8 @@ import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
 import { getStoredSafeId } from "../../lib/storage";
 import { btnPrimary, btnSecondary, inputBase, card, linkFocus } from "../../lib/ui";
+import { RolesSetupPanel } from "../../components/RolesSetupPanel";
+import { ErrorDetail } from "../../components/ErrorDetail";
 
 const AAVE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
@@ -76,6 +78,16 @@ export default function CreateStrategyPage() {
     }
   }
 
+  async function recheckPreview() {
+    if (!strategyId) return;
+    try {
+      const previewRes: any = await api.previewStrategy(strategyId);
+      setPreview(previewRes);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   async function activate() {
     if (!strategyId) return;
     setError(null);
@@ -103,6 +115,11 @@ export default function CreateStrategyPage() {
 
   if (step === "review" && preview) {
     const canActivate = Boolean(preview.tx);
+    // The Roles-missing case has its own guided panel below - showing the
+    // raw backend error above it too would just repeat the same fact in a
+    // scarier voice. Any other build failure (e.g. a bad amount) still
+    // gets surfaced plainly, since the Roles panel wouldn't explain it.
+    const rolesBlocking = !preview.tx && String(preview.txError ?? "").includes("Roles Modifier");
     return (
       <div className="mx-auto max-w-xl space-y-5">
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Review before you activate</h1>
@@ -151,46 +168,16 @@ export default function CreateStrategyPage() {
             </div>
           </details>
         ) : (
-          <p className="text-pretty rounded-xl border border-warning/30 bg-warning/5 p-4 text-sm text-warning">
-            {preview.txError}
-          </p>
+          !rolesBlocking && (
+            <ErrorDetail
+              message={preview.txError}
+              className="rounded-xl border border-warning/30 bg-warning/5 p-4"
+            />
+          )
         )}
 
-        {preview.rolesPermission && (
-          <div className={`${card} space-y-3`}>
-            <h2 className="font-semibold text-cream-50">Roles permission required</h2>
-            <p className="text-pretty text-sm text-cream-300">{preview.rolesPermission.note}</p>
-            <details className="group">
-              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-cream-400 hover:text-cream-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
-                Technical details
-                <svg className="faq-chevron h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
-                </svg>
-              </summary>
-              <div className="data-mono mt-2 space-y-1 font-mono text-xs text-cream-300">
-                <p>Target: {preview.rolesPermission.targetLabel} ({preview.rolesPermission.target})</p>
-                <p>Function: {preview.rolesPermission.functionSignature} (selector {preview.rolesPermission.selector})</p>
-                {preview.rolesPermission.conditions.map((c: any) => (
-                  <p key={c.param}>· {c.param} ({c.type}): {c.rule}</p>
-                ))}
-                <p>Execution options: {preview.rolesPermission.executionOptions}</p>
-              </div>
-            </details>
-            <div>
-              <a
-                href={preview.rolesPermission.safeAppUrl}
-                target="_blank"
-                rel="noreferrer"
-                className={`inline-flex ${btnSecondary}`}
-              >
-                Open Zodiac Roles app for this Safe →
-              </a>
-              <p className="text-pretty mt-1.5 text-xs text-cream-500">
-                Opens Safe&apos;s own app in a new tab, where this Safe&apos;s actual owners grant the permission.
-                Nothing to do here if you&apos;re just trying the demo.
-              </p>
-            </div>
-          </div>
+        {preview.rolesPermission && (canActivate || rolesBlocking) && (
+          <RolesSetupPanel spec={preview.rolesPermission} ready={canActivate} onRecheck={recheckPreview} />
         )}
 
         {error && <p className="text-pretty text-sm text-danger">{error}</p>}

@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { buildRolesSafeAppUrl } from "@exit-keepa/shared";
 import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
 import { getStoredSafeId, setStoredSafeId } from "../../lib/storage";
-import { btnPrimary, inputBase, linkFocus, card } from "../../lib/ui";
+import { btnPrimary, btnGhost, btnSecondarySmall, inputBase, linkFocus, card } from "../../lib/ui";
 import { StatusPill } from "../../components/StatusPill";
 import { CopyButton } from "../../components/CopyButton";
 
@@ -22,7 +23,8 @@ function DashboardSkeleton() {
 }
 
 export default function DashboardPage() {
-  const { address, isDemo } = useWallet();
+  const { address, isDemo, enterDemoMode } = useWallet();
+  const [startingDemo, setStartingDemo] = useState(false);
   const [safeId, setSafeId] = useState<string | null | undefined>(undefined); // undefined = still resolving
   const [safe, setSafe] = useState<any>(null);
   const [balances, setBalances] = useState<any>(null);
@@ -82,6 +84,17 @@ export default function DashboardPage() {
 
   if (safeId === undefined) return <DashboardSkeleton />;
 
+  async function startDemo() {
+    setStartingDemo(true);
+    try {
+      await enterDemoMode();
+    } catch {
+      // enterDemoMode already recorded this in useWallet()'s error state.
+    } finally {
+      setStartingDemo(false);
+    }
+  }
+
   async function registerSafe() {
     setError(null);
     try {
@@ -106,6 +119,16 @@ export default function DashboardPage() {
           Enter the Safe you want Exit Keepa to protect. If it already has a Zodiac Roles Modifier set up, add its
           address and role key below so your strategies can go live right away.
         </p>
+        {!isDemo && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cream-100/15 bg-forest-800/40 px-3 py-2">
+            <p className="text-pretty text-xs text-cream-400">
+              Just want to try Exit Keepa first? Skip the real Safe and setup entirely.
+            </p>
+            <button onClick={startDemo} disabled={startingDemo} className={`shrink-0 ${btnGhost}`}>
+              {startingDemo ? "Starting demo…" : "Try demo instead →"}
+            </button>
+          </div>
+        )}
         <div>
           <label htmlFor="safe-address" className="mb-1 block text-sm text-cream-300">
             Safe address
@@ -142,6 +165,10 @@ export default function DashboardPage() {
             onChange={(e) => setFormRoleKey(e.target.value)}
           />
         </div>
+        <p className="text-pretty text-xs text-cream-500">
+          Don&apos;t have these yet? Leave them blank - you&apos;ll get a guided, step-by-step link to set up Roles
+          for this exact Safe right here on the dashboard once it&apos;s saved.
+        </p>
         {error && <p className="text-pretty text-sm text-danger">{error}</p>}
         <button onClick={registerSafe} className={btnPrimary}>
           Save Safe
@@ -167,9 +194,24 @@ export default function DashboardPage() {
             <CopyButton value={safe.safeAddress} label="Copy address" />
           </div>
           <p className="text-xs tabular-nums text-cream-400">Chain: Base ({safe.chainId})</p>
-          <p className="text-xs text-cream-400">
-            Roles Modifier: {safe.rolesModifierAddress ?? <span className="text-warning">not configured</span>}
-          </p>
+          {safe.rolesModifierAddress ? (
+            <p className="mt-1 text-xs text-mint-300">✓ Roles permission ready to execute through</p>
+          ) : (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2">
+              <p className="text-pretty text-xs text-warning">
+                One-time setup needed before this Safe can execute a strategy: enable Zodiac&apos;s Roles Modifier and
+                grant the withdraw permission.
+              </p>
+              <a
+                href={buildRolesSafeAppUrl(safe.chainId, safe.safeAddress)}
+                target="_blank"
+                rel="noreferrer"
+                className={`inline-flex shrink-0 ${btnSecondarySmall}`}
+              >
+                Set up in Zodiac Roles app →
+              </a>
+            </div>
+          )}
           {balances && (
             <p className="mt-2 text-sm tabular-nums text-cream-200">
               Balances: ETH {(Number(balances.eth) / 1e18).toFixed(5)} · USDC {(Number(balances.usdc) / 1e6).toFixed(2)}
