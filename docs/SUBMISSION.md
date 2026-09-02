@@ -335,13 +335,24 @@ values).
   `packages/shared`), including a dedicated end-to-end cross-wallet
   ownership proof. The live demo Safe stays reachable in demo mode with
   no wallet needed via `/api/auth/demo-session`.
-- **Roles permission is genuinely scoped, not a rubber stamp.** The live
+- **Roles permission is genuinely scoped, not a rubber stamp — and this
+  is independently confirmed from chain state, not asserted.** The live
   grant on the demo Safe is `scopeTarget` (function-level, not
-  whole-target) plus a single-selector allow for `withdraw` — no other
-  function or contract on Base is reachable through this role. Further
-  tightening the grant to lock `asset`/`to` at the on-chain layer itself
-  is prepared and ready to submit in
-  [`ROLES_TIGHTENING.md`](ROLES_TIGHTENING.md).
+  whole-target) plus `scopeFunction` on `withdraw`, with parameter
+  conditions locking `asset == USDC` and `to == this Safe` (`amount` is
+  intentionally unrestricted). This was submitted by the Safe's own
+  owner
+  (tx [`0x41d61e34...e81f1`](https://basescan.org/tx/0x41d61e34a1e94ea693a3c6c2fc86e5fcc6c845a9b692fe86a9363e761e6e81f1))
+  and then re-verified by decoding that transaction's own calldata
+  directly from Base RPC via `viem` — not by trusting that the
+  transaction merely succeeded. Every field matched exactly what
+  [`ROLES_TIGHTENING.md`](ROLES_TIGHTENING.md) specified: role key,
+  target (the Aave Pool), function selector (`withdraw`), and all three
+  parameter conditions. No other function or contract on Base is
+  reachable through this role, and a `withdraw` call is only permitted
+  at all if `asset` is USDC and `to` is this exact Safe — enforced by
+  the Roles Modifier itself, before Exit Keepa's own application-level
+  checks even run.
 
 ## 10. How to verify in 60 seconds
 

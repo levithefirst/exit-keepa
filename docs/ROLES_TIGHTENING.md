@@ -1,48 +1,47 @@
 # Tightening the exit_keepa Roles grant: withdraw-only -> withdraw with asset/recipient locked
 
-**Status: step 1 (function scoping) is now live onchain; step 2
-(parameter conditions) is prepared, not submitted.** This document and
-the accompanying `roles-tightening/computeCalldata.js` originally
-targeted moving the role from whole-target `allowTarget` clearance
-straight to a fully-scoped `withdraw` grant in two calls. Since this
-document was first written, **`scopeTarget` plus a function-level allow
-for `withdraw` have been submitted and confirmed** — the role's
-clearance on the Aave Pool is `Function`, not whole-target, and only the
-`withdraw` selector (`0x69328dec`) is callable. **What remains is the
-parameter-condition step below** (locking `asset == USDC` and
-`to == this Safe`), which has not been submitted. Nobody but the Safe's
-own signers can execute it — Exit Keepa's backend has no code path that
-submits a Roles configuration change, by design (see README "How
-execution is authorized"). Review this, re-run the script yourself if
-you want to reproduce the numbers independently, and submit through the
-Safe's normal signing flow if it matches what you expect.
+**Status: DONE. Both steps are live onchain, and step 2 has been
+independently re-verified against the resulting on-chain state, not
+just the transaction's success.** The `scopeFunction` transaction below
+was submitted by the Safe's own owner
+(tx [`0x41d61e34a1e94ea693a3c6c2fc86e5fcc6c845a9b692fe86a9363e761e6e81f1`](https://basescan.org/tx/0x41d61e34a1e94ea693a3c6c2fc86e5fcc6c845a9b692fe86a9363e761e6e81f1),
+a Safe `execTransaction` wrapping a call to the Roles Modifier). Rather
+than assume a successful transaction means the restriction landed
+correctly, this session independently decoded that transaction's own
+calldata directly from Base RPC (`apps/api/src/scripts/verify-keeperhub.ts`'s
+`roles-tightening-verify` mode, run via the same Railway-relay technique
+used elsewhere in this project since the sandbox can't reach Base RPC
+directly) and checked every field against what this document specifies
+below. **Every check passed:** role key, target (the Aave Pool),
+function selector (`withdraw`), and all three parameter conditions
+(`asset == USDC`, `amount` unrestricted, `to == this Safe`) matched
+exactly, byte for byte.
+
+Nobody but the Safe's own signers executed it — Exit Keepa's backend has
+no code path that submits a Roles configuration change, by design (see
+README "How execution is authorized"). The rest of this document is kept
+as the historical record of what was prepared, why, and how it was
+independently verified after signing — useful for anyone reproducing the
+numbers themselves or applying the same tightening to a different Safe.
 
 ## What's true right now
 
-The live demo Safe's `exit_keepa` role currently has:
+The live demo Safe's `exit_keepa` role now has:
 
 - Aave v3 Pool clearance: `Function` (not whole-target — `scopeTarget`
-  has already been applied)
+  was applied first)
 - `withdraw(address,uint256,address)` (selector `0x69328dec`): allowed,
-  with **no parameter conditions** — the Roles Modifier will pass any
-  `asset`/`amount`/`to` combination for a `withdraw` call. Every other
-  function on the Pool is rejected by the Roles Modifier itself.
+  **with parameter conditions** — `asset` must equal USDC, `to` must
+  equal this exact Safe, `amount` is unrestricted. Every other function
+  on the Pool, and every other recipient or asset for a `withdraw` call,
+  is rejected by the Roles Modifier itself, before Exit Keepa's own
+  `agent/policy.ts` check even runs.
 
-This is a real middle state, not the "still `allowTarget`" gap an
-earlier version of this document (and of the README) described, and not
-yet the fully-scoped end state either. Locking `asset == USDC` and
-`to == this Safe` at the Roles layer — so misuse is rejected onchain, not
-just by Exit Keepa's own `agent/policy.ts` check — is what the
-transaction below still does.
+This is the fully-scoped end state this document originally targeted —
+not the earlier "still `allowTarget`" gap, and not the intermediate
+"withdraw allowed with no conditions" state either.
 
-## What the remaining step changes
-
-**Only the `scopeFunction` call below is still needed** — `scopeTarget`
-has already been applied onchain, so re-submitting it is redundant
-(idempotent, but unnecessary) rather than required. It's kept here as
-transaction 1 for anyone reproducing this from a genuinely fresh
-`allowTarget` starting point (e.g. a different Safe); for *this* Safe,
-only transaction 2 is outstanding.
+## What the two steps changed
 
 Both calls are `onlyOwner` (the Safe itself) on the Roles Modifier:
 
@@ -53,7 +52,7 @@ Both calls are `onlyOwner` (the Safe itself) on the Roles Modifier:
    itself is strictly more restrictive than today, never less. Confirmed
    from `PermissionBuilder.sol`'s actual source: `scopeTarget` writes
    `clearance: Clearance.Function` and does not touch any previously
-   scoped function. **Already applied on the live demo Safe.**
+   scoped function. **Applied on the live demo Safe.**
 2. **`scopeFunction(roleKey, aavePool, withdrawSelector, conditions, ExecutionOptions.None)`**
    - grants exactly one function back, with per-parameter conditions:
    - `asset` (position 0): must equal USDC (`0x833589fC...02913`)
@@ -63,12 +62,11 @@ Both calls are `onlyOwner` (the Safe itself) on the Roles Modifier:
      prevent misuse, not the amount)
    - `to` (position 2): must equal the Safe itself
      (`0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9`)
-   - **This is the one call still outstanding.** The live Safe already
-     has `withdraw` allowed with no conditions (an earlier, unconditioned
-     function-level allow); submitting this `scopeFunction` call replaces
-     that unconditioned allowance with the conditioned one shown here —
-     confirm in the Zodiac Roles app that it's presented as an update to
-     the existing `withdraw` permission, not a duplicate, before signing.
+   - **Applied on the live demo Safe**
+     (tx [`0x41d61e34...e81f1`](https://basescan.org/tx/0x41d61e34a1e94ea693a3c6c2fc86e5fcc6c845a9b692fe86a9363e761e6e81f1)),
+     replacing the earlier unconditioned `withdraw` allowance with the
+     conditioned one shown here, and independently re-verified against
+     the resulting on-chain state per the Status note above.
 
 After this call lands: the role can call `withdraw(asset, amount, to)` on
 the Aave Pool if and only if `asset` is USDC and `to` is this exact Safe.

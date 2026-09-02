@@ -79,27 +79,26 @@ is:
    unrestricted). Once this is live, the role can withdraw USDC from
    Aave and the funds can only ever land back in the Safe that owns them.
 
-**What's actually granted on the live demo Safe right now** is a real
-middle state between "any function, any target" and that fully-scoped
-end state, not either extreme:
+**What's actually granted on the live demo Safe right now** is that
+fully-scoped end state — both steps are live onchain:
 
 - **Step 1 is live**: `scopeTarget` has been applied, so the Aave Pool's
-  clearance is `Function`, not whole-target `allowTarget`. On top of it,
-  the `withdraw` selector (`0x69328dec`) has been explicitly allowed for
-  the role via Zodiac's function-level allow. **No other function on the
-  Aave Pool is callable through this role** — `supply`, `borrow`,
-  `liquidate`, and every other Pool function are rejected by the Roles
-  Modifier itself before Exit Keepa's own code ever runs.
-- **Step 2's parameter conditions are not yet set.** The `withdraw`
-  allowance carries no `asset`/`to` condition — the Roles Modifier will
-  pass a call with *any* `asset` and *any* recipient `to`, not just USDC
-  back to this Safe. Right now, "only USDC, only back to this Safe" is
-  enforced by **Exit Keepa's own application-level policy check**
-  (`agent/policy.ts`'s `assetBound`/`recipientBound`, see below), not by
-  an on-chain condition — a real, stated gap, not glossed over. Closing
-  it means re-running `scopeFunction` with the asset/recipient
-  `ConditionFlat[]` described above; the exact calldata for that step is
-  prepared in [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md).
+  clearance is `Function`, not whole-target `allowTarget`.
+- **Step 2 is live**: the `withdraw` selector (`0x69328dec`) is allowed
+  for the role with parameter conditions fixing `asset == USDC` and
+  `to == the Safe itself` (`amount` left unrestricted), submitted by the
+  Safe's own owner
+  (tx [`0x41d61e34...e81f1`](https://basescan.org/tx/0x41d61e34a1e94ea693a3c6c2fc86e5fcc6c845a9b692fe86a9363e761e6e81f1))
+  and independently re-verified by decoding that transaction's own
+  calldata directly from Base RPC — not assumed from the transaction
+  merely succeeding. See [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md)
+  for the full verification record. **No other function on the Aave
+  Pool is callable through this role**, and a `withdraw` call is only
+  permitted if `asset` is USDC and `to` is this exact Safe — enforced by
+  the Roles Modifier itself, before Exit Keepa's own application-level
+  policy check (`agent/policy.ts`'s `assetBound`/`recipientBound`, see
+  below) ever runs. That application-level check still runs too — this
+  is defense in depth, not a replacement for it.
 - The demo Safe may also still show a **`Wildcard` clearance on the Safe
   address itself** in the Roles config. That's residual from earlier demo
   setup, unrelated to the Aave withdraw path above — it does not grant
