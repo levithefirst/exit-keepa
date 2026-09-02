@@ -80,7 +80,7 @@ const GUARANTEES = [
 ];
 
 export default function HomePage() {
-  const { address, connecting, enterDemoMode } = useWallet();
+  const { address, connecting, error, enterDemoMode } = useWallet();
   const router = useRouter();
   const [startingDemo, setStartingDemo] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
@@ -90,6 +90,10 @@ export default function HomePage() {
     try {
       await enterDemoMode();
       router.push("/dashboard");
+    } catch {
+      // enterDemoMode already recorded this in useWallet()'s error state,
+      // shown next to the button below - nothing further to do here except
+      // make sure the button re-enables instead of staying stuck.
     } finally {
       setStartingDemo(false);
     }
@@ -138,6 +142,7 @@ export default function HomePage() {
             </>
           )}
         </div>
+        {error && !walletModalOpen && <p className="text-pretty relative text-sm text-danger">{error}</p>}
       </section>
 
       {/* Stats strip */}
@@ -157,7 +162,7 @@ export default function HomePage() {
           <span className="text-xs font-semibold uppercase tracking-wide text-mint-400">Proof, not promises</span>
         </div>
         <h2 className="text-balance mb-2 font-display text-xl font-bold text-cream-50">
-          This already happened on Base
+          This <span className="font-accent italic text-mint-400">already</span> happened on Base
         </h2>
         <p className="text-pretty max-w-2xl text-sm text-cream-300">
           This isn&apos;t a demo. Exit Keepa&apos;s full path, from your Safe through Zodiac Roles to KeeperHub,
@@ -190,7 +195,9 @@ export default function HomePage() {
       {/* Feature switcher */}
       <section>
         <div className="mb-8 text-center">
-          <h2 className="text-balance font-display text-2xl font-bold text-cream-50 sm:text-3xl">How it works</h2>
+          <h2 className="text-balance font-display text-2xl font-bold text-cream-50 sm:text-3xl">
+            How it <span className="font-accent italic text-mint-400">works</span>
+          </h2>
           <p className="text-pretty mx-auto mt-2 max-w-xl text-cream-300">
             Three steps. Each one you can verify for yourself.
           </p>
@@ -202,7 +209,7 @@ export default function HomePage() {
       <section>
         <div className="mb-8 text-center">
           <h2 className="text-balance font-display text-2xl font-bold text-cream-50 sm:text-3xl">
-            What actually runs, in order
+            What <span className="font-accent italic text-mint-400">actually</span> runs, in order
           </h2>
           <p className="text-pretty mx-auto mt-2 max-w-xl text-cream-300">
             No step is hidden behind &quot;magic.&quot; Here&apos;s the literal call chain, once your condition is
@@ -232,7 +239,7 @@ export default function HomePage() {
       <section>
         <div className="mb-8 text-center">
           <h2 className="text-balance font-display text-2xl font-bold text-cream-50 sm:text-3xl">
-            Why it&apos;s safe to let this run
+            Why it&apos;s <span className="font-accent italic text-mint-400">safe</span> to let this run
           </h2>
           <p className="text-pretty mx-auto mt-2 max-w-xl text-cream-300">
             Six guarantees, each one you can go check in the code or on the chain, not a marketing claim.
@@ -283,6 +290,7 @@ export default function HomePage() {
             </button>
           )}
         </div>
+        {error && !walletModalOpen && <p className="text-pretty mt-3 text-sm text-danger">{error}</p>}
       </section>
     </main>
   );

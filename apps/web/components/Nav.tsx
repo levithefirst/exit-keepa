@@ -73,7 +73,7 @@ export function Nav() {
     </div>
   ) : (
     <div className="flex flex-wrap items-center gap-2">
-      <button onClick={enterDemoMode} className={btnGhost}>
+      <button onClick={() => enterDemoMode().catch(() => {})} className={btnGhost}>
         Try demo
       </button>
       <button onClick={() => setWalletModalOpen(true)} disabled={connecting} className={btnPrimarySmall}>

@@ -14,7 +14,11 @@ const FEATURES = [
     pillActive: "group-has-[#feature-exit:checked]:bg-mint-400 group-has-[#feature-exit:checked]:text-ink-on-accent",
     panelVisible: "hidden group-has-[#feature-exit:checked]:grid",
     tab: "Set your exit",
-    heading: "Set your exit",
+    heading: (
+      <>
+        Set your <span className="font-accent italic text-mint-400">exit</span>
+      </>
+    ),
     body: "Choose the rate that should trigger a withdrawal. Set it once. No dashboard to babysit.",
     bullets: [
       "Works with Aave USDC on Base today, e.g. exit when supply APR drops below 2%.",
@@ -36,7 +40,11 @@ const FEATURES = [
     pillActive: "group-has-[#feature-simulate:checked]:bg-mint-400 group-has-[#feature-simulate:checked]:text-ink-on-accent",
     panelVisible: "hidden group-has-[#feature-simulate:checked]:grid",
     tab: "Simulate first",
-    heading: "Test it before it's real",
+    heading: (
+      <>
+        Test it before it&apos;s <span className="font-accent italic text-mint-400">real</span>
+      </>
+    ),
     body: "Every strategy is checked against the live chain before anything moves. This is a genuine dry run, not a guess.",
     bullets: [
       "Runs the exact call through KeeperHub in simulation mode, against the real Roles Modifier and the real Aave Pool.",
@@ -61,7 +69,11 @@ const FEATURES = [
     pillActive: "group-has-[#feature-execute:checked]:bg-mint-400 group-has-[#feature-execute:checked]:text-ink-on-accent",
     panelVisible: "hidden group-has-[#feature-execute:checked]:grid",
     tab: "Protected execution",
-    heading: "Your keys never leave your hands",
+    heading: (
+      <>
+        Your keys <span className="font-accent italic text-mint-400">never</span> leave your hands
+      </>
+    ),
     body: "Execution is routed through KeeperHub, but it's boxed in by a Zodiac Roles permission before it ever reaches your Safe.",
     bullets: [
       "KeeperHub can only call one function, execTransactionWithRole. Nothing else.",

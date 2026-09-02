@@ -197,7 +197,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setAddress(DEMO_IDENTITY);
       setChainId(8453);
     } catch (err) {
-      setError((err as Error).message ?? "Could not start demo mode");
+      const message = (err as Error).message ?? "Could not start demo mode";
+      setError(message);
+      // Re-thrown so a caller (e.g. the homepage's "Try the demo" button)
+      // knows this failed and doesn't navigate anywhere on a broken session.
+      throw new Error(message);
     }
   }, []);
 

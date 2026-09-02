@@ -34,7 +34,14 @@ const THEME_INIT_SCRIPT = `
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${display.variable} ${accent.variable} ${body.variable}`}>
+    <html
+      lang="en"
+      className={`${display.variable} ${accent.variable} ${body.variable}`}
+      // THEME_INIT_SCRIPT below sets data-theme on this element before React
+      // hydrates, on purpose (see its comment) - React would otherwise flag
+      // that as a server/client mismatch every load.
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>

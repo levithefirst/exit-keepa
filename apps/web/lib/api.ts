@@ -10,15 +10,36 @@ export function setAuthToken(token: string | null) {
   authToken = token;
 }
 
+// A stalled network request (a dropped mobile connection, a proxy that never
+// answers) must never leave the UI waiting forever - every call fails clean
+// after this, so a caller's try/finally always gets to run and re-enable
+// whatever button was disabled for it.
+const REQUEST_TIMEOUT_MS = 15_000;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${clientEnv.NEXT_PUBLIC_API_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      ...init?.headers,
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(`${clientEnv.NEXT_PUBLIC_API_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        ...init?.headers,
+      },
+    });
+  } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      throw new Error("Request timed out. Check your connection and try again.");
+    }
+    throw new Error("Could not reach the server. Check your connection and try again.");
+  } finally {
+    clearTimeout(timeout);
+  }
+
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     const message = (body && (body.message || body.error)) || `Request failed (${response.status})`;
