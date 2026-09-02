@@ -366,8 +366,13 @@ async function main() {
       const hexBalance = (balanceResult.body as any)?.result as string | undefined;
       const balanceWei = hexBalance ? BigInt(hexBalance) : null;
 
+      const usdcResult = await rpc("eth_call", [{ to: USDC, data: BALANCE_OF_SELECTOR + padded }, "latest"]);
+      const usdcHex = (usdcResult.body as any)?.result as string | undefined;
+      const usdcWei = usdcHex ? BigInt(usdcHex) : null;
+
       const ethBalanceResult = await rpc("eth_getBalance", [DEMO_SAFE, "latest"]);
       const ethHex = (ethBalanceResult.body as any)?.result as string | undefined;
+      const ethWei = ethHex ? BigInt(ethHex) : null;
 
       console.log(
         `KEEPERHUB_VERIFY_RESULT ${JSON.stringify({
@@ -375,7 +380,10 @@ async function main() {
           safeAddress: DEMO_SAFE,
           aUsdcBalanceWei: balanceWei?.toString(),
           aUsdcBalanceUsdc: balanceWei !== null ? Number(balanceWei) / 1e6 : null,
-          ethBalanceWei: ethHex ? BigInt(ethHex).toString() : undefined,
+          plainUsdcBalanceWei: usdcWei?.toString(),
+          plainUsdcBalanceUsdc: usdcWei !== null ? Number(usdcWei) / 1e6 : null,
+          ethBalanceWei: ethWei?.toString(),
+          ethBalanceEth: ethWei !== null ? Number(ethWei) / 1e18 : null,
         })}`,
       );
       return;
