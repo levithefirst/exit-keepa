@@ -4,10 +4,9 @@ import { eq } from "drizzle-orm";
 import { isAddress, recoverMessageAddress } from "viem";
 import { z } from "zod";
 import { db } from "../db";
-import { authNonces, authSessions } from "../db/schema";
+import { authNonces, authSessions, safeAccounts, safeOwners } from "../db/schema";
 import { HttpError } from "../middleware/errorHandler";
 import { buildSignInMessage } from "../auth/nonceMessage";
-import { DEMO_OWNER_ADDRESS } from "../auth/constants";
 
 export const authRouter = Router();
 
@@ -19,6 +18,12 @@ function randomToken(): string {
 }
 function randomNonce(): string {
   return crypto.randomBytes(16).toString("hex");
+}
+function randomAddress(): string {
+  return "0x" + crypto.randomBytes(20).toString("hex");
+}
+function randomBytes32(): string {
+  return "0x" + crypto.randomBytes(32).toString("hex");
 }
 
 const nonceSchema = z.object({ address: z.string() });
@@ -79,17 +84,42 @@ authRouter.post("/auth/verify", async (req, res) => {
 });
 
 /**
- * Issues a session for the fixed demo identity - no signature required.
- * This doesn't weaken anything real: the demo Safe (backfilled to this
- * exact address in migration 0002) was already openly, publicly usable by
- * anyone with zero auth at all before this session's work - see the
- * "Demo mode" labeling already established in the product. This endpoint
- * preserves exactly that behavior; every real wallet's Safe gets genuine
- * exclusive ownership via /auth/verify above.
+ * Issues a session for a brand-new, private demo identity - no signature
+ * required. Every call gets its OWN randomly-generated owner address and
+ * its own auto-provisioned sandbox Safe (below), never a shared one: an
+ * earlier version of this endpoint always logged in as the same fixed
+ * address, which meant every visitor who clicked "Try demo" saw and acted
+ * on the exact same Safe - including, briefly, the real production Safe
+ * used for this project's own onchain proof. That's fixed structurally
+ * here, not just cosmetically: there is no longer any address this
+ * endpoint can return twice.
+ *
+ * The sandbox Safe's rolesModifierAddress/rolesKey are pre-set (to
+ * synthetic values - nothing here is deployed on any real chain) so a
+ * demo visitor never hits the real-Safe Roles setup wall. Because none of
+ * it exists on-chain, execution/simulate.ts returns a mocked, clearly-
+ * labeled simulation for it instead of calling KeeperHub, and
+ * routes/executions.ts refuses to ever broadcast one for real - see both
+ * files' own comments.
  */
 authRouter.post("/auth/demo-session", async (_req, res) => {
   const token = randomToken();
+  const ownerAddress = randomAddress();
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  await db.insert(authSessions).values({ token, address: DEMO_OWNER_ADDRESS, expiresAt }).returning();
-  res.status(200).json({ token, address: DEMO_OWNER_ADDRESS, expiresAt });
+
+  const [safe] = await db
+    .insert(safeAccounts)
+    .values({
+      chainId: 8453,
+      safeAddress: randomAddress(),
+      rolesModifierAddress: randomAddress(),
+      rolesKey: randomBytes32(),
+      isSandbox: true,
+    })
+    .returning();
+
+  await db.insert(safeOwners).values({ safeId: safe.id, ownerAddress }).returning();
+  await db.insert(authSessions).values({ token, address: ownerAddress, expiresAt }).returning();
+
+  res.status(200).json({ token, address: ownerAddress, expiresAt });
 });

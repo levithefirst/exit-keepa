@@ -62,9 +62,11 @@ interface WalletState {
   switchToBase: () => Promise<void>;
   /**
    * Lets a judge without a wallet extension (or one who doesn't want to
-   * connect) explore the app anyway - registers a Safe/strategies under a
-   * fixed local demo identity instead of blocking the whole UI on wallet
-   * availability.
+   * connect) explore the app anyway. The client always displays this
+   * session under the same fixed label (DEMO_IDENTITY, below) - but the
+   * backend session behind it is a fresh, isolated identity every time,
+   * with its own auto-provisioned sandbox Safe (see POST
+   * /api/auth/demo-session) never shared with any other visitor.
    */
   enterDemoMode: () => Promise<void>;
 }

@@ -1,10 +1,12 @@
 # Judge demo path (under 5 minutes)
 
-The path below opens with a **refusal**, on purpose: the point of Exit
-Guardian is that it can say no. Everything through the refusal step is
-completely safe — nothing is broadcast until the very last step, and that
-step is optional (it re-runs a real broadcast against a Safe that has
-already completed one — see "Live proof").
+This has two independent parts: **your own live walkthrough** (demo mode
+— an isolated sandbox Safe, auto-provisioned just for your session, never
+shared with any other visitor) and **static, independently-verifiable
+proof** that the exact same pipeline executed a real withdrawal on a real
+Safe (the "Live proof" BaseScan transaction). Demo mode never touches that
+real Safe — every "Try demo" click gets a brand-new sandbox, so nothing
+you do here is broadcast or shared with anyone else.
 
 ## 0. Prerequisites
 
@@ -36,97 +38,63 @@ not part of the demo. Fall back to the API directly:
 
 ## 2. Enter demo mode
 
-Click **"Try demo"** in the top nav. No wallet prompt appears — you're
-using a fixed local demo identity, clearly labeled **"Demo mode"** in the
-nav. Under the hood this now goes through the same session-token exchange
-a real wallet connection does (`POST /api/auth/demo-session`), just
-without a signature — invisible to you, but it's what lets the live demo
-Safe stay usable in demo mode while a real connected wallet gets genuine
-exclusive ownership of its own Safes and strategies.
+Click **"Try demo"** in the top nav. No wallet prompt appears. Under the
+hood this goes through the same session-token exchange a real wallet
+connection does (`POST /api/auth/demo-session`), just without a
+signature — and it also auto-provisions a brand-new, private sandbox Safe
+for this session alone, with its Roles permission pre-configured so
+there's no setup wall to hit. Nobody else — not even another judge
+opening the same link at the same time — sees or shares it; a real
+connected wallet still gets genuine exclusive ownership of its own real
+Safes and strategies the normal way.
 
-## 3. The live demo Safe
+## 3. Your own sandbox Safe
 
-Click **Dashboard**. The real, on-chain Safe already used for the proof
-transaction loads automatically — no manual entry needed:
+Click **Dashboard**. Your session's own sandbox Safe loads automatically
+— a synthetic address, generated fresh for you, never deployed on any
+real chain. Its Roles Modifier and role key are pre-set (also synthetic)
+so the dashboard reads "✓ Roles permission ready to execute through"
+immediately, with nothing to configure.
 
-| | |
-|---|---|
-| Safe | `0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9` |
-| Roles Modifier | `0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE` |
-| Role key | `0x657869745f6b6565706100000000000000000000000000000000000000000000` |
+## 4. Create a strategy and watch Exit Guardian evaluate it live
 
-## 4. Create a strategy that will genuinely refuse
-
-Click **"+ New strategy"**. Set the trigger to something that's certainly
-already true right now (e.g. "is below 100%" — supply APR is never
-100%+), so Exit Guardian has an immediate crossing to react to. Set the
-withdraw amount to **an exact amount clearly larger than the Safe could
-hold** — e.g. `999999000000` (999,999 USDC, smallest units). Click
-**Preview**, then **Activate**.
-
-This isn't a fake amount picked to force a demo failure for its own sake
-— it's the same failure mode a real user hits if their configured
-withdrawal no longer matches their actual position (a partial withdrawal
-happened elsewhere, or the position was smaller than they remembered).
-Exit Guardian is supposed to catch exactly this.
-
-## 5. Watch it refuse
-
-Open the strategy, and click **"Run Exit Guardian"** (or, if the
+Click **"+ New strategy"**. Pick a trigger and Preview → Activate it, then
+open the strategy and click **"Run Exit Guardian"** (or, if the
 autonomous poller is enabled, just wait — it checks every 30 seconds on
 its own).
 
-**Expected result:** Exit Guardian reads the live Aave supply rate on
-Base, confirms your condition is met, confirms every policy check passes
-(right chain, right contract, right function, right asset, funds
-returning only to this Safe, Roles configured) — and then the automatic
-simulation against the real KeeperHub/Roles Modifier/Aave Pool comes back
-`wouldRevert: true`: the Safe doesn't actually hold that much. The
-execution is marked **Failed**, with the real revert reason, not a
-canned string. Nothing was broadcast.
+**Expected result:** Exit Guardian reads the live Aave supply APR on Base
+right now (a real RPC read — the same call a real strategy uses, not a
+canned number) and checks it against your chosen condition. Pick a
+threshold that's clearly *not* met yet (e.g. "is below 0.01%") to see
+**Normal: condition not met** — nothing attempted, exactly as it should
+be. Pick one that's clearly *already* met (e.g. "is below 100%") to see
+it **trigger**: every real policy check passes (right chain, right
+contract, right function, right asset, funds returning only to this Safe,
+Roles configured), and the transaction preview shows the exact real
+calldata this strategy would run.
 
-Open **"Inspect the full receipt"** — every claim in this paragraph is
-independently checkable there: the exact observed rate, the exact policy
-check results, the exact simulation response.
+**What's mocked, and why:** the one thing that can't be real here is the
+final "would this actually revert on-chain" simulate step — that requires
+a real Roles Modifier and a real Safe genuinely deployed on Base, which a
+sandbox correctly does not have. That step is clearly labeled
+`"sandbox": true` in the receipt (open **"Inspect the full receipt"**) and
+always comes back clean, rather than either faking a specific revert
+reason or leaving the whole flow at a dead end. Everything upstream of it
+— the rate, the condition check, the policy check, the exact transaction
+that would be sent — is real. Broadcasting from a sandbox is refused
+outright by the API (409, "This is a demo sandbox Safe...") — there is no
+"Confirm broadcast" path that does anything here.
 
-## 6. About "watching it succeed" live
+## 5. The real thing: independently-verifiable proof, not a live demo
 
-**Read this before demoing the success case — the Safe's Aave position
-is currently empty**, verified live (aUSDC balance: `0`) right before
-this revision. The canonical proof tx (step 8) already withdrew it, and
-nothing has re-supplied it since. This changes what a live re-run
-against the already-completed strategy actually shows:
+The interactive walkthrough above intentionally never touches this
+project's own real Safe — that's the isolation fix this whole flow was
+rebuilt around. Instead, the claim that this pipeline genuinely executes
+on a real Safe is backed by a real, already-confirmed transaction you can
+verify yourself, completely independent of demo mode:
 
-Navigate to the strategy that already holds the real completed withdraw
-and click **"Run Exit Guardian"** anyway. **Expected result today:**
-another real refusal — `wouldRevert: true`, because there is nothing
-left to withdraw. This is not a bug in the demo; it's the exact same
-safety mechanism from step 5 catching a second real failure mode (a
-stale strategy pointed at a position that no longer exists), live,
-unscripted. Frame it that way rather than expecting a clean simulate.
-
-**To show an actual clean `wouldRevert: false` simulation live**, the
-Safe needs a real Aave USDC position again first — supply USDC to the
-Aave v3 Pool through this Safe (outside Exit Keepa's own scope; use the
-Safe's normal signing flow) before recording, then create a fresh
-strategy with `amount: "max"`. That's a real fund-moving action only the
-Safe's own signers can take, not something to script blindly.
-
-**If you don't re-fund it:** treat the pre-existing BaseScan transaction
-(step 8) as the success evidence — it's a real, already-confirmed
-success on this exact path — and present the live demo as two real
-refusals (oversized amount, then empty position) plus that existing
-proof, rather than forcing a third live call that will also revert.
-
-## 7. Do not re-broadcast the demo Safe
-
-**Do not click "Confirm broadcast" during judging** in either case above
-— even the empty-position run reaches only `Simulated`/`Failed`, never a
-real broadcast, but if you do fund a fresh position and get a clean
-simulation, a broadcast from it is a real mainnet transaction and isn't
-needed to prove the claim already proven in step 8. Instead:
-
-## 8. Verify the existing on-chain proof
+## 6. Verify the existing on-chain proof
 
 The home page's **"Live proof"** panel links directly to the
 already-confirmed transaction:
@@ -154,18 +122,23 @@ Open it. Confirm independently:
   independently re-derived both from raw Base RPC and from KeeperHub's
   own execution-status API (execution ID `u9zr4vzbfurjvzgwz687g`).
 
-This transaction was executed by the same simulate → broadcast path you
-just exercised in steps 5-6, on this same demo Safe, before this demo
-session. The chain, not Exit Keepa's own database, is the source of
+This transaction was executed by the exact same simulate → broadcast code
+path the sandbox walkthrough in step 4 exercises, just on this project's
+own real Safe rather than your sandbox one, and before this demo session
+even existed. The chain, not Exit Keepa's own database, is the source of
 truth for whether it happened.
 
 ## What to never click during a live demo
 
-- **"Confirm broadcast"** on the already-completed demo Safe (step 7) —
-  real mainnet transaction, not required to prove the claim.
-- Anything on `app.safe.global` / `roles.gnosisguild.org` if you follow
-  the "Open Zodiac Roles app" link — that's the real Safe Apps UI for the
-  demo Safe's actual signers, not a sandbox.
+- Nothing in the sandbox walkthrough (step 4) needs caution — broadcast is
+  refused outright there by design, so there is no "real money" click to
+  avoid.
+- Anything on `app.safe.global` / `roles.gnosisguild.org` if you follow a
+  "Open Zodiac Roles app" link on a *real, non-sandbox* Safe you don't
+  control — that opens the real Safe Apps UI for that Safe's actual
+  signers, not a sandbox. (The sandbox Safe's own Roles panel already
+  reads "ready," so there's no reason to click that link during the
+  sandbox walkthrough at all.)
 
 ## If a live external dependency fails mid-demo
 
@@ -176,9 +149,10 @@ truth for whether it happened.
   fails with a real error message (a genuine RPC failure, not a fabricated
   refusal) — retry, or fall back to the pre-verified "Live proof"
   transaction.
-- **KeeperHub unreachable during simulate/broadcast:** the execution row
-  is marked `failed` with an explicit message rather than hanging or
-  reporting a false success. If the error text says the outcome "could
-  not be confirmed," that specific broadcast's state is genuinely
-  unknown — point to the pre-verified "Live proof" transaction instead of
-  retrying live.
+- **KeeperHub unreachable:** doesn't affect the sandbox walkthrough at all
+  (its simulate step never calls KeeperHub - see step 4). On a real,
+  non-sandbox Safe, the execution row is marked `failed` with an explicit
+  message rather than hanging or reporting a false success; if the error
+  text says the outcome "could not be confirmed," that specific
+  broadcast's state is genuinely unknown - point to the pre-verified
+  "Live proof" transaction instead of retrying live.

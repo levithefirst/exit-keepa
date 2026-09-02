@@ -137,17 +137,27 @@ describe("Session enforcement", () => {
 });
 
 describe("POST /api/auth/demo-session", () => {
-  it("issues a working session for the fixed demo identity with no signature", async () => {
+  it("issues a working session with no signature, auto-provisioning its own private sandbox Safe", async () => {
     const res = await request(app).post("/api/auth/demo-session").send({});
     expect(res.status).toBe(200);
     expect(res.body.token).toBeTruthy();
-    expect(res.body.address).toBe("0x0000000000000000000000000000000000000000");
+    expect(res.body.address).toMatch(/^0x[0-9a-f]{40}$/);
 
-    const safeRes = await request(app)
-      .post("/api/safe-accounts")
-      .set("Authorization", `Bearer ${res.body.token}`)
-      .send({ chainId: 8453, safeAddress: "0x000000000000000000000000000000000000bEEF" });
-    expect(safeRes.status).toBe(201);
+    const mySafes = await request(app)
+      .get("/api/safe-accounts")
+      .set("Authorization", `Bearer ${res.body.token}`);
+    expect(mySafes.status).toBe(200);
+    expect(mySafes.body.length).toBe(1);
+    expect(mySafes.body[0].isSandbox).toBe(true);
+    expect(mySafes.body[0].rolesModifierAddress).toBeTruthy();
+    expect(mySafes.body[0].rolesKey).toBeTruthy();
+  });
+
+  it("never issues the same identity or sandbox Safe twice - each demo click is its own private session", async () => {
+    const a = await request(app).post("/api/auth/demo-session").send({});
+    const b = await request(app).post("/api/auth/demo-session").send({});
+    expect(a.body.address).not.toBe(b.body.address);
+    expect(a.body.token).not.toBe(b.body.token);
   });
 });
 

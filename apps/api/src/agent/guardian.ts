@@ -268,7 +268,7 @@ export async function evaluateStrategy(strategyId: string, source: DecisionSourc
       payload: { tx, observation, source },
     });
 
-    const simOutcome = await simulatePendingExecution(executionId, tx, safe.chainId);
+    const simOutcome = await simulatePendingExecution(executionId, tx, safe.chainId, safe.isSandbox);
     execution = simOutcome.row;
     logger.info(
       { strategyId: strategy.id, executionId, status: execution.status },

@@ -79,7 +79,7 @@ is:
    unrestricted). Once this is live, the role can withdraw USDC from
    Aave and the funds can only ever land back in the Safe that owns them.
 
-**What's actually granted on the live demo Safe right now** is that
+**What's actually granted on the live-proof Safe right now** is that
 fully-scoped end state — both steps are live onchain:
 
 - **Step 1 is live**: `scopeTarget` has been applied, so the Aave Pool's
@@ -99,7 +99,7 @@ fully-scoped end state — both steps are live onchain:
   policy check (`agent/policy.ts`'s `assetBound`/`recipientBound`, see
   below) ever runs. That application-level check still runs too — this
   is defense in depth, not a replacement for it.
-- The demo Safe may also still show a **`Wildcard` clearance on the Safe
+- The live-proof Safe may also still show a **`Wildcard` clearance on the Safe
   address itself** in the Roles config. That's residual from earlier demo
   setup, unrelated to the Aave withdraw path above — it does not grant
   anything against the Aave Pool, and should not be read as part of this
@@ -168,12 +168,13 @@ to record is at [`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md).
   read-only against chain state.
 - Step 7 (a real broadcast) additionally requires a Safe that (a) holds a
   real USDC supply position on Aave v3 Base, and (b) has actually been
-  granted the Roles permission described above. For the demo Safe listed
-  in "Live proof" below, both are already true — that's why its broadcast
-  is a real, confirmed on-chain transaction rather than a simulation. Try
-  it yourself with **any other Safe address** and you'll see the same
-  simulate step correctly refuse to broadcast until those two conditions
-  are met for that Safe.
+  granted the Roles permission described above. For the live-proof Safe
+  linked in "Live proof" below, both are already true — that's why its
+  broadcast is a real, confirmed on-chain transaction rather than a
+  simulation. Try it yourself with **any other real Safe address** and
+  you'll see the same simulate step correctly refuse to broadcast until
+  those two conditions are met for that Safe. (Demo mode's own sandbox
+  Safe is a separate thing entirely — see `docs/JUDGE_DEMO.md` §2-4.)
 - **What runs unattended today, precisely:** by default
   (`AGENT_POLL_ENABLED=false`, every environment including production),
   nothing decides on its own - Exit Guardian only evaluates a strategy
@@ -287,7 +288,7 @@ npm run test --workspace apps/api
 npm run test --workspace packages/shared
 ```
 
-167 tests total (158 in `apps/api`, 9 in `packages/shared`, verified by
+171 tests total (162 in `apps/api`, 9 in `packages/shared`, verified by
 running both commands above): chain-boundary enforcement (rejecting a
 Safe registered on any chain other than Base before building a
 Base-targeted transaction), calldata correctness (against

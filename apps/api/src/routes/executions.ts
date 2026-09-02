@@ -169,7 +169,7 @@ executionsRouter.post("/exit-strategies/:id/executions/:executionId/simulate", a
   }
 
   const tx = buildExitTransaction(strategy.action as ExitAction, safe);
-  const outcome = await simulatePendingExecution(execution.id, tx, safe.chainId);
+  const outcome = await simulatePendingExecution(execution.id, tx, safe.chainId, safe.isSandbox);
   res.status(outcome.callFailed ? 502 : 200).json(outcome.row);
 });
 
@@ -191,6 +191,13 @@ executionsRouter.post("/exit-strategies/:id/executions/:executionId/broadcast", 
     )
     .limit(1);
   if (!execution) throw new HttpError(404, "Execution not found");
+
+  if (safe.isSandbox) {
+    throw new HttpError(
+      409,
+      "This is a demo sandbox Safe - it isn't deployed on any real chain, so there's nothing real to broadcast to. Connect a real wallet and Safe to actually execute a strategy.",
+    );
+  }
 
   const decision = decideBroadcast({ status: execution.status, txHash: execution.txHash });
   if (decision.action === "already_broadcast") {

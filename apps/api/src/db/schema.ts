@@ -63,6 +63,14 @@ export const safeAccounts = pgTable("safe_accounts", {
   // strategies execute under. Required to build execTransactionWithRole
   // calls; null until the user has configured Roles for this Safe.
   rolesKey: text("roles_key"),
+  // True only for a demo session's own private, auto-provisioned Safe (see
+  // POST /api/auth/demo-session) — never a real deployed Safe on any chain.
+  // Gates two things: execution/simulate.ts returns a mocked, clearly-
+  // labeled simulation instead of calling KeeperHub (nothing real exists
+  // on-chain to simulate against), and routes/executions.ts refuses to
+  // ever broadcast one for real. Every other read/write path treats a
+  // sandbox row exactly like a real one — same schema, same routes.
+  isSandbox: boolean("is_sandbox").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -163,10 +171,11 @@ export const agentDecisions = pgTable("agent_decisions", {
  * `ownerAddress` at registration time. This is deliberately not the same
  * claim as "is a signer on the Gnosis Safe itself" - verifying on-chain
  * Safe-signer status is a separate, harder problem this doesn't attempt.
- * What it does guarantee: only the wallet that registered a Safe (or the
- * fixed demo identity, for the one pre-existing demo Safe - see the
- * backfill in this migration) can read or act on it through this API.
- * Addresses are always stored lowercased; compare lowercased on every read.
+ * What it does guarantee: only the wallet that registered a Safe (or, for
+ * a demo session's own sandbox Safe, that session's own randomly-generated
+ * owner identity - see POST /api/auth/demo-session) can read or act on it
+ * through this API. Addresses are always stored lowercased; compare
+ * lowercased on every read.
  */
 export const safeOwners = pgTable("safe_owners", {
   safeId: uuid("safe_id")

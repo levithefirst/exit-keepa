@@ -75,9 +75,9 @@ has to be changed by a human in the dashboard.
 7. Once Ready, verify from a browser (not just that Vercel says Ready):
    - `https://exit-keepa-web.vercel.app/` loads and shows the "Live proof"
      panel.
-   - Dashboard → "Try demo mode" → register the demo Safe → strategies
-     list loads (confirms the frontend can reach the Railway API and isn't
-     blocked by CORS).
+   - Dashboard → "Try demo" → the auto-provisioned sandbox Safe and its
+     (empty) strategies list load (confirms the frontend can reach the
+     Railway API and isn't blocked by CORS).
    - Create Strategy → Preview shows a real target/calldata/Roles
      permission block.
 

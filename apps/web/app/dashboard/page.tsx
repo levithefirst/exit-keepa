@@ -5,7 +5,8 @@ import Link from "next/link";
 import { buildRolesSafeAppUrl } from "@exit-keepa/shared";
 import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
-import { getStoredSafeId, setStoredSafeId } from "../../lib/storage";
+import { resolveSafeId } from "../../lib/resolveSafeId";
+import { setStoredSafeId } from "../../lib/storage";
 import { btnPrimary, btnGhost, btnSecondarySmall, inputBase, linkFocus, card } from "../../lib/ui";
 import { StatusPill } from "../../components/StatusPill";
 import { CopyButton } from "../../components/CopyButton";
@@ -35,31 +36,19 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Resolve which Safe (if any) this address already has, without ever
-  // asking a returning wallet - or the demo identity, which already owns
-  // the pre-registered live-proof Safe - to type an address in again.
-  // Checks local cache first, then falls back to the account's own list
-  // of registered Safes.
+  // Resolve which Safe (if any) this session already has, without ever
+  // asking a returning real wallet to type an address in again. For a real
+  // wallet, checks local cache first, then falls back to the account's own
+  // list of registered Safes. Demo mode always skips the cache: every "Try
+  // demo" click is a brand-new, isolated session with its own sandbox
+  // Safe, and the client always displays that session under the same
+  // fixed "demo-mode" label - so caching by that label would hand a new
+  // demo session an old one's now-inaccessible safeId. See resolveSafeId.
   useEffect(() => {
     if (!address) return;
     setSafeId(undefined);
-    const cached = getStoredSafeId(address);
-    if (cached) {
-      setSafeId(cached);
-      return;
-    }
-    api
-      .listMySafeAccounts()
-      .then((mine) => {
-        if (mine.length > 0) {
-          setStoredSafeId(address, mine[0].id);
-          setSafeId(mine[0].id);
-        } else {
-          setSafeId(null);
-        }
-      })
-      .catch(() => setSafeId(null));
-  }, [address]);
+    resolveSafeId(address, isDemo).then(setSafeId);
+  }, [address, isDemo]);
 
   useEffect(() => {
     if (!safeId) return;
@@ -181,7 +170,13 @@ export default function DashboardPage() {
     <div className="mx-auto max-w-2xl space-y-8">
       <div>
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Dashboard</h1>
-        {isDemo && <p className="text-sm text-cream-400">Demo mode - showing the verified live-proof Safe.</p>}
+        {isDemo && (
+          <p className="text-pretty text-sm text-cream-400">
+            Demo mode - this is your own private sandbox Safe, isolated from every other visitor and not deployed on
+            any real chain. Its Roles permission reads as ready so you can walk the full flow; simulating a strategy
+            here is mocked and clearly labeled as such, never a real KeeperHub or onchain call.
+          </p>
+        )}
       </div>
 
       {error && <p className="text-pretty text-sm text-danger">{error}</p>}

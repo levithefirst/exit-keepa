@@ -125,7 +125,7 @@ export function RolesSetupPanel({
       </div>
       <p className="text-pretty text-xs text-cream-500">
         Opens Safe&apos;s own app in a new tab, for this Safe&apos;s actual owners to sign. Nothing to do here if
-        you&apos;re just trying the demo - the demo Safe already has this configured.
+you&apos;re just trying the demo - your own private demo sandbox already has this configured.
       </p>
     </div>
   );

@@ -12,11 +12,12 @@ export const safeAccountsRouter = Router();
 
 /**
  * Lists every Safe the current session's address owns, so the frontend
- * can skip straight to a populated dashboard for a returning wallet (or
- * the fixed demo identity, which already owns a pre-registered Safe from
- * migration 0002) instead of always asking for a Safe address again.
- * Empty for a wallet that has never registered one - the dashboard falls
- * back to the manual "Connect your Safe" form in that case.
+ * can skip straight to a populated dashboard for a returning wallet
+ * instead of always asking for a Safe address again - including a demo
+ * session, whose own sandbox Safe was auto-provisioned for it at login
+ * (see POST /api/auth/demo-session). Empty for a wallet that has never
+ * registered one - the dashboard falls back to the manual "Connect your
+ * Safe" form in that case.
  */
 safeAccountsRouter.get("/safe-accounts", async (req, res) => {
   const address = await requireSession(req);

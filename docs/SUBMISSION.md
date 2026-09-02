@@ -331,13 +331,17 @@ values).
   touching a Safe, strategy, execution, or agent decision requires that
   token and checks it against a `safe_owners` table
   (`apps/api/src/auth/`), so a caller can only ever act on Safes they
-  registered themselves. 167 tests pass (158 in `apps/api`, 9 in
+  registered themselves. Demo mode (`/api/auth/demo-session`) needs no
+  wallet, but is never an exception to this: every click auto-provisions
+  a brand-new, private sandbox Safe unique to that session, never the
+  project's own real Safe or another visitor's session - see
+  `JUDGE_DEMO.md` §2-4. 171 tests pass (162 in `apps/api`, 9 in
   `packages/shared`), including a dedicated end-to-end cross-wallet
-  ownership proof. The live demo Safe stays reachable in demo mode with
-  no wallet needed via `/api/auth/demo-session`.
+  ownership proof and a demo-session isolation proof.
 - **Roles permission is genuinely scoped, not a rubber stamp — and this
   is independently confirmed from chain state, not asserted.** The live
-  grant on the demo Safe is `scopeTarget` (function-level, not
+  grant on the real, live-proof Safe (never a demo sandbox) is
+  `scopeTarget` (function-level, not
   whole-target) plus `scopeFunction` on `withdraw`, with parameter
   conditions locking `asset == USDC` and `to == this Safe` (`amount` is
   intentionally unrestricted). This was submitted by the Safe's own
@@ -371,14 +375,16 @@ values).
    Safe's own `ExecutionFromModuleSuccess` event. §6 has the full literal
    breakdown, field by field.
 4. Back on the site, click **"Try the demo, no wallet needed"** →
-   **Dashboard** (the live-proof Safe loads automatically) → open the
-   strategy that already completed the broadcast above → **"Run Exit
-   Guardian"** to watch the identical simulate step run again live,
-   against the same real Roles Modifier and Aave Pool, without
-   re-broadcasting. **Expect a refusal, not a clean result:** the Safe's
-   Aave position is currently empty (this exact tx already withdrew it),
-   so the live simulation correctly comes back `wouldRevert: true` — a
-   second real safety catch, not a bug. See `JUDGE_DEMO.md` §6 for why.
+   **Dashboard** → your own private, auto-provisioned sandbox Safe loads
+   automatically, Roles permission already reading "ready" — this is
+   never the real Safe above, and never shared with any other visitor
+   (every demo click gets a fresh one; see `JUDGE_DEMO.md` §2-3). Create a
+   strategy and run **"Run Exit Guardian"** to see a real live Aave-rate
+   read and a real policy check against it, with the final simulate step
+   clearly labeled as a sandbox mock (it can't be real - there's no
+   genuine Roles Modifier deployed for a sandbox Safe to check against).
+   See `JUDGE_DEMO.md` §4 for exactly what's real vs. mocked there, and
+   why.
 
 See [`JUDGE_DEMO.md`](JUDGE_DEMO.md) for the full click-by-click version
 (under 5 minutes), including a deliberate refusal case.

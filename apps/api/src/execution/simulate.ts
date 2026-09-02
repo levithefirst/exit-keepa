@@ -22,22 +22,48 @@ export interface SimulateOutcome {
   callFailed: boolean;
 }
 
+/**
+ * A demo session's sandbox Safe (see routes/auth.ts's POST
+ * /api/auth/demo-session) has a synthetic rolesModifierAddress/safeAddress
+ * that doesn't exist on any real chain - a real KeeperHub simulate call
+ * against it wouldn't test anything real, it would just fail with a
+ * confusing "no such contract" error. Returned instead of ever calling
+ * KeeperHub for one, and clearly labeled as such in responsePayload so
+ * this is never mistaken for a real, chain-verified simulation - see
+ * humanizeError.ts on the frontend, which surfaces this note as-is rather
+ * than treating it as an opaque failure.
+ */
+function mockSandboxSimulation(tx: BuiltTransaction): Awaited<ReturnType<typeof simulateExitTransaction>> {
+  const note =
+    "Simulated in Exit Keepa's demo sandbox - not a real KeeperHub or onchain call, because this sandbox Safe doesn't exist on any real chain.";
+  return {
+    request: { contractAddress: tx.rolesModifierAddress, functionName: "execTransactionWithRole", simulate: true },
+    raw: { sandbox: true, wouldRevert: false, note },
+    parsed: { success: true, status: "sandbox_simulated", wouldRevert: false },
+  };
+}
+
 export async function simulatePendingExecution(
   executionId: string,
   tx: BuiltTransaction,
   chainId: number,
+  isSandbox = false,
 ): Promise<SimulateOutcome> {
-  let result;
-  try {
-    result = await simulateExitTransaction(tx, chainId);
-  } catch (err) {
-    const [failed] = await db
-      .update(keeperhubExecutions)
-      .set({ status: "failed", errorMessage: (err as Error).message, updatedAt: new Date() })
-      .where(eq(keeperhubExecutions.id, executionId))
-      .returning();
-    logger.error({ err, executionId }, "KeeperHub simulation call failed");
-    return { row: failed, callFailed: true };
+  let result: Awaited<ReturnType<typeof simulateExitTransaction>>;
+  if (isSandbox) {
+    result = mockSandboxSimulation(tx);
+  } else {
+    try {
+      result = await simulateExitTransaction(tx, chainId);
+    } catch (err) {
+      const [failed] = await db
+        .update(keeperhubExecutions)
+        .set({ status: "failed", errorMessage: (err as Error).message, updatedAt: new Date() })
+        .where(eq(keeperhubExecutions.id, executionId))
+        .returning();
+      logger.error({ err, executionId }, "KeeperHub simulation call failed");
+      return { row: failed, callFailed: true };
+    }
   }
 
   const wouldSucceed = result.parsed?.wouldRevert === false;

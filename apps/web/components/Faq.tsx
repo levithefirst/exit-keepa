@@ -29,7 +29,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "How do I set up the Zodiac Roles permission for my own Safe?",
-    a: "You don't have to figure this out from scratch. Register your Safe on the Dashboard, and if it doesn't have Roles enabled yet, Exit Keepa shows a step-by-step panel there and on every strategy: a link that opens the official Zodiac Roles app for your exact Safe, and a Check again button once you've granted it. Your Safe's own owners sign it there, in Safe's own app, nowhere on Exit Keepa. If you just want to see the product first, Demo mode already has this fully set up, so you never have to touch it to try Exit Keepa.",
+    a: "You don't have to figure this out from scratch. Register your Safe on the Dashboard, and if it doesn't have Roles enabled yet, Exit Keepa shows a step-by-step panel there and on every strategy: a link that opens the official Zodiac Roles app for your exact Safe, and a Check again button once you've granted it. Your Safe's own owners sign it there, in Safe's own app, nowhere on Exit Keepa. If you just want to see the product first, Demo mode gives you your own sandbox Safe with this already set up, so you never have to touch it to try Exit Keepa.",
   },
   {
     q: "Does Exit Keepa control my funds?",
@@ -37,7 +37,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Can I try this without a real position?",
-    a: "Yes. Demo mode gives you a fixed identity with no wallet extension required, so you can create a strategy, review the exact transaction, and simulate it with nothing at risk.",
+    a: "Yes. Demo mode gives you your own private sandbox, no wallet extension required, so you can create a strategy, review the exact transaction, and simulate it with nothing at risk. It's isolated per visitor, not shared, and simulating in it is mocked rather than a real KeeperHub or onchain call - the real, verified proof is the transaction shown separately above.",
   },
   {
     q: "What happens if an execution fails?",

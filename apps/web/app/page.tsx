@@ -25,7 +25,7 @@ const HERO_BADGES = [
 const STATS = [
   { value: "1", label: "function the executor can ever call" },
   { value: "$0", label: "gas cost on the exit, sponsored" },
-  { value: "167", label: "tests passing, run on every push" },
+  { value: "171", label: "tests passing, run on every push" },
   { value: "0", label: "LLM calls anywhere in the decision path" },
 ];
 
@@ -259,10 +259,12 @@ export default function HomePage() {
       <section className="rounded-xl border border-warning/30 bg-warning/5 p-6">
         <h2 className="mb-2 font-semibold text-warning">Trying this without a wallet?</h2>
         <p className="text-pretty text-sm text-cream-300">
-          Click <strong className="text-cream-100">&quot;Try the demo&quot;</strong> above to register a Safe,
-          build a strategy, and simulate the exact transaction Exit Keepa would run. No wallet extension, no funds
-          at risk. The demo Safe already holds a real Aave position with its Roles permission granted onchain,
-          which is why the proof above is real, not simulated.
+          Click <strong className="text-cream-100">&quot;Try the demo&quot;</strong> above to get your own private
+          sandbox Safe, build a strategy, and walk the full flow end to end. No wallet extension, no funds at risk,
+          and no two visitors ever share the same demo Safe. Its Roles permission reads as ready and simulating a
+          strategy is mocked and clearly labeled as such - it isn&apos;t deployed on any real chain. The BaseScan
+          proof above is separate and genuinely real: it&apos;s the transaction from this project&apos;s own
+          verified Safe, not something your demo session touches.
         </p>
       </section>
 

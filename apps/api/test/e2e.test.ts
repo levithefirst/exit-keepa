@@ -516,3 +516,71 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
     expect(listRes.body.length).toBe(1);
   });
 });
+
+describe("demo sandbox Safe: simulate is mocked, broadcast is refused", () => {
+  it("simulates without ever calling KeeperHub, and refuses to broadcast", async () => {
+    const demoRes = await request(app).post("/api/auth/demo-session").send({});
+    expect(demoRes.status).toBe(200);
+    const demoToken: string = demoRes.body.token;
+
+    const mySafes = await request(app).get("/api/safe-accounts").set(authHeader(demoToken));
+    expect(mySafes.status).toBe(200);
+    expect(mySafes.body.length).toBe(1);
+    const sandboxSafe = mySafes.body[0];
+    expect(sandboxSafe.isSandbox).toBe(true);
+    expect(sandboxSafe.rolesModifierAddress).toBeTruthy();
+
+    const strategyRes = await request(app)
+      .post("/api/exit-strategies")
+      .set(authHeader(demoToken))
+      .send({
+        safeId: sandboxSafe.id,
+        name: "Sandbox strategy",
+        condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
+        action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "max" },
+      });
+    expect(strategyRes.status).toBe(201);
+
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`).set(authHeader(demoToken));
+    const execRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions`)
+      .set(authHeader(demoToken))
+      .send({ currentRateBps: 150 });
+    expect(execRes.status).toBe(201);
+
+    const simRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/simulate`)
+      .set(authHeader(demoToken));
+    expect(simRes.status).toBe(200);
+    expect(simRes.body.status).toBe("simulated");
+    // The whole point: a sandbox Safe's simulate never reaches KeeperHub,
+    // since there's no real Roles Modifier/Safe deployed for it to check.
+    expect(callContractFunction).not.toHaveBeenCalled();
+
+    const broadcastRes = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`)
+      .set(authHeader(demoToken));
+    expect(broadcastRes.status).toBe(409);
+    expect(broadcastRes.body.message).toMatch(/sandbox/i);
+    expect(callContractFunction).not.toHaveBeenCalled();
+  });
+
+  it("gives every demo session its own isolated identity and sandbox Safe", async () => {
+    const first = await request(app).post("/api/auth/demo-session").send({});
+    const second = await request(app).post("/api/auth/demo-session").send({});
+    expect(first.body.address).not.toBe(second.body.address);
+
+    const firstSafes = await request(app).get("/api/safe-accounts").set(authHeader(first.body.token));
+    const secondSafes = await request(app).get("/api/safe-accounts").set(authHeader(second.body.token));
+    expect(firstSafes.body.length).toBe(1);
+    expect(secondSafes.body.length).toBe(1);
+    expect(firstSafes.body[0].id).not.toBe(secondSafes.body[0].id);
+    expect(firstSafes.body[0].safeAddress).not.toBe(secondSafes.body[0].safeAddress);
+
+    // Neither session can see or act on the other's sandbox Safe.
+    const crossRead = await request(app)
+      .get(`/api/safe-accounts/${secondSafes.body[0].id}`)
+      .set(authHeader(first.body.token));
+    expect(crossRead.status).toBe(403);
+  });
+});

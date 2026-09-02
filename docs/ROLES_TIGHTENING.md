@@ -26,7 +26,7 @@ numbers themselves or applying the same tightening to a different Safe.
 
 ## What's true right now
 
-The live demo Safe's `exit_keepa` role now has:
+The live-proof Safe's `exit_keepa` role now has:
 
 - Aave v3 Pool clearance: `Function` (not whole-target — `scopeTarget`
   was applied first)
@@ -52,7 +52,7 @@ Both calls are `onlyOwner` (the Safe itself) on the Roles Modifier:
    itself is strictly more restrictive than today, never less. Confirmed
    from `PermissionBuilder.sol`'s actual source: `scopeTarget` writes
    `clearance: Clearance.Function` and does not touch any previously
-   scoped function. **Applied on the live demo Safe.**
+   scoped function. **Applied on the live-proof Safe.**
 2. **`scopeFunction(roleKey, aavePool, withdrawSelector, conditions, ExecutionOptions.None)`**
    - grants exactly one function back, with per-parameter conditions:
    - `asset` (position 0): must equal USDC (`0x833589fC...02913`)
@@ -62,7 +62,7 @@ Both calls are `onlyOwner` (the Safe itself) on the Roles Modifier:
      prevent misuse, not the amount)
    - `to` (position 2): must equal the Safe itself
      (`0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9`)
-   - **Applied on the live demo Safe**
+   - **Applied on the live-proof Safe**
      (tx [`0x41d61e34...e81f1`](https://basescan.org/tx/0x41d61e34a1e94ea693a3c6c2fc86e5fcc6c845a9b692fe86a9363e761e6e81f1)),
      replacing the earlier unconditioned `withdraw` allowance with the
      conditioned one shown here, and independently re-verified against

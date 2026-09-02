@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
-import { getStoredSafeId } from "../../lib/storage";
+import { resolveSafeId } from "../../lib/resolveSafeId";
 import { btnPrimary, btnSecondary, inputBase, card, linkFocus } from "../../lib/ui";
 import { RolesSetupPanel } from "../../components/RolesSetupPanel";
 import { ErrorDetail } from "../../components/ErrorDetail";
@@ -19,9 +19,9 @@ const COMPARATOR_WORDS: Record<string, string> = {
 };
 
 export default function CreateStrategyPage() {
-  const { address } = useWallet();
+  const { address, isDemo } = useWallet();
   const router = useRouter();
-  const [safeId, setSafeId] = useState<string | null>(null);
+  const [safeId, setSafeId] = useState<string | null | undefined>(undefined); // undefined = still resolving
 
   const [name, setName] = useState("");
   const [comparator, setComparator] = useState<"gt" | "gte" | "lt" | "lte">("lt");
@@ -35,10 +35,13 @@ export default function CreateStrategyPage() {
   const [step, setStep] = useState<"form" | "review" | "activated">("form");
 
   useEffect(() => {
-    if (address) setSafeId(getStoredSafeId(address));
-  }, [address]);
+    if (!address) return;
+    setSafeId(undefined);
+    resolveSafeId(address, isDemo).then(setSafeId);
+  }, [address, isDemo]);
 
   if (!address) return <p className="text-pretty text-cream-300">Connect your wallet first.</p>;
+  if (safeId === undefined) return <p className="text-pretty text-cream-300">Loading...</p>;
   if (!safeId)
     return (
       <p className="text-pretty text-cream-300">
