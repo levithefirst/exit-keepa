@@ -24,7 +24,7 @@ const HERO_BADGES = [
 
 const STATS = [
   { value: "1", label: "function the executor can ever call" },
-  { value: "$0", label: "gas cost on the exit — sponsored" },
+  { value: "$0", label: "gas cost on the exit, sponsored" },
   { value: "167", label: "tests passing, run on every push" },
   { value: "0", label: "LLM calls anywhere in the decision path" },
 ];
@@ -43,7 +43,7 @@ const PIPELINE = [
   {
     step: "3",
     who: "KeeperHub",
-    what: "The only thing that ever broadcasts. Simulates the exact call against live chain state first — broadcast only unlocks after that comes back clean.",
+    what: "The only thing that ever broadcasts. Simulates the exact call against live chain state first. Broadcast only unlocks after that comes back clean.",
   },
   {
     step: "4",
@@ -55,7 +55,7 @@ const PIPELINE = [
 const GUARANTEES = [
   {
     title: "Scoped, not trusted",
-    body: "KeeperHub's permission is enforced onchain by the Roles Modifier itself — one function, one contract, one recipient. Not a promise in a README.",
+    body: "KeeperHub's permission is enforced onchain by the Roles Modifier itself: one function, one contract, one recipient. Not a promise in a README.",
   },
   {
     title: "Simulate before it's real",
@@ -63,7 +63,7 @@ const GUARANTEES = [
   },
   {
     title: "Deterministic, always",
-    body: "The policy check is plain boolean and arithmetic comparisons — no model, no prompt, nothing that could interpret a condition differently twice.",
+    body: "The policy check is plain boolean and arithmetic comparisons: no model, no prompt, nothing that could interpret a condition differently twice.",
   },
   {
     title: "Wallet-authenticated",
@@ -71,7 +71,7 @@ const GUARANTEES = [
   },
   {
     title: "Receipts, not self-reports",
-    body: "Success is only ever recorded once a receipt independently re-fetched from the chain confirms it — never from a hash alone.",
+    body: "Success is only ever recorded once a receipt independently re-fetched from the chain confirms it, never from a hash alone.",
   },
   {
     title: "Revocable anytime",
@@ -235,7 +235,7 @@ export default function HomePage() {
             Why it&apos;s safe to let this run
           </h2>
           <p className="text-pretty mx-auto mt-2 max-w-xl text-cream-300">
-            Six guarantees, each one you can go check in the code or on the chain — not a marketing claim.
+            Six guarantees, each one you can go check in the code or on the chain, not a marketing claim.
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

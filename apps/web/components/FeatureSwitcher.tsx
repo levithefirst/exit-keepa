@@ -66,7 +66,7 @@ const FEATURES = [
     bullets: [
       "KeeperHub can only call one function, execTransactionWithRole. Nothing else.",
       "Your Safe's Roles Modifier allows exactly one function, withdraw() on the Aave Pool. Everything else is blocked by default.",
-      "The asset and recipient are locked at the Roles layer itself — USDC only, back to this Safe only. A different token or a different destination is rejected onchain before it ever reaches Aave.",
+      "The asset and recipient are locked at the Roles layer itself: USDC only, back to this Safe only. A different token or a different destination is rejected onchain before it ever reaches Aave.",
     ],
     media: (
       <div className="flex flex-col gap-1.5 font-mono text-xs text-cream-300">

@@ -217,9 +217,9 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
           <div className="mt-5 space-y-4 rounded-xl border border-cream-100/10 bg-forest-950/50 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-sm font-medium text-cream-100">
-                {receipt.decision === "triggered" && "Triggered — condition just crossed"}
-                {receipt.decision === "held" && "Holding — already acted on this crossing"}
-                {receipt.decision === "normal" && "Normal — condition not met"}
+                {receipt.decision === "triggered" && "Triggered: condition just crossed"}
+                {receipt.decision === "held" && "Holding: already acted on this crossing"}
+                {receipt.decision === "normal" && "Normal: condition not met"}
               </span>
               {receipt.decision === "triggered" && (
                 <span
@@ -262,7 +262,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
 
             {receipt.decision === "triggered" && receipt.policyCheck.policyPassed && receipt.simulationResult?.status === "simulated" && (
               <p className="text-pretty text-xs text-mint-300">
-                Approved and simulated clean. Confirm the broadcast below when you&apos;re ready — Exit Guardian never
+                Approved and simulated clean. Confirm the broadcast below when you&apos;re ready. Exit Guardian never
                 broadcasts on its own.
               </p>
             )}

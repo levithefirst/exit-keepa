@@ -25,7 +25,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "What protects my Safe?",
-    a: "A Zodiac Roles Modifier. By default it can do nothing. The live permission scopes the role to exactly one function, withdraw() on Aave's Pool on Base, with the asset locked to USDC and the recipient locked to this exact Safe — no other function, contract, token, or destination is reachable through it, enforced onchain by the Roles Modifier itself.",
+    a: "A Zodiac Roles Modifier. By default it can do nothing. The live permission scopes the role to exactly one function, withdraw() on Aave's Pool on Base, with the asset locked to USDC and the recipient locked to this exact Safe. No other function, contract, token, or destination is reachable through it, enforced onchain by the Roles Modifier itself.",
   },
   {
     q: "Does Exit Keepa control my funds?",
