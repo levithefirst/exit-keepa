@@ -1,0 +1,37 @@
+name: Live autonomous lifecycle check
+
+# Manual only - hits real production infrastructure (Vercel + Railway +
+# Neon) and creates real demo-session rows, so this must never run on every
+# push the way ci.yml does. Triggered by hand to verify that the deployed
+# system genuinely executes an exit on its own after activation, with no
+# user interaction - see scripts/live-autonomous-lifecycle-check.mjs.
+on:
+  workflow_dispatch:
+    inputs:
+      web_url:
+        description: "Web app URL to test"
+        default: "https://exit-keepa-web.vercel.app"
+        required: false
+      api_url:
+        description: "API URL to test"
+        default: "https://api-production-2e11.up.railway.app"
+        required: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.48.0
+          npx playwright install --with-deps chromium
+      - name: Run live autonomous lifecycle check
+        run: node scripts/live-autonomous-lifecycle-check.mjs
+        env:
+          WEB_URL: ${{ inputs.web_url }}
+          API_URL: ${{ inputs.api_url }}
