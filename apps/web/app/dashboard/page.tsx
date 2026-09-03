@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { buildRolesSafeAppUrl } from "@exit-keepa/shared";
+import { buildRolesSafeAppUrl, buildCreateSafeUrl } from "@exit-keepa/shared";
 import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
 import { resolveSafeId } from "../../lib/resolveSafeId";
@@ -139,6 +139,18 @@ export default function DashboardPage() {
         <p className="text-pretty text-sm text-cream-300">
           Enter the Safe you want Exit Keepa to protect. If it already has a Zodiac Roles Modifier set up, add its
           address and role key below so your strategies can go live right away.
+        </p>
+        <p className="text-pretty text-xs text-cream-400">
+          Don&apos;t have a Safe yet?{" "}
+          <a
+            href={buildCreateSafeUrl(8453)}
+            target="_blank"
+            rel="noreferrer"
+            className={`underline ${linkFocus}`}
+          >
+            Create one on Safe{"{Wallet}"} →
+          </a>{" "}
+          then come back here with its address.
         </p>
         {!isDemo && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cream-100/15 bg-forest-800/40 px-3 py-2">
