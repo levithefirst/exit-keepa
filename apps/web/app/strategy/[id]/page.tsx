@@ -77,6 +77,43 @@ function outcomeCopy(e: any): { headline: string; tone: "good" | "bad" | "pendin
   }
 }
 
+/**
+ * The exit, told as the sequence of things that actually happened - built
+ * strictly from the execution's real status, so a step is only ever marked
+ * done when the backend genuinely got that far. `refused` never gets past
+ * the permission check; `failed` at simulation never shows an execution
+ * step as done; nothing here can mark "verified" on an outcome the backend
+ * left unconfirmed.
+ */
+function lifecycleSteps(e: any): Array<{ label: string; done: boolean; failed?: boolean }> {
+  const s = e.status as string;
+  const refused = s === "refused";
+  const blocked = s === "blocked";
+  const pastPolicy = !refused;
+  const simulated = pastPolicy && !blocked && s !== "pending" && s !== "simulating";
+  const simulationFailed = s === "failed" && !e.keeperhubExecutionId && !e.txHash;
+  const executed = ["executing", "succeeded", "demo_completed"].includes(s) || Boolean(e.txHash);
+  const verified = s === "succeeded" || s === "demo_completed";
+
+  return [
+    { label: "Your exit condition was met", done: true },
+    { label: "Safe permission verified", done: pastPolicy, failed: refused },
+    {
+      label: simulationFailed ? "Dry run said this would fail - stopped here" : "Transaction checked in a dry run",
+      done: simulated && !simulationFailed,
+      failed: simulationFailed || blocked,
+    },
+    {
+      label: e.status === "demo_completed" ? "Executed (demo - nothing sent to a chain)" : "Exit executed",
+      done: executed,
+    },
+    {
+      label: verified ? "Outcome verified" : "Outcome verification",
+      done: verified,
+    },
+  ];
+}
+
 function DetailSkeleton() {
   return (
     <div className="mx-auto max-w-2xl animate-pulse space-y-8">
@@ -96,6 +133,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   const [preview, setPreview] = useState<any>(null);
   const [executions, setExecutions] = useState<any[]>([]);
   const [receipt, setReceipt] = useState<any>(null);
+  const [decisions, setDecisions] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -109,6 +147,16 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
       setPreview(await api.previewStrategy(id));
     } catch {
       setPreview(null);
+    }
+    // Every agent tick is recorded, including the ones that decide to do
+    // nothing - so the newest one is real evidence that Exit Keepa is
+    // actually watching, and carries the rate it actually observed. Read
+    // on load rather than only after a click, because "is it watching"
+    // shouldn't require the user to poke it.
+    try {
+      setDecisions(await api.listAgentDecisions(id));
+    } catch {
+      setDecisions([]);
     }
   }
 
@@ -176,7 +224,11 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   const watching = strategy.status === "active" && ready;
   const latest = executions.length > 0 ? [...executions].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))[0] : null;
   const triggered = Boolean(latest);
-  const observedRateBps = receipt?.observation?.rateBps ?? null;
+  // Newest decision first (the API already sorts that way), falling back to
+  // an on-demand check's own receipt if the list hasn't loaded.
+  const lastDecision = decisions[0] ?? null;
+  const observedRateBps = lastDecision?.observation?.rateBps ?? receipt?.observation?.rateBps ?? null;
+  const lastCheckedAt = lastDecision?.createdAt ?? receipt?.createdAt ?? null;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -236,6 +288,11 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
             {observedRateBps !== null && (
               <p className="mt-2 text-sm tabular-nums text-cream-200">
                 Current APR: <span className="font-mono">{(observedRateBps / 100).toFixed(2)}%</span>
+                {lastCheckedAt && (
+                  <span className="ml-2 text-xs text-cream-500">
+                    last checked {new Date(lastCheckedAt).toLocaleTimeString()}
+                  </span>
+                )}
               </p>
             )}
           </div>
@@ -350,6 +407,17 @@ function ExecutionCard({
         <span className="text-xs tabular-nums text-cream-400">{new Date(e.createdAt).toLocaleString()}</span>
       </div>
       {detail && <p className="text-pretty mt-1 text-sm text-cream-300">{detail}</p>}
+
+      <ul className="mt-3 space-y-1 text-sm">
+        {lifecycleSteps(e).map((step) => (
+          <li key={step.label} className="flex gap-2">
+            <span className={step.done ? "text-mint-300" : step.failed ? "text-danger" : "text-cream-500"}>
+              {step.done ? "✓" : step.failed ? "✕" : "·"}
+            </span>
+            <span className={step.done || step.failed ? "text-cream-200" : "text-cream-500"}>{step.label}</span>
+          </li>
+        ))}
+      </ul>
       {e.errorMessage && e.status !== "executing" && <ErrorDetail message={e.errorMessage} className="mt-2" />}
 
       {e.txHash && (

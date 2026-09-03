@@ -254,7 +254,11 @@ executionsRouter.post("/exit-strategies/:id/executions/:executionId/refresh-stat
     .limit(1);
   if (!execution) throw new HttpError(404, "Execution not found");
 
-  if (!execution.keeperhubExecutionId || execution.status === "succeeded" || execution.status === "failed") {
+  // `demo_completed` is terminal too, and has no KeeperHub execution to
+  // poll - listed explicitly rather than relying on the null-id check
+  // alone, so the terminal set stays readable in one place.
+  const terminal = ["succeeded", "failed", "demo_completed"];
+  if (!execution.keeperhubExecutionId || terminal.includes(execution.status)) {
     res.status(200).json(execution);
     return;
   }
