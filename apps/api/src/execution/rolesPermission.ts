@@ -34,6 +34,12 @@ export interface RolesPermissionSpec {
    * Modifier already exists and only this specific permission still needs adding. The frontend uses this
    * to pick copy/steps instead of pattern-matching `note`'s text. */
   needsModifier: boolean;
+  /** True for a demo session's own private, auto-provisioned sandbox Safe (see
+   * routes/auth.ts's POST /api/auth/demo-session and /auth/signup) - never a real
+   * deployed Safe. The frontend (RolesSetupPanel) uses this to hard-gate against
+   * ever showing the real-Safe setup wall or a live link to app.safe.global for a
+   * sandbox Safe, regardless of what rolesModifierAddress/needsModifier say. */
+  isSandbox: boolean;
 }
 
 export function buildRolesPermissionSpec(params: {
@@ -41,6 +47,7 @@ export function buildRolesPermissionSpec(params: {
   safeAddress: string;
   rolesModifierAddress: string | null;
   roleKey: string | null;
+  isSandbox: boolean;
 }): RolesPermissionSpec {
   const safeAppUrl = buildRolesSafeAppUrl(params.chainId, params.safeAddress);
 
@@ -61,5 +68,6 @@ export function buildRolesPermissionSpec(params: {
       ? "Open the official Zodiac Roles app (as a Safe App, so your Safe's own signers approve it) and add exactly this permission for the role key above. Exit Keepa does not submit this transaction on your behalf."
       : "This Safe has no Roles Modifier enabled yet. Enable Zodiac's Roles Modifier on this Safe first (also done through the Zodiac Roles app), then add the permission described here.",
     needsModifier: !params.rolesModifierAddress,
+    isSandbox: params.isSandbox,
   };
 }

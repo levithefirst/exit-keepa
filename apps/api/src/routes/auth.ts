@@ -104,6 +104,10 @@ authRouter.post("/auth/verify", async (req, res) => {
  * files' own comments.
  */
 authRouter.post("/auth/demo-session", async (_req, res) => {
+  // Every call must mint its own token - never let a shared/edge cache (or
+  // a browser bfcache replay) hand a later visitor an earlier one's demo
+  // session response.
+  res.set("Cache-Control", "no-store");
   const token = randomToken();
   const ownerAddress = randomAddress();
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);

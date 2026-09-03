@@ -44,23 +44,55 @@ export default function DashboardPage() {
   // Safe, and the client always displays that session under the same
   // fixed "demo-mode" label - so caching by that label would hand a new
   // demo session an old one's now-inaccessible safeId. See resolveSafeId.
+  //
+  // `cancelled` guards against a real, observed race: switching identity
+  // (e.g. a real wallet with no Safe yet clicking "Try demo instead", or
+  // two rapid clicks on either Try-demo button) re-runs this effect before
+  // the previous call resolved. Without this guard, an older, slower
+  // resolveSafeId (or the second effect's slower Promise.all below) can
+  // finish AFTER a newer, faster one and silently overwrite the screen
+  // with a different identity's Safe - concretely, the second effect's
+  // real-Safe balance fetch hits live RPC and is measurably slower than a
+  // sandbox Safe's fetch, so a real Safe loaded earlier in the same tab
+  // can clobber a demo Safe loaded moments later. Also resets the stale
+  // safe/balances/strategies immediately so nothing from a previous
+  // identity is still on screen while the new one resolves.
   useEffect(() => {
     if (!address) return;
+    let cancelled = false;
     setSafeId(undefined);
-    resolveSafeId(address, isDemo).then(setSafeId);
+    setSafe(null);
+    setBalances(null);
+    setStrategies([]);
+    setError(null);
+    resolveSafeId(address, isDemo).then((id) => {
+      if (!cancelled) setSafeId(id);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [address, isDemo]);
 
   useEffect(() => {
     if (!safeId) return;
+    let cancelled = false;
     setLoading(true);
     Promise.all([api.getSafeAccount(safeId), api.getSafeBalances(safeId).catch(() => null), api.listStrategies(safeId)])
       .then(([s, b, strats]) => {
+        if (cancelled) return;
         setSafe(s);
         setBalances(b);
         setStrategies(strats);
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [safeId]);
 
   if (!address) {
@@ -189,7 +221,11 @@ export default function DashboardPage() {
             <CopyButton value={safe.safeAddress} label="Copy address" />
           </div>
           <p className="text-xs tabular-nums text-cream-400">Chain: Base ({safe.chainId})</p>
-          {safe.rolesModifierAddress ? (
+          {safe.isSandbox ? (
+            <p className="mt-1 text-xs text-mint-300">
+              ✓ Roles permission ready to execute through (pre-configured for this private demo sandbox)
+            </p>
+          ) : safe.rolesModifierAddress ? (
             <p className="mt-1 text-xs text-mint-300">✓ Roles permission ready to execute through</p>
           ) : (
             <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2">

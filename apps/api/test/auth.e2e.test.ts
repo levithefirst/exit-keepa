@@ -159,6 +159,43 @@ describe("POST /api/auth/demo-session", () => {
     expect(a.body.address).not.toBe(b.body.address);
     expect(a.body.token).not.toBe(b.body.token);
   });
+
+  it("consecutive demo-session calls always resolve to different sandbox Safe addresses, both isSandbox: true", async () => {
+    const a = await request(app).post("/api/auth/demo-session").send({});
+    const b = await request(app).post("/api/auth/demo-session").send({});
+
+    const safeA = (
+      await request(app).get("/api/safe-accounts").set("Authorization", `Bearer ${a.body.token}`)
+    ).body[0];
+    const safeB = (
+      await request(app).get("/api/safe-accounts").set("Authorization", `Bearer ${b.body.token}`)
+    ).body[0];
+
+    expect(safeA.isSandbox).toBe(true);
+    expect(safeB.isSandbox).toBe(true);
+    expect(safeA.id).not.toBe(safeB.id);
+    expect(safeA.safeAddress).not.toBe(safeB.safeAddress);
+    // Real production Safe never surfaces as a demo session's own sandbox.
+    expect(safeA.safeAddress.toLowerCase()).not.toBe("0xffd5c5e17e09e012c99550bfb2ef88d370cd66a9");
+    expect(safeB.safeAddress.toLowerCase()).not.toBe("0xffd5c5e17e09e012c99550bfb2ef88d370cd66a9");
+  });
+
+  it("session token A cannot read the sandbox Safe created under token B's demo session", async () => {
+    const a = await request(app).post("/api/auth/demo-session").send({});
+    const b = await request(app).post("/api/auth/demo-session").send({});
+    const safeB = (
+      await request(app).get("/api/safe-accounts").set("Authorization", `Bearer ${b.body.token}`)
+    ).body[0];
+
+    const crossRead = await request(app)
+      .get(`/api/safe-accounts/${safeB.id}`)
+      .set("Authorization", `Bearer ${a.body.token}`);
+    expect(crossRead.status).toBe(403);
+
+    // A's own list never includes B's safe either.
+    const listA = await request(app).get("/api/safe-accounts").set("Authorization", `Bearer ${a.body.token}`);
+    expect(listA.body.map((s: { id: string }) => s.id)).not.toContain(safeB.id);
+  });
 });
 
 describe("Ownership enforcement across resource types", () => {

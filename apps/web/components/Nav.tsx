@@ -36,6 +36,7 @@ export function Nav() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [startingDemo, setStartingDemo] = useState(false);
   const menuId = useId();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -63,6 +64,17 @@ export function Nav() {
     setMenuOpen(false);
   }
 
+  async function startDemo() {
+    setStartingDemo(true);
+    try {
+      await enterDemoMode();
+    } catch {
+      // enterDemoMode already recorded this in useWallet()'s error state.
+    } finally {
+      setStartingDemo(false);
+    }
+  }
+
   const walletControls = address ? (
     <div className="flex flex-wrap items-center gap-2">
       {!isDemo && !isLocal && chainId !== 8453 && (
@@ -88,8 +100,8 @@ export function Nav() {
     </div>
   ) : (
     <div className="flex flex-wrap items-center gap-2">
-      <button onClick={() => enterDemoMode().catch(() => {})} className={btnGhost}>
-        Try demo
+      <button onClick={startDemo} disabled={startingDemo} className={btnGhost}>
+        {startingDemo ? "Starting demo…" : "Try demo"}
       </button>
       <button onClick={() => setProfileModalOpen(true)} className={btnGhost}>
         Profile

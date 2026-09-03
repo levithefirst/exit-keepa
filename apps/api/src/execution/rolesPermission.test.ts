@@ -8,6 +8,7 @@ describe("buildRolesPermissionSpec", () => {
       safeAddress: "0x1111111111111111111111111111111111111111",
       rolesModifierAddress: "0x2222222222222222222222222222222222222222",
       roleKey: "0xabc",
+      isSandbox: false,
     });
 
     expect(spec.target).toBe("0xA238Dd80C259a72e81d7e4664a9801593F98d1c5");
@@ -29,6 +30,7 @@ describe("buildRolesPermissionSpec", () => {
       safeAddress: "0x1111111111111111111111111111111111111111",
       rolesModifierAddress: "0x2222222222222222222222222222222222222222",
       roleKey: "0xabc",
+      isSandbox: false,
     });
     expect(spec.selector).toBeTruthy();
     expect(spec.conditions.length).toBe(3);
@@ -40,6 +42,7 @@ describe("buildRolesPermissionSpec", () => {
       safeAddress: "0x1111111111111111111111111111111111111111",
       rolesModifierAddress: null,
       roleKey: null,
+      isSandbox: false,
     });
     expect(spec.safeAppUrl).toContain("app.safe.global/apps/open");
     expect(spec.safeAppUrl).toContain("base:0x1111111111111111111111111111111111111111");
@@ -52,6 +55,7 @@ describe("buildRolesPermissionSpec", () => {
       safeAddress: "0x1111111111111111111111111111111111111111",
       rolesModifierAddress: null,
       roleKey: null,
+      isSandbox: false,
     });
     expect(spec.note).toContain("no Roles Modifier enabled");
     expect(spec.needsModifier).toBe(true);
@@ -63,7 +67,28 @@ describe("buildRolesPermissionSpec", () => {
       safeAddress: "0x1111111111111111111111111111111111111111",
       rolesModifierAddress: "0x2222222222222222222222222222222222222222",
       roleKey: "0xabc",
+      isSandbox: false,
     });
     expect(spec.needsModifier).toBe(false);
+  });
+
+  it("carries isSandbox through unchanged - the frontend's only signal to hard-gate against a real-Safe setup link", () => {
+    const real = buildRolesPermissionSpec({
+      chainId: 8453,
+      safeAddress: "0x1111111111111111111111111111111111111111",
+      rolesModifierAddress: null,
+      roleKey: null,
+      isSandbox: false,
+    });
+    expect(real.isSandbox).toBe(false);
+
+    const sandbox = buildRolesPermissionSpec({
+      chainId: 8453,
+      safeAddress: "0x1111111111111111111111111111111111111111",
+      rolesModifierAddress: "0x2222222222222222222222222222222222222222",
+      roleKey: "0xabc",
+      isSandbox: true,
+    });
+    expect(sandbox.isSandbox).toBe(true);
   });
 });

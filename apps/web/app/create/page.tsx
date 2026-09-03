@@ -34,10 +34,20 @@ export default function CreateStrategyPage() {
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<"form" | "review" | "activated">("form");
 
+  // See dashboard/page.tsx's identical effect for why `cancelled` matters:
+  // without it, an identity switch (e.g. into demo mode) that re-runs this
+  // effect can still have its result overwritten by an older, slower call
+  // resolving after the newer one already has.
   useEffect(() => {
     if (!address) return;
+    let cancelled = false;
     setSafeId(undefined);
-    resolveSafeId(address, isDemo).then(setSafeId);
+    resolveSafeId(address, isDemo).then((id) => {
+      if (!cancelled) setSafeId(id);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [address, isDemo]);
 
   if (!address) return <p className="text-pretty text-cream-300">Connect your wallet first.</p>;

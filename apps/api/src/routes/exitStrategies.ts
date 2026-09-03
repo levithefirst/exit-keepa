@@ -97,6 +97,7 @@ exitStrategiesRouter.get("/exit-strategies/:id/preview", async (req, res) => {
     safeAddress: safe.safeAddress,
     rolesModifierAddress: safe.rolesModifierAddress,
     roleKey: safe.rolesKey,
+    isSandbox: safe.isSandbox,
   });
 
   let tx = null;

@@ -1,7 +1,8 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, setAuthToken } from "./api";
+import { clearStoredSafeId } from "./storage";
 
 interface Eip1193Provider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -126,6 +127,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // may be a *different* extension when more than one is installed).
   const [activeProvider, setActiveProvider] = useState<Eip1193Provider | null>(null);
 
+  // Not React state on purpose: enterDemoMode reads/writes this
+  // synchronously at call time, and a ref (unlike state) never triggers a
+  // re-render or introduces its own stale-closure timing to guard against.
+  const demoInFlight = useRef(false);
+
   useEffect(() => {
     const eth = activeProvider ?? (typeof window !== "undefined" ? window.ethereum : undefined);
     if (!eth) return;
@@ -208,8 +214,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const enterDemoMode = useCallback(async () => {
+    // Guards against two overlapping demo-session starts (e.g. an
+    // impatient double-click on a button with no disabled-while-pending
+    // state) racing each other: whichever POST /auth/demo-session response
+    // lands last would otherwise silently win and swap the active token
+    // out from under the first, `demoInFlight.current` makes the second
+    // call a no-op instead.
+    if (demoInFlight.current) return;
+    demoInFlight.current = true;
     setError(null);
     try {
+      // Defense-in-depth: demo mode's own safeId cache lookup already
+      // skips this key entirely (see resolveSafeId.ts) since every demo
+      // identity shares the same display label - clearing it too means a
+      // hostile or stale value planted under it can never surface even if
+      // that skip logic is ever refactored away.
+      clearStoredSafeId(DEMO_IDENTITY);
       const { token } = await api.authDemoSession();
       setAuthToken(token);
       setAddress(DEMO_IDENTITY);
@@ -220,6 +240,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // Re-thrown so a caller (e.g. the homepage's "Try the demo" button)
       // knows this failed and doesn't navigate anywhere on a broken session.
       throw new Error(message);
+    } finally {
+      demoInFlight.current = false;
     }
   }, []);
 

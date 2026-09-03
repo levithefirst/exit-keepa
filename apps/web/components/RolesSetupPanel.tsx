@@ -14,6 +14,9 @@ export interface RolesPermissionSpec {
   safeAppUrl: string;
   note: string;
   needsModifier: boolean;
+  /** True for a demo session's own private sandbox Safe. This panel never shows
+   * setup steps or a live safe.global link when true, regardless of `ready`. */
+  isSandbox: boolean;
 }
 
 /**
@@ -35,6 +38,13 @@ export function RolesSetupPanel({
   onRecheck?: () => Promise<void> | void;
 }) {
   const [rechecking, setRechecking] = useState(false);
+
+  // A sandbox Safe (demo mode) is never a real Safe an owner can sign
+  // through, and its Roles permission is pre-configured at creation - so
+  // this panel treats it as always ready and never sends anyone to a real
+  // Safe/Roles setup URL for it, regardless of what the caller passed as
+  // `ready` or what needsModifier says.
+  const effectiveReady = ready || spec.isSandbox;
 
   async function handleRecheck() {
     if (!onRecheck) return;
@@ -60,25 +70,29 @@ export function RolesSetupPanel({
   return (
     <div
       className={`space-y-3 rounded-xl border p-5 ${
-        ready ? "border-cream-100/10 bg-forest-800/60" : "border-warning/30 bg-warning/5"
+        effectiveReady ? "border-cream-100/10 bg-forest-800/60" : "border-warning/30 bg-warning/5"
       }`}
     >
       <div>
-        <h2 className={`font-semibold ${ready ? "text-cream-50" : "text-warning"}`}>
-          {ready
+        <h2 className={`font-semibold ${effectiveReady ? "text-cream-50" : "text-warning"}`}>
+          {spec.isSandbox
             ? "Roles permission"
-            : spec.needsModifier
-              ? "One-time setup: allow this withdrawal"
-              : "Almost there: one permission to add"}
+            : ready
+              ? "Roles permission"
+              : spec.needsModifier
+                ? "One-time setup: allow this withdrawal"
+                : "Almost there: one permission to add"}
         </h2>
         <p className="text-pretty mt-1 text-sm text-cream-300">
-          {ready
-            ? "This Safe is set up to execute this strategy. The permission below is what makes that possible - worth double-checking it's still exactly right."
-            : "Exit Keepa never moves funds on its own signature. Your Safe's own owners grant it a narrow, one-function permission through Zodiac's official Roles app, then Exit Keepa can act only inside that permission."}
+          {spec.isSandbox
+            ? "This is your own private demo sandbox - its Roles permission is pre-configured, not deployed on any real chain, and there's nothing for you to set up."
+            : ready
+              ? "This Safe is set up to execute this strategy. The permission below is what makes that possible - worth double-checking it's still exactly right."
+              : "Exit Keepa never moves funds on its own signature. Your Safe's own owners grant it a narrow, one-function permission through Zodiac's official Roles app, then Exit Keepa can act only inside that permission."}
         </p>
       </div>
 
-      {!ready && (
+      {!effectiveReady && (
         <ol className="space-y-1.5 text-pretty text-sm text-cream-200">
           {steps.map((s, i) => (
             <li key={i} className="flex gap-2">
@@ -113,20 +127,23 @@ export function RolesSetupPanel({
         </div>
       </details>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <a href={spec.safeAppUrl} target="_blank" rel="noreferrer" className={`inline-flex ${btnSecondarySmall}`}>
-          Open Zodiac Roles app for this Safe →
-        </a>
-        {onRecheck && !ready && (
-          <button onClick={handleRecheck} disabled={rechecking} className={btnSecondarySmall}>
-            {rechecking ? "Checking..." : "Check again"}
-          </button>
-        )}
-      </div>
-      <p className="text-pretty text-xs text-cream-500">
-        Opens Safe&apos;s own app in a new tab, for this Safe&apos;s actual owners to sign. Nothing to do here if
-you&apos;re just trying the demo - your own private demo sandbox already has this configured.
-      </p>
+      {!spec.isSandbox && (
+        <>
+          <div className="flex flex-wrap items-center gap-3">
+            <a href={spec.safeAppUrl} target="_blank" rel="noreferrer" className={`inline-flex ${btnSecondarySmall}`}>
+              Open Zodiac Roles app for this Safe →
+            </a>
+            {onRecheck && !ready && (
+              <button onClick={handleRecheck} disabled={rechecking} className={btnSecondarySmall}>
+                {rechecking ? "Checking..." : "Check again"}
+              </button>
+            )}
+          </div>
+          <p className="text-pretty text-xs text-cream-500">
+            Opens Safe&apos;s own app in a new tab, for this Safe&apos;s actual owners to sign.
+          </p>
+        </>
+      )}
     </div>
   );
 }
