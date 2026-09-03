@@ -136,10 +136,7 @@ export default function DashboardPage() {
     return (
       <div className="mx-auto max-w-md space-y-4">
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Connect your Safe</h1>
-        <p className="text-pretty text-sm text-cream-300">
-          Enter the Safe you want Exit Keepa to protect. If it already has a Zodiac Roles Modifier set up, add its
-          address and role key below so your strategies can go live right away.
-        </p>
+        <p className="text-pretty text-sm text-cream-300">Enter the Safe address you want Exit Keepa to protect.</p>
         <p className="text-pretty text-xs text-cream-400">
           Don&apos;t have a Safe yet?{" "}
           <a
@@ -174,33 +171,43 @@ export default function DashboardPage() {
             onChange={(e) => setFormSafeAddress(e.target.value)}
           />
         </div>
-        <div>
-          <label htmlFor="roles-modifier" className="mb-1 block text-sm text-cream-300">
-            Roles Modifier address <span className="text-cream-500">(optional)</span>
-          </label>
-          <input
-            id="roles-modifier"
-            className={inputBase}
-            placeholder="0x..."
-            value={formRoles}
-            onChange={(e) => setFormRoles(e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="role-key" className="mb-1 block text-sm text-cream-300">
-            Role key, bytes32 <span className="text-cream-500">(optional)</span>
-          </label>
-          <input
-            id="role-key"
-            className={inputBase}
-            placeholder="0x..."
-            value={formRoleKey}
-            onChange={(e) => setFormRoleKey(e.target.value)}
-          />
-        </div>
+        <details className="group rounded-lg border border-cream-100/10 px-3 py-2.5">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm text-cream-300 hover:text-cream-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
+            Already set up Zodiac Roles for this Safe?
+            <svg className="faq-chevron h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+            </svg>
+          </summary>
+          <div className="mt-3 space-y-3">
+            <div>
+              <label htmlFor="roles-modifier" className="mb-1 block text-sm text-cream-300">
+                Roles Modifier address
+              </label>
+              <input
+                id="roles-modifier"
+                className={inputBase}
+                placeholder="0x..."
+                value={formRoles}
+                onChange={(e) => setFormRoles(e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="role-key" className="mb-1 block text-sm text-cream-300">
+                Role key, bytes32
+              </label>
+              <input
+                id="role-key"
+                className={inputBase}
+                placeholder="0x..."
+                value={formRoleKey}
+                onChange={(e) => setFormRoleKey(e.target.value)}
+              />
+            </div>
+          </div>
+        </details>
         <p className="text-pretty text-xs text-cream-500">
-          Don&apos;t have these yet? Leave them blank - you&apos;ll get a guided, step-by-step link to set up Roles
-          for this exact Safe right here on the dashboard once it&apos;s saved.
+          Not set up yet? No problem - save your Safe now and you&apos;ll get one button here to grant Exit Keepa its
+          permission, whenever you&apos;re ready.
         </p>
         {error && <p className="text-pretty text-sm text-danger">{error}</p>}
         <button onClick={registerSafe} className={btnPrimary}>
@@ -240,19 +247,24 @@ export default function DashboardPage() {
           ) : safe.rolesModifierAddress ? (
             <p className="mt-1 text-xs text-mint-300">✓ Roles permission ready to execute through</p>
           ) : (
-            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2">
-              <p className="text-pretty text-xs text-warning">
-                One-time setup needed before this Safe can execute a strategy: enable Zodiac&apos;s Roles Modifier and
-                grant the withdraw permission.
+            <div className="mt-2 space-y-1.5 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-pretty text-xs text-warning">
+                  One thing to unlock this: grant Exit Keepa a permission, in Safe&apos;s own app.
+                </p>
+                <a
+                  href={buildRolesSafeAppUrl(safe.chainId, safe.safeAddress)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`inline-flex shrink-0 ${btnSecondarySmall}`}
+                >
+                  Grant permission →
+                </a>
+              </div>
+              <p className="text-pretty text-xs text-cream-500">
+                Connect the wallet that&apos;s actually an owner of this Safe when Safe&apos;s app asks - it rejects
+                any other wallet.
               </p>
-              <a
-                href={buildRolesSafeAppUrl(safe.chainId, safe.safeAddress)}
-                target="_blank"
-                rel="noreferrer"
-                className={`inline-flex shrink-0 ${btnSecondarySmall}`}
-              >
-                Set up in Zodiac Roles app →
-              </a>
             </div>
           )}
           {balances && (

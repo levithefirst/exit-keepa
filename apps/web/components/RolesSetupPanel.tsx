@@ -58,12 +58,12 @@ export function RolesSetupPanel({
 
   const steps = spec.needsModifier
     ? [
-        "Open the Zodiac Roles app for this Safe (link below) and enable its Roles Modifier - a one-time setup for this Safe.",
-        "In the same app, add the exact permission shown under Technical details, for the role key you choose.",
+        "Open the Zodiac Roles app below, signed in as this Safe's own owner, and enable its Roles Modifier - a one-time setup for this Safe.",
+        "In the same app, add the permission shown under Technical details.",
         "Come back here and hit Check again.",
       ]
     : [
-        "Open the Zodiac Roles app for this Safe (link below) and add the exact permission shown under Technical details.",
+        "Open the Zodiac Roles app below, signed in as this Safe's own owner, and add the permission shown under Technical details.",
         "Come back here and hit Check again.",
       ];
 
@@ -88,8 +88,20 @@ export function RolesSetupPanel({
             ? "This is your own private demo sandbox - its Roles permission is pre-configured, not deployed on any real chain, and there's nothing for you to set up."
             : ready
               ? "This Safe is set up to execute this strategy. The permission below is what makes that possible - worth double-checking it's still exactly right."
-              : "Exit Keepa never moves funds on its own signature. Your Safe's own owners grant it a narrow, one-function permission through Zodiac's official Roles app, then Exit Keepa can act only inside that permission."}
+              : "One signature from this Safe's own owner grants it, in Safe's own app - Exit Keepa never touches your keys."}
         </p>
+        {!effectiveReady && (
+          <details className="mt-1.5">
+            <summary className="cursor-pointer text-xs text-cream-500 hover:text-cream-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
+              Why can&apos;t Exit Keepa just do this for me?
+            </summary>
+            <p className="text-pretty mt-1.5 text-xs text-cream-400">
+              Exit Keepa never holds your funds or your keys. The only way it can ever touch this Safe is through a
+              narrow, one-function permission - and the only party who can grant that is this Safe&apos;s own
+              owner(s), signing through Safe&apos;s own app. Nothing here submits that transaction for you.
+            </p>
+          </details>
+        )}
       </div>
 
       {!effectiveReady && (
@@ -140,7 +152,8 @@ export function RolesSetupPanel({
             )}
           </div>
           <p className="text-pretty text-xs text-cream-500">
-            Opens Safe&apos;s own app in a new tab, for this Safe&apos;s actual owners to sign.
+            Opens Safe&apos;s own app in a new tab. Connect the wallet that&apos;s actually an owner of this Safe -
+            Safe rejects a signature from any other wallet, including yours if you&apos;re not one of its owners.
           </p>
         </>
       )}
