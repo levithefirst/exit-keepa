@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRolesSafeAppUrl, buildCreateSafeUrl } from "./rolesSetup";
+import { buildRolesSafeAppUrl, buildZodiacModulesSafeAppUrl, buildCreateSafeUrl } from "./rolesSetup";
 
 describe("buildRolesSafeAppUrl", () => {
   it("builds a Safe App deep link scoped to this exact Safe on Base", () => {
@@ -24,5 +24,15 @@ describe("buildCreateSafeUrl", () => {
   it("falls back to the raw chain id for an unnamed chain", () => {
     const url = buildCreateSafeUrl(1);
     expect(url).toBe("https://app.safe.global/new-safe/create?chain=1");
+  });
+});
+
+describe("buildZodiacModulesSafeAppUrl", () => {
+  it("opens the Zodiac app (which installs modules), not the Roles app (which only edits an existing one)", () => {
+    const url = buildZodiacModulesSafeAppUrl(8453, "0x1111111111111111111111111111111111111111");
+    expect(url).toContain("app.safe.global/apps/open");
+    expect(url).toContain("safe=base:0x1111111111111111111111111111111111111111");
+    expect(url).toContain(encodeURIComponent("https://zodiac.gnosisguild.org"));
+    expect(url).not.toContain(encodeURIComponent("https://roles.gnosisguild.org"));
   });
 });

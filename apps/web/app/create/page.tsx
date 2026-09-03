@@ -190,7 +190,7 @@ export default function CreateStrategyPage() {
         )}
 
         {preview.rolesPermission && (canActivate || rolesBlocking) && (
-          <RolesSetupPanel spec={preview.rolesPermission} ready={canActivate} onRecheck={recheckPreview} />
+          <RolesSetupPanel spec={preview.rolesPermission} onRecheck={recheckPreview} />
         )}
 
         {error && <p className="text-pretty text-sm text-danger">{error}</p>}
@@ -203,8 +203,8 @@ export default function CreateStrategyPage() {
           </button>
         </div>
         <p className="text-pretty text-xs text-cream-500">
-          Activating only turns monitoring on. It doesn&apos;t simulate or send anything, you&apos;ll do that from
-          the strategy page.
+          Activating hands this over to Exit Keepa: it starts watching your condition, and executes this exact
+          transaction by itself the moment the condition is met. You don&apos;t have to be here for it.
         </p>
       </div>
     );

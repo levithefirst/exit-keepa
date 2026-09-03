@@ -92,14 +92,6 @@ exitStrategiesRouter.get("/exit-strategies/:id/preview", async (req, res) => {
   const address = await requireSession(req);
   const { strategy, safe } = await loadOwnedStrategyAndSafe(req.params.id, address);
 
-  const rolesPermission = buildRolesPermissionSpec({
-    chainId: safe.chainId,
-    safeAddress: safe.safeAddress,
-    rolesModifierAddress: safe.rolesModifierAddress,
-    roleKey: safe.rolesKey,
-    isSandbox: safe.isSandbox,
-  });
-
   let tx = null;
   let txError: string | null = null;
   try {
@@ -109,6 +101,18 @@ exitStrategiesRouter.get("/exit-strategies/:id/preview", async (req, res) => {
     // has something useful to show (the permission that's needed).
     txError = (err as Error).message;
   }
+
+  // Whether a real transaction could actually be built is the honest test
+  // of "ready", so the spec's setupState is derived from it rather than
+  // from the presence of a Modifier address alone.
+  const rolesPermission = buildRolesPermissionSpec({
+    chainId: safe.chainId,
+    safeAddress: safe.safeAddress,
+    rolesModifierAddress: safe.rolesModifierAddress,
+    roleKey: safe.rolesKey,
+    isSandbox: safe.isSandbox,
+    executable: tx !== null,
+  });
 
   res.status(200).json({ strategy, tx, txError, rolesPermission });
 });

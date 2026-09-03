@@ -5,7 +5,8 @@ import { z } from "zod";
  * a default that would be safe to run in production with - missing
  * required values fail fast at boot instead of silently degrading.
  */
-const envSchema = z.object({
+const envSchema = z
+  .object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(4000),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
@@ -24,19 +25,29 @@ const envSchema = z.object({
   BASE_CHAIN_ID: z.coerce.number().int().positive().default(8453),
   BASE_RPC_URL: z.string().url().default("https://mainnet.base.org"),
 
-  // The autonomous Exit Guardian loop. Off by default in any environment
-  // that doesn't explicitly turn it on, so a `dev` run or a preview deploy
-  // never starts silently polling live chain state and creating real
-  // execution rows without someone deciding that's what they want.
+  // The autonomous Exit Guardian loop - the thing that makes Exit Keepa
+  // watch a condition and execute an exit without anyone present. On by
+  // default in production, because a deployed Exit Keepa that isn't
+  // watching isn't the product; off by default everywhere else, so a `dev`
+  // run, a test, or a preview deploy never starts silently polling live
+  // chain state and creating real execution rows without someone deciding
+  // that's what they want. An explicit AGENT_POLL_ENABLED wins in either
+  // direction (see the object-level transform below).
   AGENT_POLL_ENABLED: z
     .string()
-    .default("false")
-    .transform((value) => value === "true"),
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === "true")),
   AGENT_POLL_INTERVAL_MS: z.coerce.number().int().min(5_000).default(30_000),
   // How long an approved-but-not-yet-broadcast decision stays fresh before
   // routes/executions.ts's broadcast route refuses it as stale.
   AGENT_DECISION_MAX_AGE_MS: z.coerce.number().int().positive().default(5 * 60_000),
-});
+  })
+  .transform((raw) => ({
+    ...raw,
+    // Resolved here rather than as a field default so "unset" and
+    // "explicitly false" stay distinguishable above.
+    AGENT_POLL_ENABLED: raw.AGENT_POLL_ENABLED ?? raw.NODE_ENV === "production",
+  }));
 
 export type Env = z.infer<typeof envSchema>;
 

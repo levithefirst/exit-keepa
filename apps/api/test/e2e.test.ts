@@ -517,8 +517,8 @@ describe("end-to-end: create strategy -> condition true -> simulate -> execute -
   });
 });
 
-describe("demo sandbox Safe: simulate is mocked, broadcast is refused", () => {
-  it("simulates without ever calling KeeperHub, and refuses to broadcast", async () => {
+describe("demo sandbox Safe: the whole lifecycle runs, nothing reaches a chain", () => {
+  it("simulates without ever calling KeeperHub, then completes the lifecycle as a labelled demo - never as a real success", async () => {
     const demoRes = await request(app).post("/api/auth/demo-session").send({});
     expect(demoRes.status).toBe(200);
     const demoToken: string = demoRes.body.token;
@@ -560,8 +560,27 @@ describe("demo sandbox Safe: simulate is mocked, broadcast is refused", () => {
     const broadcastRes = await request(app)
       .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`)
       .set(authHeader(demoToken));
-    expect(broadcastRes.status).toBe(409);
-    expect(broadcastRes.body.message).toMatch(/sandbox/i);
+    expect(broadcastRes.status).toBe(200);
+
+    // The lifecycle completed - but as `demo_completed`, never `succeeded`,
+    // and with no transaction hash, because no transaction exists. A demo
+    // that showed a hash here, or reported success, would be claiming an
+    // onchain event that never happened.
+    expect(broadcastRes.body.status).toBe("demo_completed");
+    expect(broadcastRes.body.status).not.toBe("succeeded");
+    expect(broadcastRes.body.txHash).toBeNull();
+    expect(broadcastRes.body.broadcastAt).toBeNull();
+    expect(broadcastRes.body.responsePayload.sandbox).toBe(true);
+    expect(broadcastRes.body.responsePayload.note).toMatch(/nothing was sent to any blockchain/i);
+
+    // Still never touched KeeperHub, at any step.
+    expect(callContractFunction).not.toHaveBeenCalled();
+
+    // Terminal: a repeated request cannot re-run it.
+    const replay = await request(app)
+      .post(`/api/exit-strategies/${strategyRes.body.id}/executions/${execRes.body.id}/broadcast`)
+      .set(authHeader(demoToken));
+    expect(replay.status).toBe(409);
     expect(callContractFunction).not.toHaveBeenCalled();
   });
 

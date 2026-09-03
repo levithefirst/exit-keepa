@@ -13,15 +13,12 @@ you do here is broadcast or shared with anyone else.
 None. No wallet extension, no funds, no Safe of your own. Any modern
 browser.
 
-**Before recording:** if you want the demo to show the fully unattended
-autonomous loop (not just the on-demand "Run Exit Guardian" button), set
-`AGENT_POLL_ENABLED=true` on the Railway API service first — it's off by
-default everywhere so a fresh deploy never silently starts polling live
-chain state and creating real execution rows on its own. The on-demand
-button runs the exact same code path either way (`agent/guardian.ts`'s
-`evaluateStrategy`), so the demo works correctly with the poller off too —
-you're just clicking the trigger yourself instead of waiting for the
-30-second interval.
+**Nothing to configure before recording.** The autonomous poller is on by
+default in production, so an activated strategy is genuinely being
+watched every 30 seconds with nobody present. If you'd rather not wait for
+the interval on camera, the **"Check now"** button runs the exact same
+code path (`agent/guardian.ts`'s `evaluateStrategy`) immediately — it is
+the same agent, triggered by hand, not a different manual route.
 
 ## 1. Start here
 
@@ -56,35 +53,34 @@ real chain. Its Roles Modifier and role key are pre-set (also synthetic)
 so the dashboard reads "✓ Roles permission ready to execute through"
 immediately, with nothing to configure.
 
-## 4. Create a strategy and watch Exit Guardian evaluate it live
+## 4. Create a strategy, activate it, and watch Exit Keepa do the rest
 
-Click **"+ New strategy"**. Pick a trigger and Preview → Activate it, then
-open the strategy and click **"Run Exit Guardian"** (or, if the
-autonomous poller is enabled, just wait — it checks every 30 seconds on
-its own).
+Click **"+ New strategy"**. Pick a trigger and Preview → **Activate**.
+That is the last thing you do. Open the strategy: it reads **WATCHING**,
+and Exit Keepa is now checking the live Aave supply APR on Base every 30
+seconds on its own. Press **"Check now"** if you don't want to wait for
+the interval — same code path, just triggered immediately.
 
-**Expected result:** Exit Guardian reads the live Aave supply APR on Base
-right now (a real RPC read — the same call a real strategy uses, not a
-canned number) and checks it against your chosen condition. Pick a
-threshold that's clearly *not* met yet (e.g. "is below 0.01%") to see
-**Normal: condition not met** — nothing attempted, exactly as it should
-be. Pick one that's clearly *already* met (e.g. "is below 100%") to see
-it **trigger**: every real policy check passes (right chain, right
-contract, right function, right asset, funds returning only to this Safe,
-Roles configured), and the transaction preview shows the exact real
-calldata this strategy would run.
+**Expected result.** Pick a threshold that's clearly *not* met yet (e.g.
+"is below 0.01%") and the strategy stays at **WATCHING** with nothing
+attempted — exactly as it should be. Pick one that's clearly *already*
+met (e.g. "is below 100%") and, with no further clicking, the whole
+lifecycle runs: the live rate is read (a real RPC read, not a canned
+number), the edge crossing is claimed exactly once, every policy check
+passes (right chain, right contract, right function, right asset, funds
+returning only to this Safe, Roles configured), the transaction is
+simulated, and the execution completes. The page ends on **"Demo
+execution completed."**
 
-**What's mocked, and why:** the one thing that can't be real here is the
-final "would this actually revert on-chain" simulate step — that requires
-a real Roles Modifier and a real Safe genuinely deployed on Base, which a
-sandbox correctly does not have. That step is clearly labeled
-`"sandbox": true` in the receipt (open **"Inspect the full receipt"**) and
-always comes back clean, rather than either faking a specific revert
-reason or leaving the whole flow at a dead end. Everything upstream of it
-— the rate, the condition check, the policy check, the exact transaction
-that would be sent — is real. Broadcasting from a sandbox is refused
-outright by the API (409, "This is a demo sandbox Safe...") — there is no
-"Confirm broadcast" path that does anything here.
+**What is and isn't real here, precisely.** Everything upstream of the
+chain is real: the rate, the condition check, the policy check, the exact
+calldata that would be sent, the one-execution-per-crossing claim, the
+status handling. What cannot be real is anything requiring a Safe and a
+Roles Modifier actually deployed on Base, which a sandbox correctly does
+not have — so the simulate step is labelled `"sandbox": true` and the
+execution finishes as **`demo_completed`**, never `succeeded`, with **no
+transaction hash**, because no transaction exists. Exit Keepa does not
+show you a hash it can't back. For a real hash, see step 6.
 
 ## 5. The real thing: independently-verifiable proof, not a live demo
 
@@ -130,9 +126,8 @@ truth for whether it happened.
 
 ## What to never click during a live demo
 
-- Nothing in the sandbox walkthrough (step 4) needs caution — broadcast is
-  refused outright there by design, so there is no "real money" click to
-  avoid.
+- Nothing in the sandbox walkthrough (step 4) needs caution — a sandbox
+  Safe has no chain to reach, so no click there can move real money.
 - Anything on `app.safe.global` / `roles.gnosisguild.org` if you follow a
   "Open Zodiac Roles app" link on a *real, non-sandbox* Safe you don't
   control — that opens the real Safe Apps UI for that Safe's actual
@@ -145,7 +140,7 @@ truth for whether it happened.
 - **API unreachable:** every page shows a red error message inline
   (never a silent blank screen) — check
   `https://api-production-2e11.up.railway.app/health` directly.
-- **Base RPC unreachable during "Run Exit Guardian":** the check itself
+- **Base RPC unreachable during a check:** the check itself
   fails with a real error message (a genuine RPC failure, not a fabricated
   refusal) — retry, or fall back to the pre-verified "Live proof"
   transaction.

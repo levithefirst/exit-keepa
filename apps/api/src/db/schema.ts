@@ -37,6 +37,13 @@ export const keeperhubExecutionStatusEnum = pgEnum("keeperhub_execution_status",
   "failed",
   "refused",
   "blocked",
+  // Terminal state for a demo session's own sandbox Safe: the full
+  // execution lifecycle ran deterministically but nothing was ever sent to
+  // a chain, because that Safe exists on none. Deliberately NOT "succeeded"
+  // - it must never be mistaken for a real onchain execution, and a
+  // `demo_completed` row always has a null tx_hash. See
+  // execution/executeApproved.ts.
+  "demo_completed",
   "cancelled",
 ]);
 

@@ -10,6 +10,9 @@
  * terminal status created straight from nothing, and a `simulated` row can
  * be stopped short of `executing` into `blocked` (see decideBroadcast's
  * staleness/amount checks) instead of proceeding to a real broadcast.
+ * `demo_completed` is the terminal state a demo sandbox Safe's execution
+ * reaches instead of `succeeded` - the same lifecycle, nothing broadcast,
+ * never a tx hash (see execution/executeApproved.ts).
  */
 
 export type ExecutionStatus =
@@ -21,6 +24,7 @@ export type ExecutionStatus =
   | "failed"
   | "refused"
   | "blocked"
+  | "demo_completed"
   | "cancelled";
 
 export interface ExecutionSnapshot {

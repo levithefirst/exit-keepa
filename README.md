@@ -124,36 +124,41 @@ against real chain state, under the permission state described above.
    activated. This is deterministically rebuilt server-side from the
    stored strategy — the frontend never supplies a target/function/
    calldata that gets trusted directly.
-5. **Activate** — turns monitoring on. Does not simulate or broadcast
-   anything by itself.
-6. **Run Exit Guardian** (Strategy Detail) — reads the live Aave supply/
-   borrow rate on Base, checks it against your condition, and runs a
-   deterministic policy check (right chain, right contract, right
-   function, right asset, funds returning only to your Safe, Roles
-   configured). If the condition isn't met, nothing happens. If it's met
-   but the policy check fails, the attempt is refused with a specific
-   reason and nothing reaches KeeperHub. If it's met and the policy check
-   passes, an execution is created and automatically simulated —
-   `execTransactionWithRole` with `simulate: true`, through KeeperHub,
-   against the real Roles Modifier and Aave Pool — landing on either
-   `simulated` (would succeed) or `failed` (the exact revert reason). A
-   background poller runs this same check on an interval when enabled
-   (`AGENT_POLL_ENABLED=true` — off by default so a fresh deploy never
-   starts creating real execution rows on its own).
-7. **Execute (broadcast)** — only enabled once a simulation has actually
-   succeeded; runs the identical call with `simulate: false` and an
-   `Idempotency-Key` (KeeperHub's Safe First-Write Sequence), keyed to
-   this execution's own stable id so a retried request replays instead
-   of double-broadcasting. KeeperHub's `executionId` is saved as soon as
-   it's known, then `GET /execute/{executionId}/status` is polled with
-   backoff (honoring `X-Poll-Interval-Hint`) until a receipt confirms the
-   outcome. A transaction hash is only ever shown/stored once a receipt
-   says so — never fabricated, and never trusted from the self-reported
-   status alone.
-8. **History** — every execution attempt, its status, KeeperHub's own
-   execution id, and a BaseScan link for any receipt-confirmed broadcast,
-   is kept on the strategy detail page. A still-confirming broadcast
-   keeps re-checking its status automatically.
+5. **Activate** — hands the strategy to Exit Keepa. This is the last
+   thing a user does; everything below happens without them.
+6. **Exit Keepa watches** — a background poller (`agent/poller.ts`, on by
+   default in production) evaluates every active strategy on an interval.
+   Each tick reads the live Aave supply/borrow rate on Base, checks it
+   against your condition, and — only on a genuine edge crossing, claimed
+   atomically so exactly one attempt happens per crossing no matter how
+   many pollers are running — runs a deterministic policy check (right
+   chain, right contract, right function, right asset, funds returning
+   only to your Safe, Roles configured). Condition not met: nothing
+   happens. Policy check fails: the attempt is `refused` with a specific
+   reason and nothing reaches KeeperHub.
+7. **Exit Keepa simulates, then executes** — a passing policy check
+   creates an execution and simulates it (`execTransactionWithRole` with
+   `simulate: true`, against the real Roles Modifier and Aave Pool). A
+   simulation that says the transaction would revert is a hard stop:
+   `failed`, nothing broadcast. A clean simulation is broadcast
+   immediately and automatically — the identical call with
+   `simulate: false` and an `Idempotency-Key` (KeeperHub's Safe
+   First-Write Sequence), keyed to this execution's own stable id so a
+   retried request replays instead of double-broadcasting. Both this
+   autonomous path and the manual/admin recovery endpoint call one
+   canonical service (`execution/executeApproved.ts`); there is exactly
+   one broadcast lifecycle in the codebase, with exactly one definition
+   of every guard on it.
+8. **Exit Keepa verifies and reports** — KeeperHub's `executionId` is
+   saved as soon as it's known, then `GET /execute/{executionId}/status`
+   is polled with backoff (honoring `X-Poll-Interval-Hint`) until a
+   receipt confirms the outcome. A transaction hash is only ever
+   shown/stored once a receipt says so — never fabricated, and never
+   trusted from the self-reported status alone. An outcome that can't be
+   confirmed is reported as *"Execution status is being verified"*, never
+   as success and never as failure. The strategy page shows what
+   happened, with a BaseScan link for any receipt-confirmed transaction;
+   a still-confirming execution keeps re-checking on its own.
 
 ## For judges
 
@@ -175,24 +180,26 @@ to record is at [`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md).
   you'll see the same simulate step correctly refuse to broadcast until
   those two conditions are met for that Safe. (Demo mode's own sandbox
   Safe is a separate thing entirely — see `docs/JUDGE_DEMO.md` §2-4.)
-- **What runs unattended today, precisely:** by default
-  (`AGENT_POLL_ENABLED=false`, every environment including production),
-  nothing decides on its own - Exit Guardian only evaluates a strategy
-  when the **"Run Exit Guardian"** button on the strategy detail page is
-  clicked. That click runs the exact same code
-  (`agent/guardian.ts`'s `evaluateStrategy`) that the autonomous poller
-  (`agent/poller.ts`) would call on a timer if enabled - reads the live
-  Aave rate from Base, not a value typed in, and every decision (including
-  ones that don't act) is recorded with a full receipt: intent,
-  observation, policy check, simulation result. Setting
-  `AGENT_POLL_ENABLED=true` makes that identical evaluation run on its
-  own every `AGENT_POLL_INTERVAL_MS` (default 30s) for every active
-  strategy, with zero additional risk of an unwanted broadcast: the
-  poller's own code has no path to `broadcast` at all (see
-  `agent/guardian.ts` and `agent/poller.ts`) - a real transaction still
-  requires a separate, explicit "Confirm broadcast" click. Today it's
-  triggered-and-reviewed by default; flipping one env var makes it
-  genuinely unattended for observation and simulation.
+- **What runs unattended, precisely:** the whole lifecycle after
+  activation. The poller (`agent/poller.ts`) runs every
+  `AGENT_POLL_INTERVAL_MS` (default 30s) for every active strategy — on
+  by default in production, off by default in development, test, and
+  preview, and overridable in either direction with `AGENT_POLL_ENABLED`.
+  Each tick calls the same `evaluateStrategy` the on-demand **"Check
+  now"** button calls, reads the live Aave rate from Base rather than a
+  value typed in, and on a real crossing goes all the way through policy
+  → simulate → broadcast → status verification without anyone present.
+  Every decision, including the ones that do nothing, is recorded with a
+  full receipt: intent, observation, policy check, simulation result,
+  KeeperHub response, final on-chain result.
+- **The one thing a person still does** is the one-time Safe
+  authorization: granting Exit Keepa its narrow Roles permission, signed
+  by the Safe's own owners in Safe's own app. That cannot move
+  server-side without holding someone's keys, which this project does not
+  do. It happens once per Safe; every exit after it runs unattended. The
+  manual simulate/execute endpoints still exist, but only as developer
+  recovery for an execution the autonomous path couldn't finish — they
+  are not a step in the normal flow.
 
 ## Live proof
 

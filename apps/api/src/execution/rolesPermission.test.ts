@@ -60,6 +60,57 @@ describe("buildRolesPermissionSpec", () => {
     expect(spec.note).toContain("no Roles Modifier enabled");
     expect(spec.needsModifier).toBe(true);
   });
+});
+
+describe("buildRolesPermissionSpec - the three real-Safe setup states", () => {
+  const base = {
+    chainId: 8453,
+    safeAddress: "0x1111111111111111111111111111111111111111",
+    isSandbox: false,
+  };
+
+  it("L: a Safe with no Roles Modifier is 'modifier_missing' and is pointed at the Zodiac app, NOT the Roles editor", () => {
+    const spec = buildRolesPermissionSpec({ ...base, rolesModifierAddress: null, roleKey: null });
+
+    expect(spec.setupState).toBe("modifier_missing");
+    // The dead end this replaces: the Roles app configures permissions on a
+    // Modifier that must already exist, so it has nothing to show here.
+    expect(spec.zodiacAppUrl).toContain(encodeURIComponent("https://zodiac.gnosisguild.org"));
+    expect(spec.zodiacAppUrl).toContain("base:0x1111111111111111111111111111111111111111");
+    expect(spec.note).toContain("Zodiac app");
+  });
+
+  it("a Safe whose Modifier exists but whose transaction still can't be built is 'permission_missing'", () => {
+    const spec = buildRolesPermissionSpec({
+      ...base,
+      rolesModifierAddress: "0x2222222222222222222222222222222222222222",
+      roleKey: "0xabc",
+      executable: false,
+    });
+    expect(spec.setupState).toBe("permission_missing");
+  });
+
+  it("M: a fully-configured Safe is 'ready' - autonomous execution allowed", () => {
+    const spec = buildRolesPermissionSpec({
+      ...base,
+      rolesModifierAddress: "0x2222222222222222222222222222222222222222",
+      roleKey: "0xabc",
+      executable: true,
+    });
+    expect(spec.setupState).toBe("ready");
+  });
+
+  it("without an explicit `executable`, having both a Modifier and a role key counts as ready", () => {
+    const spec = buildRolesPermissionSpec({
+      ...base,
+      rolesModifierAddress: "0x2222222222222222222222222222222222222222",
+      roleKey: "0xabc",
+    });
+    expect(spec.setupState).toBe("ready");
+  });
+});
+
+describe("buildRolesPermissionSpec - sandbox and modifier flags", () => {
 
   it("clears needsModifier once the Safe already has a Roles Modifier", () => {
     const spec = buildRolesPermissionSpec({

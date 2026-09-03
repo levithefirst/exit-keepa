@@ -379,7 +379,7 @@ values).
    automatically, Roles permission already reading "ready" — this is
    never the real Safe above, and never shared with any other visitor
    (every demo click gets a fresh one; see `JUDGE_DEMO.md` §2-3). Create a
-   strategy and run **"Run Exit Guardian"** to see a real live Aave-rate
+   strategy, activate it, and press **"Check now"** to see a real live Aave-rate
    read and a real policy check against it, with the final simulate step
    clearly labeled as a sandbox mock (it can't be real - there's no
    genuine Roles Modifier deployed for a sandbox Safe to check against).

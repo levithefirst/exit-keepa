@@ -2,13 +2,80 @@
 
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
-import { btnPrimary, btnPrimarySmall, btnSecondarySmall, btnDanger, card } from "../../../lib/ui";
+import { btnSecondarySmall, btnDanger, card } from "../../../lib/ui";
 import { StatusPill } from "../../../components/StatusPill";
 import { CopyButton } from "../../../components/CopyButton";
 import { ErrorDetail } from "../../../components/ErrorDetail";
 import { RolesSetupPanel } from "../../../components/RolesSetupPanel";
 
 const BASESCAN = "https://basescan.org";
+
+const COMPARATOR_WORDS: Record<string, string> = {
+  lt: "drops below",
+  lte: "drops to or below",
+  gt: "rises above",
+  gte: "rises to or above",
+};
+
+/** Statuses where the exit is over, one way or another, and Exit Keepa has nothing left to do. */
+const TERMINAL = new Set(["succeeded", "demo_completed", "failed", "refused", "blocked", "cancelled"]);
+
+/**
+ * What actually happened, in the user's terms - one line per execution
+ * state, deliberately never claiming more than the backend confirmed.
+ *
+ * The three rules this encodes, from the backend's own contract:
+ * - `succeeded` is the ONLY status backed by a verified onchain receipt.
+ * - `demo_completed` means the whole lifecycle ran but nothing was sent to
+ *   any chain; it is never dressed up as a real execution, and there is no
+ *   transaction hash to show because no transaction exists.
+ * - `executing` means the outcome is genuinely unknown right now. It says
+ *   "being verified" - never "failed", which would be a claim we can't
+ *   make, and never "succeeded", which would be worse.
+ */
+function outcomeCopy(e: any): { headline: string; tone: "good" | "bad" | "pending"; detail?: string } {
+  switch (e.status) {
+    case "succeeded":
+      return { headline: "Exit executed. Confirmed onchain.", tone: "good" };
+    case "demo_completed":
+      return {
+        headline: "Demo execution completed.",
+        tone: "good",
+        detail:
+          "Every step of the real flow ran - trigger, permission check, simulation, execution, verification. Nothing was sent to a blockchain, because this demo Safe exists only in your session. That's why there's no transaction to look up.",
+      };
+    case "executing":
+      return {
+        headline: "Execution status is being verified.",
+        tone: "pending",
+        detail:
+          "Exit Keepa sent the transaction and is waiting for confirmation. It will not report success until the outcome is confirmed. This page keeps checking on its own.",
+      };
+    case "refused":
+      return {
+        headline: "Exit Keepa refused to execute this.",
+        tone: "bad",
+        detail: "A safety check failed before anything was sent. Nothing was executed.",
+      };
+    case "blocked":
+      return {
+        headline: "Exit Keepa stopped before executing.",
+        tone: "bad",
+        detail:
+          "Conditions changed between approving this exit and sending it, so it was stopped rather than sent on stale information. Nothing was executed.",
+      };
+    case "failed":
+      return { headline: "This exit did not go through.", tone: "bad" };
+    case "simulated":
+      return {
+        headline: "Checked and ready - executing now.",
+        tone: "pending",
+        detail: "The transaction passed its dry run. Exit Keepa is carrying it out.",
+      };
+    default:
+      return { headline: "Working on it...", tone: "pending" };
+  }
+}
 
 function DetailSkeleton() {
   return (
@@ -31,10 +98,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   const [receipt, setReceipt] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [guardianBusy, setGuardianBusy] = useState(false);
-  // The one truly irreversible action (a real broadcast) gets a two-step
-  // confirm instead of firing on the first click - everything else stays
-  // single-click.
+  const [checking, setChecking] = useState(false);
   const [armedExecutionId, setArmedExecutionId] = useState<string | null>(null);
 
   async function refresh() {
@@ -53,11 +117,11 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // A broadcast that came back non-terminal (KeeperHub still confirming
+  // An execution that came back non-terminal (KeeperHub still confirming
   // the receipt, or still processing under this Idempotency-Key) keeps
   // getting checked on its own - the same GET
   // /api/execute/{executionId}/status the Safe First-Write Sequence
-  // calls for, not a re-broadcast - until it settles or the tab closes.
+  // calls for, never a re-execution - until it settles or the tab closes.
   useEffect(() => {
     const pending = executions.find((e) => e.status === "executing" && e.keeperhubExecutionId);
     if (!pending) return;
@@ -74,40 +138,31 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   if (error && !strategy) return <p className="text-pretty text-sm text-danger">{error}</p>;
   if (!strategy) return <DetailSkeleton />;
 
-  async function runGuardian() {
-    setGuardianBusy(true);
+  // "Check now" runs the exact same evaluate-and-execute path the
+  // autonomous loop runs on its own schedule - it is a way to see the
+  // agent work on demand, not a separate manual execution route.
+  async function checkNow() {
+    setChecking(true);
     setError(null);
     try {
       const evalResult = await api.evaluateAgent(id);
-      const fullReceipt = await api.getAgentReceipt(evalResult.decisionId);
-      setReceipt(fullReceipt);
+      setReceipt(await api.getAgentReceipt(evalResult.decisionId));
       await refresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
-      setGuardianBusy(false);
+      setChecking(false);
     }
   }
 
-  async function simulate(executionId: string) {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.simulateExecution(id, executionId);
-      await refresh();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function broadcast(executionId: string) {
+  async function recover(executionId: string, kind: "simulate" | "broadcast" | "refresh") {
     setBusy(true);
     setError(null);
     setArmedExecutionId(null);
     try {
-      await api.broadcastExecution(id, executionId);
+      if (kind === "simulate") await api.simulateExecution(id, executionId);
+      if (kind === "broadcast") await api.broadcastExecution(id, executionId);
+      if (kind === "refresh") await api.refreshExecutionStatus(id, executionId);
       await refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -116,21 +171,15 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
     }
   }
 
-  async function refreshStatus(executionId: string) {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.refreshExecutionStatus(id, executionId);
-      await refresh();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
+  const isSandbox = Boolean(preview?.rolesPermission?.isSandbox);
+  const ready = Boolean(preview?.tx);
+  const watching = strategy.status === "active" && ready;
+  const latest = executions.length > 0 ? [...executions].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))[0] : null;
+  const triggered = Boolean(latest);
+  const observedRateBps = receipt?.observation?.rateBps ?? null;
 
   return (
-    <div className="mx-auto max-w-2xl space-y-8">
+    <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">{strategy.name}</h1>
         <div className="mt-1">
@@ -138,211 +187,240 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
         </div>
       </div>
 
+      {/* WHAT AM I PROTECTING / EXIT CONDITION / WHAT WILL EXIT KEEPA DO */}
       <div className={card}>
-        <h2 className="mb-2 font-semibold text-cream-50">Condition</h2>
-        <p className="text-pretty text-sm tabular-nums text-cream-200">
-          {strategy.condition.market}: {strategy.condition.metric} {strategy.condition.comparator}{" "}
-          {strategy.condition.thresholdBps / 100}%
-        </p>
+        <dl className="space-y-3 text-sm">
+          <div>
+            <dt className="text-xs uppercase tracking-[0.14em] text-cream-500">What I&apos;m protecting</dt>
+            <dd className="text-pretty mt-0.5 text-cream-100">
+              Your USDC position in Aave v3 on Base{isSandbox ? " (demo)" : ""}.
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-[0.14em] text-cream-500">Exit condition</dt>
+            <dd className="text-pretty mt-0.5 tabular-nums text-cream-100">
+              When USDC supply APR {COMPARATOR_WORDS[strategy.condition.comparator] ?? strategy.condition.comparator}{" "}
+              {strategy.condition.thresholdBps / 100}%
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-[0.14em] text-cream-500">What Exit Keepa will do</dt>
+            <dd className="text-pretty mt-0.5 text-cream-100">
+              Withdraw{" "}
+              {strategy.action?.amount === "max" ? "your whole position" : `${strategy.action?.amount} (smallest units)`}{" "}
+              out of Aave, straight back into your own Safe - by itself, without asking you again.
+            </dd>
+          </div>
+        </dl>
       </div>
 
-      {preview?.tx && (
-        <details className="group rounded-xl border border-cream-100/10 p-4">
-          <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-cream-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
-            Configured transaction (technical details)
-            <svg className="faq-chevron h-4 w-4 text-mint-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
-            </svg>
-          </summary>
-          <div className="data-mono mt-3 space-y-1 font-mono text-xs text-cream-300">
-            <p>Target contract: {preview.tx.to}</p>
-            <p>Function: {preview.tx.decodedFunction}</p>
-            <p>Args: {JSON.stringify(preview.tx.decodedArgs)}</p>
-            <p className="break-all">Calldata: {preview.tx.data}</p>
-          </div>
-        </details>
-      )}
-
-      {preview &&
-        !preview.tx &&
-        (String(preview.txError ?? "").includes("Roles Modifier") && preview.rolesPermission ? (
-          <RolesSetupPanel spec={preview.rolesPermission} ready={false} onRecheck={refresh} />
-        ) : (
-          <ErrorDetail message={preview.txError} className="rounded-xl border border-warning/30 bg-warning/5 p-4" />
-        ))}
-
-      <section className="rounded-xl border border-mint-400/30 bg-mint-400/5 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* IS IT WATCHING */}
+      <div
+        className={`rounded-xl border p-5 ${
+          watching ? "border-mint-400/30 bg-mint-400/5" : "border-cream-100/10 bg-forest-800/60"
+        }`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-mint-300">Exit Guardian</p>
-            <h2 className="mt-1 font-display text-lg font-semibold text-cream-50">Observe, decide, prove</h2>
-            <p className="mt-1 max-w-xl text-pretty text-sm text-cream-300">
-              Reads the live Aave supply rate on Base, checks it against your condition, and runs the same deterministic
-              policy check the autonomous background loop uses. It can approve, refuse, or find nothing to do.
+            <p className="text-xs uppercase tracking-[0.14em] text-cream-500">Status</p>
+            <p className={`mt-0.5 font-display text-lg font-semibold ${watching ? "text-mint-300" : "text-cream-200"}`}>
+              {watching ? "WATCHING" : strategy.status === "active" ? "NOT YET AUTHORIZED" : "PAUSED"}
             </p>
-          </div>
-          <button onClick={runGuardian} disabled={guardianBusy || strategy.status !== "active"} className={btnPrimary}>
-            {guardianBusy ? "Checking live state..." : "Run Exit Guardian"}
-          </button>
-        </div>
-        {strategy.status !== "active" && (
-          <p className="mt-2 text-pretty text-xs text-warning">
-            Activate the strategy from Create Strategy before Exit Guardian can watch it.
-          </p>
-        )}
-
-        {receipt && (
-          <div className="mt-5 space-y-4 rounded-xl border border-cream-100/10 bg-forest-950/50 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm font-medium text-cream-100">
-                {receipt.decision === "triggered" && "Triggered: condition just crossed"}
-                {receipt.decision === "held" && "Holding: already acted on this crossing"}
-                {receipt.decision === "normal" && "Normal: condition not met"}
-              </span>
-              {receipt.decision === "triggered" && (
-                <span
-                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                    receipt.policyCheck.policyPassed && receipt.simulationResult?.status !== "failed"
-                      ? "bg-mint-400/15 text-mint-300"
-                      : "bg-danger/15 text-danger"
-                  }`}
-                >
-                  {!receipt.policyCheck.policyPassed
-                    ? "REFUSED"
-                    : receipt.simulationResult?.status === "failed"
-                      ? "SIMULATION FAILED"
-                      : "APPROVED"}
-                </span>
-              )}
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <p className="text-xs text-cream-400">Observed rate</p>
-                <p className="mt-1 font-mono text-sm tabular-nums text-cream-100">
-                  {(receipt.observation.rateBps / 100).toFixed(2)}%
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-cream-400">Condition</p>
-                <p className="mt-1 text-sm text-cream-100">{receipt.conditionMet ? "Satisfied" : "Not satisfied"}</p>
-              </div>
-            </div>
-
-            {(receipt.policyCheck.refusalReasons?.length > 0 || receipt.simulationResult?.errorMessage) && (
-              <div className="space-y-1 rounded-lg border border-danger/20 bg-danger/5 p-3 text-xs text-danger">
-                {receipt.policyCheck.refusalReasons?.map((reason: string) => <p key={reason}>{reason}</p>)}
-                {receipt.simulationResult?.status === "failed" && receipt.simulationResult?.errorMessage && (
-                  <ErrorDetail message={receipt.simulationResult.errorMessage} />
-                )}
-              </div>
-            )}
-
-            {receipt.decision === "triggered" && receipt.policyCheck.policyPassed && receipt.simulationResult?.status === "simulated" && (
-              <p className="text-pretty text-xs text-mint-300">
-                Approved and simulated clean. Confirm the broadcast below when you&apos;re ready. Exit Guardian never
-                broadcasts on its own.
+            <p className="text-pretty mt-1 text-sm text-cream-300">
+              {watching
+                ? "Exit Keepa is checking the live Aave rate on Base and will act on its own the moment your condition is met. You don't need to be here."
+                : strategy.status === "active"
+                  ? "Exit Keepa can't act for this Safe yet - finish the one-time authorization below."
+                  : "Monitoring is paused. Exit Keepa will not act until you resume it."}
+            </p>
+            {observedRateBps !== null && (
+              <p className="mt-2 text-sm tabular-nums text-cream-200">
+                Current APR: <span className="font-mono">{(observedRateBps / 100).toFixed(2)}%</span>
               </p>
             )}
-
-            <details>
-              <summary className="cursor-pointer text-xs font-medium text-cream-300">Inspect the full receipt</summary>
-              <div className="mt-3 space-y-2 font-mono text-[11px] text-cream-400">
-                <p className="break-all">Intent hash: {receipt.intentHash}</p>
-                <p className="break-all">Receipt hash: {receipt.receiptHash}</p>
-                {receipt.intent.target && <p className="break-all">Target: {receipt.intent.target}</p>}
-                {receipt.policyCheck.policy && (
-                  <p>
-                    Policy:{" "}
-                    {Object.entries(receipt.policyCheck.policy)
-                      .map(([name, ok]) => `${name}=${ok ? "pass" : "fail"}`)
-                      .join(", ")}
-                  </p>
-                )}
-                <p>Source: {receipt.source === "poller" ? "autonomous poller" : "on-demand check"}</p>
-                <p>Checked at: {new Date(receipt.createdAt).toLocaleString()}</p>
-              </div>
-            </details>
           </div>
-        )}
-      </section>
+          <button onClick={checkNow} disabled={checking || strategy.status !== "active"} className={btnSecondarySmall}>
+            {checking ? "Checking..." : "Check now"}
+          </button>
+        </div>
+      </div>
+
+      {/* The one-time authorization, only when there's actually something to do. */}
+      {preview?.rolesPermission && !ready && (
+        <RolesSetupPanel spec={preview.rolesPermission} onRecheck={refresh} />
+      )}
+      {preview && !preview.tx && !String(preview.txError ?? "").includes("Roles Modifier") && (
+        <ErrorDetail message={preview.txError} className="rounded-xl border border-warning/30 bg-warning/5 p-4" />
+      )}
 
       {error && <p className="text-pretty text-sm text-danger">{error}</p>}
 
+      {/* HAS IT TRIGGERED / WHAT HAPPENED */}
       <div>
-        <h2 className="mb-3 font-semibold text-cream-50">Execution history</h2>
-        <p className="mb-3 text-pretty text-xs text-cream-400">
-          Simulated means checked, not sent. Confirmed onchain is the only status backed by a real transaction.
-          Verify any of them directly on BaseScan.
-        </p>
-        {executions.length === 0 && <p className="text-pretty text-sm text-cream-400">No executions yet.</p>}
-        <div className="space-y-3">
-          {executions.map((e) => (
-            <div key={e.id} className={card}>
-              <div className="flex items-center justify-between">
-                <StatusPill status={e.status} />
-                <span className="text-xs tabular-nums text-cream-400">{new Date(e.createdAt).toLocaleString()}</span>
-              </div>
-              {e.errorMessage && <ErrorDetail message={e.errorMessage} className="mt-1" />}
-              {e.keeperhubExecutionId && (
-                <p className="mt-1 flex items-center gap-1 text-pretty text-xs text-cream-400">
-                  KeeperHub execution: <span className="font-mono text-cream-300">{e.keeperhubExecutionId}</span>
-                  <CopyButton value={e.keeperhubExecutionId} label="Copy KeeperHub execution id" />
-                </p>
-              )}
-              {e.txHash && (
-                <div className="mt-2 flex items-center gap-1 rounded-lg bg-forest-950/60 px-3 py-2">
-                  <a
-                    href={`${BASESCAN}/tx/${e.txHash}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block break-all font-mono text-xs text-mint-300 underline hover:text-mint-200"
-                  >
-                    {e.txHash}
-                  </a>
-                  <CopyButton value={e.txHash} label="Copy tx hash" />
-                </div>
-              )}
-              {e.status === "executing" && (
-                <p className="mt-2 text-pretty text-xs text-warning">
-                  Broadcast sent - confirming the receipt on-chain with KeeperHub. This checks automatically every
-                  few seconds.
-                </p>
-              )}
-              <div className="mt-2 flex flex-wrap items-center gap-2">
+        <h2 className="mb-1 font-semibold text-cream-50">Has it triggered?</h2>
+        {!triggered && (
+          <p className="text-pretty text-sm text-cream-400">
+            Not yet. Nothing has been executed, and nothing will be until your condition is actually met.
+          </p>
+        )}
+
+        {latest && <ExecutionCard e={latest} onRecover={recover} busy={busy} armed={armedExecutionId} setArmed={setArmedExecutionId} />}
+
+        {executions.length > 1 && (
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs font-medium text-cream-400 hover:text-cream-300">
+              Earlier triggers ({executions.length - 1})
+            </summary>
+            <div className="mt-3 space-y-3">
+              {[...executions]
+                .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+                .slice(1)
+                .map((e) => (
+                  <ExecutionCard
+                    key={e.id}
+                    e={e}
+                    onRecover={recover}
+                    busy={busy}
+                    armed={armedExecutionId}
+                    setArmed={setArmedExecutionId}
+                  />
+                ))}
+            </div>
+          </details>
+        )}
+      </div>
+
+      {receipt && (
+        <details className="rounded-xl border border-cream-100/10 p-4">
+          <summary className="cursor-pointer text-xs font-medium text-cream-400 hover:text-cream-300">
+            Technical details: the agent&apos;s own receipt
+          </summary>
+          <div className="mt-3 space-y-2 font-mono text-[11px] text-cream-400">
+            <p>Decision: {receipt.decision}</p>
+            <p>Condition met: {String(receipt.conditionMet)}</p>
+            <p className="break-all">Intent hash: {receipt.intentHash}</p>
+            <p className="break-all">Receipt hash: {receipt.receiptHash}</p>
+            {receipt.intent.target && <p className="break-all">Target: {receipt.intent.target}</p>}
+            {receipt.policyCheck.policy && (
+              <p>
+                Policy:{" "}
+                {Object.entries(receipt.policyCheck.policy)
+                  .map(([name, ok]) => `${name}=${ok ? "pass" : "fail"}`)
+                  .join(", ")}
+              </p>
+            )}
+            <p>Source: {receipt.source === "poller" ? "autonomous poller" : "on-demand check"}</p>
+            <p>Checked at: {new Date(receipt.createdAt).toLocaleString()}</p>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One trigger, told as what happened rather than as a machine state - with
+ * the raw status, KeeperHub id, and any developer recovery action tucked
+ * behind a disclosure. Recovery exists for executions the autonomous path
+ * deliberately left open (a status KeeperHub never resolved, a row created
+ * by an older manual flow); it is not a step in the normal product, which
+ * is why nothing here is on the main path.
+ */
+function ExecutionCard({
+  e,
+  onRecover,
+  busy,
+  armed,
+  setArmed,
+}: {
+  e: any;
+  onRecover: (id: string, kind: "simulate" | "broadcast" | "refresh") => void;
+  busy: boolean;
+  armed: string | null;
+  setArmed: (id: string | null) => void;
+}) {
+  const { headline, tone, detail } = outcomeCopy(e);
+  const toneClass = tone === "good" ? "text-mint-300" : tone === "bad" ? "text-danger" : "text-warning";
+  const canRecover = !TERMINAL.has(e.status);
+
+  return (
+    <div className={card}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className={`text-pretty font-medium ${toneClass}`}>{headline}</p>
+        <span className="text-xs tabular-nums text-cream-400">{new Date(e.createdAt).toLocaleString()}</span>
+      </div>
+      {detail && <p className="text-pretty mt-1 text-sm text-cream-300">{detail}</p>}
+      {e.errorMessage && e.status !== "executing" && <ErrorDetail message={e.errorMessage} className="mt-2" />}
+
+      {e.txHash && (
+        <div className="mt-3">
+          <p className="mb-1 text-xs text-cream-500">Verify it yourself:</p>
+          <div className="flex items-center gap-1 rounded-lg bg-forest-950/60 px-3 py-2">
+            <a
+              href={`${BASESCAN}/tx/${e.txHash}`}
+              target="_blank"
+              rel="noreferrer"
+              className="block break-all font-mono text-xs text-mint-300 underline hover:text-mint-200"
+            >
+              {e.txHash}
+            </a>
+            <CopyButton value={e.txHash} label="Copy tx hash" />
+          </div>
+        </div>
+      )}
+
+      <details className="mt-3">
+        <summary className="cursor-pointer text-xs text-cream-500 hover:text-cream-400">Technical details</summary>
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill status={e.status} />
+            {e.keeperhubExecutionId && (
+              <span className="flex items-center gap-1 font-mono text-[11px] text-cream-400">
+                {e.keeperhubExecutionId}
+                <CopyButton value={e.keeperhubExecutionId} label="Copy KeeperHub execution id" />
+              </span>
+            )}
+          </div>
+          {canRecover && (
+            <div className="space-y-1.5 rounded-lg border border-cream-100/10 p-3">
+              <p className="text-pretty text-[11px] text-cream-500">
+                Developer recovery. Exit Keepa drives this lifecycle itself - these only exist for an execution it
+                couldn&apos;t finish on its own.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
                 {e.status === "pending" && (
-                  <button onClick={() => simulate(e.id)} disabled={busy} className={btnSecondarySmall}>
-                    Simulate
+                  <button onClick={() => onRecover(e.id, "simulate")} disabled={busy} className={btnSecondarySmall}>
+                    Re-run dry run
                   </button>
                 )}
-                {e.status === "simulated" && armedExecutionId !== e.id && (
-                  <button onClick={() => setArmedExecutionId(e.id)} disabled={busy} className={btnPrimarySmall}>
-                    Execute (broadcast)
+                {e.status === "simulated" && armed !== e.id && (
+                  <button onClick={() => setArmed(e.id)} disabled={busy} className={btnSecondarySmall}>
+                    Force execute
                   </button>
                 )}
-                {e.status === "simulated" && armedExecutionId === e.id && (
+                {e.status === "simulated" && armed === e.id && (
                   <>
                     <span className="text-pretty text-xs text-danger">
                       This sends a real, irreversible transaction. Confirm?
                     </span>
-                    <button onClick={() => broadcast(e.id)} disabled={busy} className={btnDanger}>
-                      Confirm broadcast
+                    <button onClick={() => onRecover(e.id, "broadcast")} disabled={busy} className={btnDanger}>
+                      Confirm
                     </button>
-                    <button onClick={() => setArmedExecutionId(null)} disabled={busy} className={btnSecondarySmall}>
+                    <button onClick={() => setArmed(null)} disabled={busy} className={btnSecondarySmall}>
                       Cancel
                     </button>
                   </>
                 )}
                 {e.status === "executing" && e.keeperhubExecutionId && (
-                  <button onClick={() => refreshStatus(e.id)} disabled={busy} className={btnSecondarySmall}>
+                  <button onClick={() => onRecover(e.id, "refresh")} disabled={busy} className={btnSecondarySmall}>
                     Check status now
                   </button>
                 )}
               </div>
             </div>
-          ))}
+          )}
         </div>
-      </div>
+      </details>
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { logger } from "../logger";
 import { buildExitTransaction, type BuiltTransaction } from "../execution/buildTransaction";
 import { evaluateRateCondition } from "../execution/evaluateCondition";
 import { simulatePendingExecution } from "../execution/simulate";
+import { executeApprovedExecution } from "../execution/executeApproved";
 import { readAaveUsdcRate, type AaveRateSnapshot } from "./aaveRateOracle";
 import { nextAgentDecision, type AgentState, type AgentDecisionKind } from "./decisionStateMachine";
 import { checkPolicy } from "./policy";
@@ -109,10 +110,24 @@ async function recordDecision(input: RecordDecisionInput): Promise<GuardianRecei
 const NO_INTENT_HASH = hash({ noAttempt: true });
 
 /**
- * The one place that observes the live chain, decides whether to act, and
- * records what happened - used by both the on-demand API route
+ * The one place that observes the live chain, decides whether to act, acts,
+ * and records what happened - used by both the on-demand API route
  * (routes/agent.ts) and the autonomous poller (agent/poller.ts), so there
  * is exactly one decision path regardless of what triggered this tick.
+ *
+ * "Acts" means the whole way to the chain, unattended. On a genuine edge
+ * crossing this claims the trigger atomically (so exactly one attempt
+ * happens per crossing, however many pollers are running), builds the
+ * transaction deterministically, runs the policy check, simulates, and -
+ * if and only if the simulation comes back clean - hands the execution to
+ * execution/executeApproved.ts, which broadcasts it, verifies the outcome
+ * against KeeperHub's own status endpoint, and persists the final result.
+ * The returned receipt therefore describes a finished lifecycle, not a
+ * transaction still waiting for someone to press a button.
+ *
+ * Nothing is broadcast when the policy check refuses, or when the
+ * simulation says the transaction would not succeed - both are terminal,
+ * recorded, and reported as such.
  *
  * Never sends a strategy's target/selector/calldata anywhere it wasn't
  * already deterministically rebuilt by execution/buildTransaction.ts - the
@@ -135,6 +150,10 @@ export async function evaluateStrategy(strategyId: string, source: DecisionSourc
     throw new HttpError(422, "Exit Guardian currently monitors Aave v3 Base supply_apr and borrow_apr only");
   }
 
+  // The instant this tick's authority to act was established. Passed to
+  // executeApprovedExecution as `approvedAt` so the stale-intent guard
+  // measures the real age of this decision at the moment of broadcast.
+  const observedAt = new Date();
   const observation = await readAaveUsdcRate(condition.metric as "supply_apr" | "borrow_apr");
   const conditionMet = evaluateRateCondition(condition, observation.rateBps);
   const agentStateBefore = strategy.agentState as AgentState;
@@ -270,10 +289,43 @@ export async function evaluateStrategy(strategyId: string, source: DecisionSourc
 
     const simOutcome = await simulatePendingExecution(executionId, tx, safe.chainId, safe.isSandbox);
     execution = simOutcome.row;
-    logger.info(
-      { strategyId: strategy.id, executionId, status: execution.status },
-      "Exit Guardian approved and auto-simulated execution",
-    );
+
+    if (execution.status !== "simulated") {
+      // Simulation said this transaction would not succeed (or the
+      // simulate call itself failed). That is a hard stop: nothing is
+      // broadcast, the row is already terminal `failed`, and the receipt
+      // below reports exactly that. Never fall through to execution on an
+      // unclean simulation.
+      logger.warn(
+        { strategyId: strategy.id, executionId, status: execution.status, error: execution.errorMessage },
+        "Exit Guardian stopped at simulation - nothing broadcast",
+      );
+    } else {
+      // The whole point of the product: a clean simulation is immediately
+      // executed, autonomously, without anyone clicking anything. This is
+      // the same canonical service the manual/admin recovery route calls
+      // (execution/executeApproved.ts) - the Guardian implements no part
+      // of the broadcast lifecycle itself, so there is exactly one
+      // definition of every guard on the way to the chain.
+      //
+      // `approvedAt: observedAt` is the instant this tick read live state.
+      // The service re-reads the strategy at broadcast time and compares,
+      // so a strategy edited in the window between that read and the
+      // irreversible step is still caught by the stale-intent check.
+      const executed = await executeApprovedExecution({
+        executionId,
+        strategyId: strategy.id,
+        approvedAt: observedAt,
+      });
+      if (executed.row) execution = executed.row;
+
+      const detail = { strategyId: strategy.id, executionId, outcome: executed.kind, status: execution.status };
+      if (executed.kind === "succeeded" || executed.kind === "demo_completed") {
+        logger.info(detail, "Exit Guardian executed the approved exit autonomously");
+      } else {
+        logger.warn(detail, "Exit Guardian executed the approved exit but the outcome was not a clean success");
+      }
+    }
   }
 
   return recordDecision({

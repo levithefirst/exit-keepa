@@ -58,6 +58,10 @@ export const STATUS_META: Record<string, { label: string; dot: string; text: str
   failed: { label: "Failed", dot: "bg-danger", text: "text-danger", bg: "bg-danger/15" },
   refused: { label: "Refused by policy", dot: "bg-danger", text: "text-danger", bg: "bg-danger/15" },
   blocked: { label: "Blocked before broadcast", dot: "bg-warning", text: "text-warning", bg: "bg-warning/10" },
+  // Deliberately NOT worded like a success: the lifecycle ran, nothing
+  // reached a chain, and there is no transaction hash. See
+  // apps/api/src/execution/executeApproved.ts.
+  demo_completed: { label: "Demo completed (no chain)", dot: "bg-mint-400", text: "text-mint-300", bg: "bg-mint-400/15" },
   cancelled: { label: "Cancelled", dot: "bg-cream-400", text: "text-cream-400", bg: "bg-cream-100/10" },
 };
 

@@ -1,0 +1,15 @@
+-- The autonomous lifecycle now runs to completion for a demo session's own
+-- sandbox Safe (see src/execution/executeApproved.ts). That Safe's address
+-- and Roles Modifier exist on no chain, so there is nothing to broadcast to
+-- and no transaction hash can ever exist for it - but the demo still has to
+-- exercise the real application lifecycle end to end, rather than
+-- dead-ending at 'simulated'.
+--
+-- `demo_completed` is a distinct terminal status precisely so it can never
+-- be read as 'succeeded': a row in this state always has a NULL tx_hash and
+-- a response payload that says in words that nothing was sent to any chain.
+--
+-- IF NOT EXISTS added by hand to drizzle-kit's output so re-running this
+-- against a database that already has the value is a no-op rather than an
+-- error.
+ALTER TYPE "keeperhub_execution_status" ADD VALUE IF NOT EXISTS 'demo_completed';

@@ -21,6 +21,20 @@ export function buildRolesSafeAppUrl(chainId: number, safeAddress: string): stri
 }
 
 /**
+ * Deep link into the Safe's own Zodiac app - the one that INSTALLS a
+ * module on a Safe. This is a different app from the Roles app above, and
+ * the distinction matters: roles.gnosisguild.org configures permissions on
+ * a Roles Modifier that already exists, so opening it for a Safe with no
+ * Modifier installed dead-ends with nothing to configure. A Safe in that
+ * state has to come here first, enable the Roles Modifier, and only then
+ * go to the Roles app - see RolesSetupPanel's three setup states.
+ */
+export function buildZodiacModulesSafeAppUrl(chainId: number, safeAddress: string): string {
+  const zodiacAppUrl = "https://zodiac.gnosisguild.org";
+  return `https://app.safe.global/apps/open?safe=${safeChainShortName(chainId)}:${safeAddress}&appUrl=${encodeURIComponent(zodiacAppUrl)}`;
+}
+
+/**
  * Deep link into Safe{Wallet}'s own "create a new Safe" flow, pre-selected
  * to this chain - for someone on the "Connect your Safe" screen who
  * doesn't have one yet. Exit Keepa never creates a Safe on anyone's

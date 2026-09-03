@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { buildRolesSafeAppUrl, buildCreateSafeUrl } from "@exit-keepa/shared";
+import { buildRolesSafeAppUrl, buildZodiacModulesSafeAppUrl, buildCreateSafeUrl } from "@exit-keepa/shared";
 import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
 import { resolveSafeId } from "../../lib/resolveSafeId";
@@ -244,26 +244,39 @@ export default function DashboardPage() {
             <p className="mt-1 text-xs text-mint-300">
               ✓ Roles permission ready to execute through (pre-configured for this private demo sandbox)
             </p>
-          ) : safe.rolesModifierAddress ? (
-            <p className="mt-1 text-xs text-mint-300">✓ Roles permission ready to execute through</p>
+          ) : safe.rolesModifierAddress && safe.rolesKey ? (
+            <p className="mt-1 text-pretty text-xs text-mint-300">
+              ✓ READY - Exit Keepa is authorized to execute this exit automatically
+            </p>
           ) : (
+            // Two genuinely different states, and sending the first one to
+            // the Roles app is the dead end people actually hit: that app
+            // edits permissions on a Roles Modifier, so for a Safe with no
+            // Modifier installed it opens with nothing to configure. Step 1
+            // belongs in the Zodiac app instead.
             <div className="mt-2 space-y-1.5 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-pretty text-xs text-warning">
-                  One thing to unlock this: grant Exit Keepa a permission, in Safe&apos;s own app.
+                  {safe.rolesModifierAddress
+                    ? "Step 2 of 2: grant Exit Keepa its one withdrawal permission, in Safe's own app."
+                    : "Step 1 of 2: install Zodiac's Roles Modifier on this Safe, in Safe's own app."}
                 </p>
                 <a
-                  href={buildRolesSafeAppUrl(safe.chainId, safe.safeAddress)}
+                  href={
+                    safe.rolesModifierAddress
+                      ? buildRolesSafeAppUrl(safe.chainId, safe.safeAddress)
+                      : buildZodiacModulesSafeAppUrl(safe.chainId, safe.safeAddress)
+                  }
                   target="_blank"
                   rel="noreferrer"
                   className={`inline-flex shrink-0 ${btnSecondarySmall}`}
                 >
-                  Grant permission →
+                  {safe.rolesModifierAddress ? "Grant permission →" : "Install the module →"}
                 </a>
               </div>
               <p className="text-pretty text-xs text-cream-500">
-                Connect the wallet that&apos;s actually an owner of this Safe when Safe&apos;s app asks - it rejects
-                any other wallet.
+                One-time setup. Connect the wallet that&apos;s actually an owner of this Safe when Safe&apos;s app
+                asks - it rejects any other wallet. After this, Exit Keepa executes on its own.
               </p>
             </div>
           )}
