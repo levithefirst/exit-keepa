@@ -183,6 +183,38 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [executions, id]);
 
+  // While Exit Keepa is watching, this page watches with it. The agent
+  // triggers on its own schedule with nobody present, so a page that only
+  // fetched on mount would sit on "Not yet" indefinitely after the exit had
+  // already happened - which is exactly what a live production check caught:
+  // the execution completed at 18:32:10 and the open page still showed
+  // nothing three minutes later. Telling someone their exit is automatic and
+  // then making them reload to find out it ran is the same babysitting the
+  // product exists to remove.
+  //
+  // Read-only: this re-reads state, it never evaluates or executes anything.
+  // It stops as soon as the exit reaches a terminal state, and while the tab
+  // is hidden, so a forgotten tab isn't polling forever.
+  useEffect(() => {
+    if (!strategy || strategy.status !== "active") return;
+
+    if (executions.some((e) => TERMINAL.has(e.status))) return;
+
+    let cancelled = false;
+    // An interval, not a chain of timeouts: skipping a tick while the tab is
+    // hidden must pause the polling, not end it, so a backgrounded tab picks
+    // straight back up when someone returns to it.
+    const timer = setInterval(() => {
+      if (cancelled || document.hidden) return;
+      refresh().catch(() => {});
+    }, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategy?.status, executions, id]);
+
   if (error && !strategy) return <p className="text-pretty text-sm text-danger">{error}</p>;
   if (!strategy) return <DetailSkeleton />;
 

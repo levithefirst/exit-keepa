@@ -101,7 +101,7 @@ async function apiJourney() {
   // reads. If an exit happens, the deployed poller did it unattended.
   console.log("  ...waiting for the autonomous poller (reads only from here)");
   let executions = [];
-  const deadline = Date.now() + 150_000;
+  const deadline = Date.now() + 240_000;
   while (Date.now() < deadline) {
     await sleep(10_000);
     const list = await api(`/api/exit-strategies/${strategyId}/executions`, { token });
@@ -174,7 +174,7 @@ async function negativeCase() {
   const strategyId = created.body?.id;
   await api(`/api/exit-strategies/${strategyId}/activate`, { token, method: "POST" });
 
-  await sleep(75_000); // at least two poll intervals
+  await sleep(90_000); // at least three poll intervals
 
   const list = await api(`/api/exit-strategies/${strategyId}/executions`, { token });
   check("nothing was executed while the condition is false", (list.body ?? []).length === 0, `${(list.body ?? []).length} row(s)`);
@@ -238,11 +238,15 @@ async function uiJourney() {
 
   console.log("  ...not touching the page; waiting for the autonomous poller");
   let finalText = initial;
-  const deadline = Date.now() + 180_000;
+  const deadline = Date.now() + 240_000;
   while (Date.now() < deadline) {
     await page.waitForTimeout(15_000);
-    // A plain reload, not an interaction - the page's own polling would
-    // get there too, this just avoids depending on its interval.
+    // Deliberately NOT a reload and NOT a click - just reading what the
+    // open page now shows. The page has to update itself, because that is
+    // the actual product promise: activate it and walk away. A live check
+    // that reloaded here would have hidden the very bug it caught (the
+    // page never re-fetched while watching, so an exit that had already
+    // completed never appeared).
     finalText = (await page.locator("body").innerText()).replace(/\s+/g, " ");
     if (/Demo execution completed/i.test(finalText)) break;
     console.log("  ...still waiting");
