@@ -1,0 +1,31 @@
+name: Live demo-mode check
+
+# Manual only - hits real production infrastructure (Vercel + Railway), so
+# this must never run on every push/PR the way ci.yml does. Triggered by
+# hand while investigating or verifying a demo-mode isolation issue; see
+# scripts/live-demo-mode-check.mjs for what it actually checks.
+on:
+  workflow_dispatch:
+    inputs:
+      web_url:
+        description: "Web app URL to test"
+        default: "https://exit-keepa-web.vercel.app"
+        required: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.48.0
+          npx playwright install --with-deps chromium
+      - name: Run live demo-mode check
+        run: node scripts/live-demo-mode-check.mjs
+        env:
+          WEB_URL: ${{ inputs.web_url }}
