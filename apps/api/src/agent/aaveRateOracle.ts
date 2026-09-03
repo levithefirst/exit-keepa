@@ -17,17 +17,48 @@ export interface AaveRateSnapshot {
   observedAt: string;
 }
 
-async function rpc(method: string, params: unknown[]): Promise<string> {
-  const response = await fetch(env.BASE_RPC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  if (!response.ok) throw new Error(`Base RPC returned HTTP ${response.status}`);
-  const body = (await response.json()) as { result?: string; error?: { message?: string } };
-  if (body.error) throw new Error(body.error.message ?? "Base RPC call failed");
-  if (!body.result || body.result === "0x") throw new Error("Aave rate read returned no data");
-  return body.result;
+/** HTTP statuses worth one more attempt: a throttle, or a transient
+ * gateway failure at the RPC provider. Anything else is answered as-is. */
+const RETRYABLE_HTTP = new Set([429, 502, 503, 504]);
+
+/**
+ * A single JSON-RPC call, retried briefly on a throttle or transient
+ * gateway error. The public Base endpoint rate-limits, and a 429 that
+ * propagated straight out meant the Guardian silently skipped a strategy
+ * for that whole tick - the condition went unchecked rather than
+ * evaluated, which for a watcher is a real failure and not a cosmetic
+ * one. Retries are bounded and short; a persistent failure still throws,
+ * because "couldn't read the rate" must never be mistaken for "the
+ * condition isn't met".
+ */
+async function rpc(
+  method: string,
+  params: unknown[],
+  options: { attempts?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<string> {
+  const attempts = options.attempts ?? 3;
+  const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(env.BASE_RPC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+
+    if (!response.ok) {
+      if (RETRYABLE_HTTP.has(response.status) && attempt < attempts) {
+        await sleep(attempt * 500);
+        continue;
+      }
+      throw new Error(`Base RPC returned HTTP ${response.status}`);
+    }
+
+    const body = (await response.json()) as { result?: string; error?: { message?: string } };
+    if (body.error) throw new Error(body.error.message ?? "Base RPC call failed");
+    if (!body.result || body.result === "0x") throw new Error("Aave rate read returned no data");
+    return body.result;
+  }
 }
 
 function word(data: string, index: number): bigint {

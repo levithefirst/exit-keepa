@@ -276,6 +276,37 @@ describe("Exit Guardian - the unattended poller drives the same path with no HTT
     expect(after.body).toHaveLength(1);
     expect(callContractFunction).toHaveBeenCalledTimes(2);
   });
+
+  /**
+   * Regression: the poller read the Aave rate once PER STRATEGY, and every
+   * strategy watching the same market observes the identical market-wide
+   * number. With enough active strategies that burst of identical
+   * eth_calls got HTTP 429 from the public Base endpoint every tick, and a
+   * throttled read meant the Guardian skipped that strategy's condition
+   * entirely - observed live in production on 2026-09-03, where no
+   * strategy was ever evaluated. One read per metric per tick, shared.
+   */
+  it("reads the market rate once per tick, however many strategies are watching it", async () => {
+    const first = await createActiveStrategy();
+    const second = await createActiveStrategy();
+    const third = await createActiveStrategy();
+    expect(new Set([first, second, third]).size).toBe(3);
+
+    currentSupplyRateBps = 500; // above the threshold - nothing triggers, so this measures the reads alone
+    const rpcCallsBefore = (globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+
+    const { runPollTick } = await import("../src/agent/poller");
+    const tick = await runPollTick();
+
+    // Every active strategy in this suite's shared fake DB is evaluated,
+    // not just the three created here - which only sharpens the point.
+    expect(tick.evaluated).toBeGreaterThanOrEqual(3);
+    expect(tick.errored).toBe(0);
+
+    // One rate read for all of them, not one each.
+    const rpcCalls = (globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length - rpcCallsBefore;
+    expect(rpcCalls).toBe(1);
+  });
 });
 
 describe("Exit Guardian - refusal and pre-broadcast guards stop short of the chain", () => {

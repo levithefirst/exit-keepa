@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { decodeAaveRateBps } from "./aaveRateOracle";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { decodeAaveRateBps, readAaveUsdcRate } from "./aaveRateOracle";
 
 const RAY = 10n ** 27n;
 
@@ -43,5 +43,58 @@ describe("Aave rate oracle decoding", () => {
   it("fails closed on a response that is a few bytes short of a full 15-word tuple", () => {
     const truncated = fixture(bpsToRay(500), 0n).slice(0, -4);
     expect(() => decodeAaveRateBps(truncated, "supply_apr")).toThrow(/Unexpected Aave reserve response length/);
+  });
+});
+
+describe("Aave rate oracle - surviving a throttled RPC", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A 429 from the public Base endpoint used to propagate straight out of
+   * readAaveUsdcRate, which meant the Guardian skipped that strategy for
+   * the whole tick - the condition went unchecked rather than evaluated.
+   * Observed live in production (Railway, 2026-09-03): "Base RPC returned
+   * HTTP 429" on every tick, and no strategy was ever evaluated. */
+  it("retries a 429 and succeeds on the next attempt", async () => {
+    const words = Array.from({ length: 15 }, () => 0n);
+    words[2] = (500n * 10n ** 27n) / 10_000n; // 5.00% supply APR
+    const okBody = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      result: `0x${words.map((w) => w.toString(16).padStart(64, "0")).join("")}`,
+    });
+
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls++;
+        if (calls === 1) return new Response("rate limited", { status: 429 });
+        return new Response(okBody, { status: 200 });
+      }),
+    );
+
+    const snapshot = await readAaveUsdcRate("supply_apr");
+    expect(calls).toBe(2);
+    expect(snapshot.rateBps).toBe(500);
+  });
+
+  it("still throws once the retries are exhausted - a rate that could not be read is never mistaken for a condition that is not met", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("rate limited", { status: 429 })));
+    await expect(readAaveUsdcRate("supply_apr")).rejects.toThrow(/HTTP 429/);
+  });
+
+  it("does not retry a non-transient error", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls++;
+        return new Response("nope", { status: 400 });
+      }),
+    );
+    await expect(readAaveUsdcRate("supply_apr")).rejects.toThrow(/HTTP 400/);
+    expect(calls).toBe(1);
   });
 });

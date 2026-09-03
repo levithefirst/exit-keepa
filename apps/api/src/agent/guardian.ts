@@ -134,7 +134,23 @@ const NO_INTENT_HASH = hash({ noAttempt: true });
  * caller here never supplies any of that, same as every other execution
  * path in this codebase.
  */
-export async function evaluateStrategy(strategyId: string, source: DecisionSource): Promise<GuardianReceipt> {
+export async function evaluateStrategy(
+  strategyId: string,
+  source: DecisionSource,
+  /**
+   * A rate snapshot already read for this tick. The rate is a market-wide
+   * value - every strategy watching aave-v3-base supply_apr observes the
+   * identical number - so the poller reads it once per tick and passes it
+   * to each strategy rather than making one RPC call per strategy. Left
+   * undefined by the on-demand route, which reads fresh.
+   *
+   * It is only ever accepted for the metric this strategy actually
+   * watches (checked below); a mismatched snapshot is ignored and a fresh
+   * read is done, so a caller can never make a strategy evaluate against
+   * the wrong market's number.
+   */
+  preReadObservation?: AaveRateSnapshot,
+): Promise<GuardianReceipt> {
   const [strategy] = await db.select().from(exitStrategies).where(eq(exitStrategies.id, strategyId)).limit(1);
   if (!strategy) throw new HttpError(404, `Exit strategy ${strategyId} not found`);
 
@@ -154,7 +170,11 @@ export async function evaluateStrategy(strategyId: string, source: DecisionSourc
   // executeApprovedExecution as `approvedAt` so the stale-intent guard
   // measures the real age of this decision at the moment of broadcast.
   const observedAt = new Date();
-  const observation = await readAaveUsdcRate(condition.metric as "supply_apr" | "borrow_apr");
+  const metric = condition.metric as "supply_apr" | "borrow_apr";
+  const observation =
+    preReadObservation && preReadObservation.metric === metric
+      ? preReadObservation
+      : await readAaveUsdcRate(metric);
   const conditionMet = evaluateRateCondition(condition, observation.rateBps);
   const agentStateBefore = strategy.agentState as AgentState;
   const transition = nextAgentDecision(agentStateBefore, conditionMet);

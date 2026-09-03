@@ -4,6 +4,7 @@ import { exitStrategies } from "../db/schema";
 import { logger } from "../logger";
 import { env } from "../env";
 import { evaluateStrategy } from "./guardian";
+import { readAaveUsdcRate, type AaveRateMetric, type AaveRateSnapshot } from "./aaveRateOracle";
 import type { RateCondition } from "@exit-keepa/shared";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -40,9 +41,31 @@ export async function runPollTick(): Promise<{ evaluated: number; errored: numbe
     const strategies = await db.select().from(exitStrategies).where(eq(exitStrategies.status, "active"));
     const eligible = strategies.filter((s) => isGuardianSupported(s.condition));
 
+    // One rate read per metric per tick, shared by every strategy watching
+    // it. The rate is market-wide, so reading it per strategy meant N
+    // identical eth_calls every interval - which the public Base endpoint
+    // answers with HTTP 429 once enough strategies are active, and a
+    // throttled read means the Guardian skips that strategy's condition
+    // entirely for the tick. Grouped here rather than cached inside the
+    // oracle so there is no time-based staleness to reason about on a read
+    // that gates moving funds: each tick still reads the chain fresh.
+    const metrics = new Set(eligible.map((s) => (s.condition as RateCondition).metric as AaveRateMetric));
+    const observations = new Map<AaveRateMetric, AaveRateSnapshot>();
+    for (const metric of metrics) {
+      try {
+        observations.set(metric, await readAaveUsdcRate(metric));
+      } catch (err) {
+        // Leave it unset: each strategy below falls back to its own read,
+        // and if that fails too the per-strategy catch records it without
+        // taking down the tick.
+        logger.error({ err, metric }, "Exit Guardian could not read the shared rate for this tick");
+      }
+    }
+
     for (const strategy of eligible) {
       try {
-        const receipt = await evaluateStrategy(strategy.id, "poller");
+        const metric = (strategy.condition as RateCondition).metric as AaveRateMetric;
+        const receipt = await evaluateStrategy(strategy.id, "poller", observations.get(metric));
         evaluated++;
         if (receipt.decision === "triggered") {
           logger.info(
