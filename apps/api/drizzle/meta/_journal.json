@@ -36,6 +36,13 @@
       "when": 1788371188641,
       "tag": "0004_demo_sandbox_isolation",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788415603574,
+      "tag": "0005_orange_liz_osborn",
+      "breakpoints": true
     }
   ]
 }

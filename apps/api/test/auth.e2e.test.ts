@@ -258,6 +258,69 @@ describe("Ownership enforcement across resource types", () => {
   });
 });
 
+describe("POST /api/auth/signup + /api/auth/login - username/password accounts", () => {
+  it("signs up, auto-provisions a private sandbox Safe, and the token works against a real protected route", async () => {
+    const res = await request(app).post("/api/auth/signup").send({ username: "Alice", password: "correct-horse" });
+    expect(res.status).toBe(201);
+    expect(res.body.token).toBeTruthy();
+    // Username is normalized (lowercased) into the account's identity string.
+    expect(res.body.address).toBe("local:alice");
+
+    const mySafes = await request(app)
+      .get("/api/safe-accounts")
+      .set("Authorization", `Bearer ${res.body.token}`);
+    expect(mySafes.status).toBe(200);
+    expect(mySafes.body.length).toBe(1);
+    expect(mySafes.body[0].isSandbox).toBe(true);
+  });
+
+  it("rejects a signup with a username that's already taken (case-insensitively)", async () => {
+    await request(app).post("/api/auth/signup").send({ username: "bob", password: "correct-horse" });
+    const dup = await request(app).post("/api/auth/signup").send({ username: "BOB", password: "another-password" });
+    expect(dup.status).toBe(409);
+  });
+
+  it("rejects a signup with too short a password", async () => {
+    const res = await request(app).post("/api/auth/signup").send({ username: "carol", password: "short" });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a signup with a username containing invalid characters", async () => {
+    const res = await request(app).post("/api/auth/signup").send({ username: "dan!!", password: "correct-horse" });
+    expect(res.status).toBe(400);
+  });
+
+  it("logs in with the right password and reuses the exact same identity/Safe created at signup", async () => {
+    const signupRes = await request(app)
+      .post("/api/auth/signup")
+      .send({ username: "erin", password: "correct-horse" });
+    const signupSafes = await request(app)
+      .get("/api/safe-accounts")
+      .set("Authorization", `Bearer ${signupRes.body.token}`);
+
+    const loginRes = await request(app).post("/api/auth/login").send({ username: "erin", password: "correct-horse" });
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.address).toBe(signupRes.body.address);
+    expect(loginRes.body.token).not.toBe(signupRes.body.token);
+
+    const loginSafes = await request(app)
+      .get("/api/safe-accounts")
+      .set("Authorization", `Bearer ${loginRes.body.token}`);
+    expect(loginSafes.body.map((s: { id: string }) => s.id)).toEqual(signupSafes.body.map((s: { id: string }) => s.id));
+  });
+
+  it("rejects login with the wrong password", async () => {
+    await request(app).post("/api/auth/signup").send({ username: "frank", password: "correct-horse" });
+    const res = await request(app).post("/api/auth/login").send({ username: "frank", password: "wrong-password" });
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects login for a username that was never signed up", async () => {
+    const res = await request(app).post("/api/auth/login").send({ username: "ghost", password: "correct-horse" });
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("GET /api/safe-accounts - lets the dashboard auto-resolve a returning wallet's Safe", () => {
   it("returns only the Safes the calling session's address registered, never another wallet's", async () => {
     const { verifyRes: owner } = await signIn(generatePrivateKey());

@@ -2,7 +2,6 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, setAuthToken } from "./api";
-import { clientEnv } from "./env";
 
 interface Eip1193Provider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -52,13 +51,10 @@ interface WalletState {
   discoveredProviders: Record<string, Eip6963ProviderDetail>;
   /** True when `address` is a demo identity, not a real connected wallet. */
   isDemo: boolean;
-  /** True when signed in via Google/X rather than a wallet or demo mode. */
-  isSocial: boolean;
-  /** Which social provider, when `isSocial` - drives the Nav badge/icon. */
-  socialProvider: "google" | "x" | null;
-  /** A human label for the signed-in social account (email or @handle),
-   * shown in place of a wallet's short hex address. */
-  socialLabel: string | null;
+  /** True when signed in via username/password rather than a wallet or demo mode. */
+  isLocal: boolean;
+  /** The signed-in username, when `isLocal` - shown in place of a wallet's short hex address. */
+  username: string | null;
   /**
    * Connect and sign in. `rdns` picks a specific EIP-6963-announced provider
    * (e.g. MetaMask vs Coinbase Wallet when both are installed); omit it to
@@ -78,24 +74,20 @@ interface WalletState {
    */
   enterDemoMode: () => Promise<void>;
   /**
-   * Starts "Sign in with Google"/"Sign in with X" - a full-page redirect
-   * to this API's own OAuth start route (which itself redirects to the
-   * provider), never a popup, so it works the same in every browser.
-   * Returns to /auth/callback on this site once the provider's consent
-   * screen is done; see completeSocialLogin below for the other half.
+   * Creates a username/password account and signs in as it. Throws (with a
+   * message suitable for display) on a taken username or a rejected
+   * password - callers should catch and show `error.message` rather than
+   * relying on the shared `error` state, mirroring signIn's own contract.
    */
-  loginWithGoogle: () => void;
-  loginWithX: () => void;
-  /**
-   * Finishes a social sign-in: called once, by the /auth/callback page,
-   * with the token/identity/label the API redirected back with in the
-   * URL fragment (see routes/oauth.ts's successRedirectUrl). Never called
-   * directly by anything else.
-   */
-  completeSocialLogin: (input: { token: string; provider: "google" | "x"; identity: string; label: string }) => void;
+  signUp: (username: string, password: string) => Promise<void>;
+  /** Signs in to an existing username/password account. */
+  logIn: (username: string, password: string) => Promise<void>;
 }
 
 const DEMO_IDENTITY = "demo-mode";
+// Mirrors the API's routes/auth.ts localIdentity() - a username/password
+// account's stable identity string always has this prefix.
+const LOCAL_IDENTITY_PREFIX = "local:";
 
 const WalletContext = createContext<WalletState | null>(null);
 
@@ -111,8 +103,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [discoveredProviders, setDiscoveredProviders] = useState<Record<string, Eip6963ProviderDetail>>({});
-  const [socialProvider, setSocialProvider] = useState<"google" | "x" | null>(null);
-  const [socialLabel, setSocialLabel] = useState<string | null>(null);
   const hasProvider =
     (typeof window !== "undefined" && Boolean(window.ethereum)) || Object.keys(discoveredProviders).length > 0;
 
@@ -215,8 +205,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setAddress(null);
     setChainId(null);
     setActiveProvider(null);
-    setSocialProvider(null);
-    setSocialLabel(null);
   }, []);
 
   const enterDemoMode = useCallback(async () => {
@@ -235,24 +223,33 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const loginWithGoogle = useCallback(() => {
-    window.location.href = `${clientEnv.NEXT_PUBLIC_API_URL}/api/auth/oauth/google/start`;
-  }, []);
-
-  const loginWithX = useCallback(() => {
-    window.location.href = `${clientEnv.NEXT_PUBLIC_API_URL}/api/auth/oauth/x/start`;
-  }, []);
-
-  const completeSocialLogin = useCallback(
-    ({ token, provider, identity, label }: { token: string; provider: "google" | "x"; identity: string; label: string }) => {
+  const signUp = useCallback(async (username: string, password: string) => {
+    setError(null);
+    try {
+      const { token, address: identity } = await api.authSignup(username, password);
       setAuthToken(token);
       setAddress(identity);
       setChainId(8453);
-      setSocialProvider(provider);
-      setSocialLabel(label);
-    },
-    [],
-  );
+    } catch (err) {
+      const message = (err as Error).message ?? "Could not create account";
+      setError(message);
+      throw new Error(message);
+    }
+  }, []);
+
+  const logIn = useCallback(async (username: string, password: string) => {
+    setError(null);
+    try {
+      const { token, address: identity } = await api.authLogin(username, password);
+      setAuthToken(token);
+      setAddress(identity);
+      setChainId(8453);
+    } catch (err) {
+      const message = (err as Error).message ?? "Could not sign in";
+      setError(message);
+      throw new Error(message);
+    }
+  }, []);
 
   const switchToBase = useCallback(async () => {
     const provider = activeProvider ?? window.ethereum;
@@ -268,7 +265,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [activeProvider]);
 
   const isDemo = address === DEMO_IDENTITY;
-  const isSocial = socialProvider !== null;
+  const isLocal = address?.startsWith(LOCAL_IDENTITY_PREFIX) ?? false;
+  const username = isLocal ? (address as string).slice(LOCAL_IDENTITY_PREFIX.length) : null;
 
   const value = useMemo(
     () => ({
@@ -279,16 +277,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       hasProvider,
       discoveredProviders,
       isDemo,
-      isSocial,
-      socialProvider,
-      socialLabel,
+      isLocal,
+      username,
       connect,
       disconnect,
       switchToBase,
       enterDemoMode,
-      loginWithGoogle,
-      loginWithX,
-      completeSocialLogin,
+      signUp,
+      logIn,
     }),
     [
       address,
@@ -298,16 +294,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       hasProvider,
       discoveredProviders,
       isDemo,
-      isSocial,
-      socialProvider,
-      socialLabel,
+      isLocal,
+      username,
       connect,
       disconnect,
       switchToBase,
       enterDemoMode,
-      loginWithGoogle,
-      loginWithX,
-      completeSocialLogin,
+      signUp,
+      logIn,
     ],
   );
 

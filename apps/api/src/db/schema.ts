@@ -205,6 +205,23 @@ export const authSessions = pgTable("auth_sessions", {
 });
 
 /**
+ * A username/password identity (routes/auth.ts's /auth/signup and
+ * /auth/login). `username` is stored lowercased so lookups are
+ * case-insensitive without needing a citext extension. `passwordHash` is a
+ * scrypt digest of the password combined with `salt` (random per account,
+ * hex-encoded) - see auth/password.ts. The account's stable identity string
+ * for everything else (safeOwners.ownerAddress, authSessions.address) is
+ * `local:<username>`, mirroring how a demo session uses its own randomly
+ * generated address as its identity.
+ */
+export const localAccounts = pgTable("local_accounts", {
+  username: text("username").primaryKey(),
+  passwordHash: text("password_hash").notNull(),
+  salt: text("salt").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
  * Append-only audit log for every state-changing action and every inbound
  * KeeperHub webhook. This is the source of truth for "what happened and
  * when" independent of the mutable tables above.

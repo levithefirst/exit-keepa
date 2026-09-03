@@ -335,7 +335,7 @@ values).
   wallet, but is never an exception to this: every click auto-provisions
   a brand-new, private sandbox Safe unique to that session, never the
   project's own real Safe or another visitor's session - see
-  `JUDGE_DEMO.md` §2-4. 185 tests pass (176 in `apps/api`, 9 in
+  `JUDGE_DEMO.md` §2-4. 182 tests pass (173 in `apps/api`, 9 in
   `packages/shared`), including a dedicated end-to-end cross-wallet
   ownership proof and a demo-session isolation proof.
 - **Roles permission is genuinely scoped, not a rubber stamp — and this

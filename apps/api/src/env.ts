@@ -36,28 +36,6 @@ const envSchema = z.object({
   // How long an approved-but-not-yet-broadcast decision stays fresh before
   // routes/executions.ts's broadcast route refuses it as stale.
   AGENT_DECISION_MAX_AGE_MS: z.coerce.number().int().positive().default(5 * 60_000),
-
-  // Social sign-in (routes/oauth.ts) - an alternate login method alongside
-  // a real wallet connection or the demo-session sandbox, for someone who
-  // wants a persistent account without a wallet extension. All optional:
-  // each provider's start/callback routes check for their own pair at
-  // request time and answer "not configured" rather than ever faking a
-  // login when a value is missing - see routes/oauth.ts. Client secrets
-  // are never logged or echoed back to the browser.
-  GOOGLE_CLIENT_ID: z.string().min(1).optional(),
-  GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
-  X_CLIENT_ID: z.string().min(1).optional(),
-  X_CLIENT_SECRET: z.string().min(1).optional(),
-  // Signs the self-contained OAuth state/PKCE token (auth/oauthState.ts) -
-  // required for either provider to work, since there is no server-side
-  // session store between the start and callback legs of the redirect.
-  OAUTH_STATE_SECRET: z.string().min(16).optional(),
-  // This API's own public base URL, used to build the exact redirect_uri
-  // registered with each provider's console - must match byte-for-byte or
-  // the provider rejects the callback.
-  OAUTH_API_BASE_URL: z.string().url().optional(),
-  // Where a completed (or failed) sign-in redirects back to.
-  WEB_APP_URL: z.string().url().default("https://exit-keepa-web.vercel.app"),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -4,9 +4,10 @@ import { eq } from "drizzle-orm";
 import { isAddress, recoverMessageAddress } from "viem";
 import { z } from "zod";
 import { db } from "../db";
-import { authNonces, authSessions, safeAccounts, safeOwners } from "../db/schema";
+import { authNonces, authSessions, localAccounts, safeAccounts, safeOwners } from "../db/schema";
 import { HttpError } from "../middleware/errorHandler";
 import { buildSignInMessage } from "../auth/nonceMessage";
+import { hashPassword, verifyPassword } from "../auth/password";
 
 export const authRouter = Router();
 
@@ -122,4 +123,75 @@ authRouter.post("/auth/demo-session", async (_req, res) => {
   await db.insert(authSessions).values({ token, address: ownerAddress, expiresAt }).returning();
 
   res.status(200).json({ token, address: ownerAddress, expiresAt });
+});
+
+const USERNAME_RE = /^[a-z0-9_]{3,32}$/;
+
+const credentialsSchema = z.object({
+  username: z.string().min(3).max(32),
+  password: z.string().min(8).max(200),
+});
+
+/** This account's stable identity string everywhere else in the schema. */
+function localIdentity(username: string): string {
+  return `local:${username}`;
+}
+
+/**
+ * Creates a new username/password account and, mirroring
+ * /auth/demo-session, auto-provisions a private sandbox Safe for it - a
+ * signed-up user gets the same zero-setup demo-Safe experience without
+ * ever having to sign a wallet message, keyed to `local:<username>` instead
+ * of a per-session random address so it's the same Safe on every future
+ * login rather than a fresh one each time.
+ */
+authRouter.post("/auth/signup", async (req, res) => {
+  const { username: rawUsername, password } = credentialsSchema.parse(req.body);
+  const username = rawUsername.toLowerCase();
+  if (!USERNAME_RE.test(username)) {
+    throw new HttpError(400, "Username must be 3-32 characters: lowercase letters, numbers, underscore");
+  }
+
+  const [existing] = await db.select().from(localAccounts).where(eq(localAccounts.username, username)).limit(1);
+  if (existing) throw new HttpError(409, "That username is already taken");
+
+  const { hash, salt } = hashPassword(password);
+  await db.insert(localAccounts).values({ username, passwordHash: hash, salt }).returning();
+
+  const identity = localIdentity(username);
+  const [safe] = await db
+    .insert(safeAccounts)
+    .values({
+      chainId: 8453,
+      safeAddress: randomAddress(),
+      rolesModifierAddress: randomAddress(),
+      rolesKey: randomBytes32(),
+      isSandbox: true,
+    })
+    .returning();
+  await db.insert(safeOwners).values({ safeId: safe.id, ownerAddress: identity }).returning();
+
+  const token = randomToken();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  await db.insert(authSessions).values({ token, address: identity, expiresAt }).returning();
+
+  res.status(201).json({ token, address: identity, expiresAt });
+});
+
+/** Verifies username/password and issues a session for the same persistent identity created at signup. */
+authRouter.post("/auth/login", async (req, res) => {
+  const { username: rawUsername, password } = credentialsSchema.parse(req.body);
+  const username = rawUsername.toLowerCase();
+
+  const [account] = await db.select().from(localAccounts).where(eq(localAccounts.username, username)).limit(1);
+  if (!account || !verifyPassword(password, account.salt, account.passwordHash)) {
+    throw new HttpError(401, "Incorrect username or password");
+  }
+
+  const identity = localIdentity(username);
+  const token = randomToken();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  await db.insert(authSessions).values({ token, address: identity, expiresAt }).returning();
+
+  res.status(200).json({ token, address: identity, expiresAt });
 });

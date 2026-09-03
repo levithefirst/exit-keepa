@@ -7,7 +7,7 @@ import { useWallet } from "../lib/wallet";
 import { btnPrimarySmall, btnGhost, linkFocus } from "../lib/ui";
 import { Logo } from "./Logo";
 import { WalletConnectModal } from "./WalletConnectModal";
-import { ProfileLoginModal, GoogleIcon, XIcon } from "./ProfileLoginModal";
+import { ProfileLoginModal } from "./ProfileLoginModal";
 import { ThemeToggle } from "./ThemeToggle";
 
 function short(addr: string) {
@@ -29,9 +29,8 @@ export function Nav() {
     switchToBase,
     isDemo,
     enterDemoMode,
-    isSocial,
-    socialProvider,
-    socialLabel,
+    isLocal,
+    username,
   } = useWallet();
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -66,7 +65,7 @@ export function Nav() {
 
   const walletControls = address ? (
     <div className="flex flex-wrap items-center gap-2">
-      {!isDemo && !isSocial && chainId !== 8453 && (
+      {!isDemo && !isLocal && chainId !== 8453 && (
         <button
           onClick={switchToBase}
           className={`min-h-11 rounded-lg bg-warning/15 px-2 text-xs text-warning ${linkFocus}`}
@@ -76,18 +75,15 @@ export function Nav() {
       )}
       {isDemo ? (
         <span className="rounded-lg bg-warning/15 px-3 py-1 text-xs text-warning">Demo mode</span>
-      ) : isSocial ? (
-        <span className="flex items-center gap-1.5 rounded-lg bg-forest-700 px-3 py-1 text-xs text-cream-200">
-          {socialProvider === "google" ? <GoogleIcon className="h-3.5 w-3.5" /> : <XIcon className="h-3.5 w-3.5" />}
-          {socialLabel}
-        </span>
+      ) : isLocal ? (
+        <span className="rounded-lg bg-forest-700 px-3 py-1 text-xs text-cream-200">{username}</span>
       ) : (
         <span className="data-mono rounded-lg bg-forest-700 px-3 py-1 font-mono text-xs text-cream-200">
           {short(address)}
         </span>
       )}
       <button onClick={disconnect} className={`min-h-11 px-1 text-xs text-cream-300 hover:text-cream-50 ${linkFocus}`}>
-        {isDemo ? "Exit demo" : isSocial ? "Sign out" : "Disconnect"}
+        {isDemo ? "Exit demo" : isLocal ? "Sign out" : "Disconnect"}
       </button>
     </div>
   ) : (

@@ -63,6 +63,16 @@ export const api = {
     }),
   authDemoSession: () =>
     request<{ token: string; address: string; expiresAt: string }>("/api/auth/demo-session", { method: "POST" }),
+  authSignup: (username: string, password: string) =>
+    request<{ token: string; address: string; expiresAt: string }>("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+  authLogin: (username: string, password: string) =>
+    request<{ token: string; address: string; expiresAt: string }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
 
   createSafeAccount: (input: unknown) => request("/api/safe-accounts", { method: "POST", body: JSON.stringify(input) }),
   listMySafeAccounts: () => request<any[]>("/api/safe-accounts"),
