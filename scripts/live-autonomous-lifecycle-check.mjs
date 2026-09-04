@@ -203,6 +203,13 @@ async function uiJourney() {
   await page.waitForTimeout(3000);
   check("landed on the dashboard with no wallet prompt", /\/dashboard/.test(page.url()), page.url());
 
+  const dashText = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+  check(
+    "the dashboard never asks for a Roles Modifier address or a role key",
+    !/Roles Modifier address/i.test(dashText) && !/Role key, bytes32/i.test(dashText),
+    dashText.slice(0, 160),
+  );
+
   await page.getByRole("link", { name: /New strategy/i }).first().click();
   await page.waitForURL(/\/create/, { timeout: 20_000 }).catch(() => {});
   await page.waitForTimeout(2000);
@@ -260,8 +267,49 @@ async function uiJourney() {
   await browser.close();
 }
 
+/**
+ * D. Onboarding for a REAL Safe: authorization must be read from chain and
+ * must never come back "protected" for a Safe that has authorized nothing.
+ * Uses a real, well-known Base Safe address that has no Exit Keepa
+ * permission - registering an address is read-only and moves nothing.
+ */
+async function realSafeOnboarding() {
+  console.log("\n=== D. Real-Safe onboarding: authorization is read from chain ===");
+  const session = await api("/api/auth/demo-session", { method: "POST", body: {} });
+  const token = session.body?.token;
+
+  // A real Base address that is not a Safe configured for Exit Keepa.
+  const created = await api("/api/safe-accounts", {
+    token,
+    method: "POST",
+    body: { chainId: 8453, safeAddress: "0x4200000000000000000000000000000000000006" },
+  });
+  check("a Safe registers from its address alone", created.status === 201, created.raw?.slice(0, 120));
+  check("no Roles Modifier was asked for or stored", created.body?.rolesModifierAddress === null);
+  check("no role key was asked for or stored", created.body?.rolesKey === null);
+
+  const auth = await api(`/api/safe-accounts/${created.body?.id}/authorization`, { token });
+  check("authorization status is served", auth.status === 200, auth.raw?.slice(0, 200));
+  check(
+    "an unauthorized Safe is NEVER reported as protected",
+    auth.body?.state !== "protected",
+    `state=${auth.body?.state}`,
+  );
+  check(
+    "it names the state in plain English rather than Zodiac jargon",
+    typeof auth.body?.summary === "string" && !/zodiac|roles modifier|selector|bytes32/i.test(auth.body.summary),
+    auth.body?.summary,
+  );
+  check(
+    "the state came from a real chain read (or says why it could not)",
+    Array.isArray(auth.body?.enabledModules) && (auth.body.undetermined === null || typeof auth.body.undetermined === "string"),
+    `modules=${JSON.stringify(auth.body?.enabledModules)} undetermined=${auth.body?.undetermined}`,
+  );
+}
+
 await apiJourney();
 await negativeCase();
+await realSafeOnboarding();
 await uiJourney();
 
 const failed = checks.filter((c) => !c.pass);
