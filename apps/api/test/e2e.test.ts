@@ -603,3 +603,68 @@ describe("demo sandbox Safe: the whole lifecycle runs, nothing reaches a chain",
     expect(crossRead.status).toBe(403);
   });
 });
+
+
+describe("Safe authorization status - onboarding reads chain, not assumptions", () => {
+  /**
+   * The three states onboarding renders from, plus the thing that removed
+   * the "paste your Roles Modifier address" step: the modifier is detected
+   * on the Safe and adopted automatically.
+   */
+  async function registerRealSafe(safeAddress: string) {
+    const res = await request(app)
+      .post("/api/safe-accounts")
+      .set(authHeader(token))
+      .send({ chainId: 8453, safeAddress });
+    return res;
+  }
+
+  it("registers a Safe from its address alone - no module address, no role key", async () => {
+    const res = await registerRealSafe("0x00000000000000000000000000000000000000aa");
+    expect(res.status).toBe(201);
+    expect(res.body.rolesModifierAddress).toBeNull();
+    expect(res.body.rolesKey).toBeNull();
+  });
+
+  it("STATE 1: a Safe with no Zodiac module reports needs_module and stays unprotected", async () => {
+    const safe = await registerRealSafe("0x00000000000000000000000000000000000000bb");
+    const res = await request(app)
+      .get(`/api/safe-accounts/${safe.body.id}/authorization`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.state).toBe("needs_module");
+    expect(res.body.state).not.toBe("protected");
+    expect(res.body.detectedModifierAddress).toBeNull();
+    // Reached by actually reading and decoding an empty module list, not by
+    // the read failing - otherwise this test would pass for the wrong reason.
+    expect(res.body.undetermined).toBeNull();
+    expect(res.body.enabledModules).toEqual([]);
+    expect(res.body.summary).toMatch(/one-time setup/i);
+  });
+
+  it("a demo sandbox Safe is protected without any chain read or KeeperHub call", async () => {
+    const demoRes = await request(app).post("/api/auth/demo-session").send({});
+    const demoToken: string = demoRes.body.token;
+    const safes = await request(app).get("/api/safe-accounts").set(authHeader(demoToken));
+
+    const res = await request(app)
+      .get(`/api/safe-accounts/${safes.body[0].id}/authorization`)
+      .set(authHeader(demoToken));
+
+    expect(res.status).toBe(200);
+    expect(res.body.state).toBe("protected");
+    expect(res.body.permissionChecked).toBe(false);
+    expect(res.body.summary).toMatch(/demo sandbox/i);
+    expect(callContractFunction).not.toHaveBeenCalled();
+  });
+
+  it("refuses to report authorization for a Safe the session does not own", async () => {
+    const safe = await registerRealSafe("0x00000000000000000000000000000000000000cc");
+    const otherToken = await createTestSession(fakeDb, "0xDdD0000000000000000000000000000000000dDd");
+    const res = await request(app)
+      .get(`/api/safe-accounts/${safe.body.id}/authorization`)
+      .set(authHeader(otherToken));
+    expect(res.status).toBe(403);
+  });
+});

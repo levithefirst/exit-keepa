@@ -78,6 +78,11 @@ export const api = {
   listMySafeAccounts: () => request<any[]>("/api/safe-accounts"),
   getSafeAccount: (id: string) => request(`/api/safe-accounts/${id}`),
   getSafeBalances: (id: string) => request(`/api/safe-accounts/${id}/balances`),
+  // Can Exit Keepa execute this Safe's exit yet, and if not what's left?
+  // Answered from chain state plus a dry run of the real transaction - see
+  // apps/api/src/safe/authorizationStatus.ts. This is what onboarding
+  // renders from; the UI never decides authorization for itself.
+  getSafeAuthorization: (id: string) => request<any>(`/api/safe-accounts/${id}/authorization`),
 
   listStrategies: (safeId?: string) =>
     request<any[]>(`/api/exit-strategies${safeId ? `?safeId=${encodeURIComponent(safeId)}` : ""}`),

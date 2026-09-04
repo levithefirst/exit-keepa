@@ -6,7 +6,7 @@ import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
 import { resolveSafeId } from "../../lib/resolveSafeId";
 import { btnPrimary, btnSecondary, inputBase, card, linkFocus } from "../../lib/ui";
-import { RolesSetupPanel } from "../../components/RolesSetupPanel";
+import { AuthorizationPanel } from "../../components/AuthorizationPanel";
 import { ErrorDetail } from "../../components/ErrorDetail";
 
 const AAVE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -31,6 +31,8 @@ export default function CreateStrategyPage() {
 
   const [strategyId, setStrategyId] = useState<string | null>(null);
   const [preview, setPreview] = useState<any>(null);
+  const [authorization, setAuthorization] = useState<any>(null);
+  const [safeAccount, setSafeAccount] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<"form" | "review" | "activated">("form");
 
@@ -85,17 +87,30 @@ export default function CreateStrategyPage() {
       setStrategyId(strategy.id);
       const previewRes: any = await api.previewStrategy(strategy.id);
       setPreview(previewRes);
+      // Read the Safe's real authorization state so the review screen can
+      // show the guided one-time setup rather than a raw build error.
+      try {
+        setSafeAccount(await api.getSafeAccount(safeId!));
+        setAuthorization(await api.getSafeAuthorization(safeId!));
+      } catch {
+        setAuthorization(null);
+      }
       setStep("review");
     } catch (err) {
       setError((err as Error).message);
     }
   }
 
+  /** Re-reads the preview AND the Safe's chain-derived authorization state. */
   async function recheckPreview() {
     if (!strategyId) return;
     try {
       const previewRes: any = await api.previewStrategy(strategyId);
       setPreview(previewRes);
+      if (safeId) {
+        setSafeAccount(await api.getSafeAccount(safeId));
+        setAuthorization(await api.getSafeAuthorization(safeId));
+      }
     } catch (err) {
       setError((err as Error).message);
     }
@@ -189,8 +204,13 @@ export default function CreateStrategyPage() {
           )
         )}
 
-        {preview.rolesPermission && (canActivate || rolesBlocking) && (
-          <RolesSetupPanel spec={preview.rolesPermission} onRecheck={recheckPreview} />
+        {!canActivate && authorization && authorization.state !== "protected" && safeAccount && (
+          <AuthorizationPanel
+            status={authorization}
+            safeAddress={safeAccount.safeAddress}
+            chainId={safeAccount.chainId}
+            onRecheck={recheckPreview}
+          />
         )}
 
         {error && <p className="text-pretty text-sm text-danger">{error}</p>}

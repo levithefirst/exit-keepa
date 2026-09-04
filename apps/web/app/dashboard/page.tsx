@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { buildRolesSafeAppUrl, buildZodiacModulesSafeAppUrl, buildCreateSafeUrl } from "@exit-keepa/shared";
+import { buildCreateSafeUrl } from "@exit-keepa/shared";
 import { useWallet } from "../../lib/wallet";
 import { api } from "../../lib/api";
 import { resolveSafeId } from "../../lib/resolveSafeId";
 import { setStoredSafeId } from "../../lib/storage";
-import { btnPrimary, btnGhost, btnSecondarySmall, inputBase, linkFocus, card } from "../../lib/ui";
+import { btnPrimary, btnGhost, inputBase, linkFocus, card } from "../../lib/ui";
 import { StatusPill } from "../../components/StatusPill";
 import { CopyButton } from "../../components/CopyButton";
+import { AuthorizationPanel } from "../../components/AuthorizationPanel";
 
 const BASESCAN = "https://basescan.org";
 
@@ -29,10 +30,9 @@ export default function DashboardPage() {
   const [safeId, setSafeId] = useState<string | null | undefined>(undefined); // undefined = still resolving
   const [safe, setSafe] = useState<any>(null);
   const [balances, setBalances] = useState<any>(null);
+  const [authorization, setAuthorization] = useState<any>(null);
   const [strategies, setStrategies] = useState<any[]>([]);
   const [formSafeAddress, setFormSafeAddress] = useState("");
-  const [formRoles, setFormRoles] = useState("");
-  const [formRoleKey, setFormRoleKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -63,6 +63,7 @@ export default function DashboardPage() {
     setSafeId(undefined);
     setSafe(null);
     setBalances(null);
+    setAuthorization(null);
     setStrategies([]);
     setError(null);
     resolveSafeId(address, isDemo).then((id) => {
@@ -77,12 +78,20 @@ export default function DashboardPage() {
     if (!safeId) return;
     let cancelled = false;
     setLoading(true);
-    Promise.all([api.getSafeAccount(safeId), api.getSafeBalances(safeId).catch(() => null), api.listStrategies(safeId)])
-      .then(([s, b, strats]) => {
+    Promise.all([
+      api.getSafeAccount(safeId),
+      api.getSafeBalances(safeId).catch(() => null),
+      api.listStrategies(safeId),
+      // Authorization is read from chain, so it can be slow or fail
+      // transiently - that must never block the rest of the dashboard.
+      api.getSafeAuthorization(safeId).catch(() => null),
+    ])
+      .then(([s, b, strats, auth]) => {
         if (cancelled) return;
         setSafe(s);
         setBalances(b);
         setStrategies(strats);
+        setAuthorization(auth);
       })
       .catch((err) => {
         if (!cancelled) setError(err.message);
@@ -116,14 +125,26 @@ export default function DashboardPage() {
     }
   }
 
+  /** Re-reads authorization from chain after the user says they've signed. */
+  async function refreshAuthorization() {
+    if (!safeId) return;
+    try {
+      const [auth, s] = await Promise.all([api.getSafeAuthorization(safeId), api.getSafeAccount(safeId)]);
+      setAuthorization(auth);
+      setSafe(s);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   async function registerSafe() {
     setError(null);
     try {
+      // Only the Safe address. The Zodiac modifier is detected from the
+      // Safe on-chain by GET /safe-accounts/:id/authorization, never typed.
       const created: any = await api.createSafeAccount({
         chainId: 8453,
         safeAddress: formSafeAddress,
-        rolesModifierAddress: formRoles || null,
-        rolesKey: formRoleKey || null,
       });
       setStoredSafeId(address!, created.id);
       setSafeId(created.id);
@@ -171,43 +192,9 @@ export default function DashboardPage() {
             onChange={(e) => setFormSafeAddress(e.target.value)}
           />
         </div>
-        <details className="group rounded-lg border border-cream-100/10 px-3 py-2.5">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm text-cream-300 hover:text-cream-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
-            Already set up Zodiac Roles for this Safe?
-            <svg className="faq-chevron h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
-            </svg>
-          </summary>
-          <div className="mt-3 space-y-3">
-            <div>
-              <label htmlFor="roles-modifier" className="mb-1 block text-sm text-cream-300">
-                Roles Modifier address
-              </label>
-              <input
-                id="roles-modifier"
-                className={inputBase}
-                placeholder="0x..."
-                value={formRoles}
-                onChange={(e) => setFormRoles(e.target.value)}
-              />
-            </div>
-            <div>
-              <label htmlFor="role-key" className="mb-1 block text-sm text-cream-300">
-                Role key, bytes32
-              </label>
-              <input
-                id="role-key"
-                className={inputBase}
-                placeholder="0x..."
-                value={formRoleKey}
-                onChange={(e) => setFormRoleKey(e.target.value)}
-              />
-            </div>
-          </div>
-        </details>
         <p className="text-pretty text-xs text-cream-500">
-          Not set up yet? No problem - save your Safe now and you&apos;ll get one button here to grant Exit Keepa its
-          permission, whenever you&apos;re ready.
+          That&apos;s all we need. Exit Keepa reads the rest from your Safe itself - you&apos;ll never be asked to
+          paste a module address or a role key.
         </p>
         {error && <p className="text-pretty text-sm text-danger">{error}</p>}
         <button onClick={registerSafe} className={btnPrimary}>
@@ -240,45 +227,8 @@ export default function DashboardPage() {
             <CopyButton value={safe.safeAddress} label="Copy address" />
           </div>
           <p className="text-xs tabular-nums text-cream-400">Chain: Base ({safe.chainId})</p>
-          {safe.isSandbox ? (
-            <p className="mt-1 text-xs text-mint-300">
-              ✓ Roles permission ready to execute through (pre-configured for this private demo sandbox)
-            </p>
-          ) : safe.rolesModifierAddress && safe.rolesKey ? (
-            <p className="mt-1 text-pretty text-xs text-mint-300">
-              ✓ READY - Exit Keepa is authorized to execute this exit automatically
-            </p>
-          ) : (
-            // Two genuinely different states, and sending the first one to
-            // the Roles app is the dead end people actually hit: that app
-            // edits permissions on a Roles Modifier, so for a Safe with no
-            // Modifier installed it opens with nothing to configure. Step 1
-            // belongs in the Zodiac app instead.
-            <div className="mt-2 space-y-1.5 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-pretty text-xs text-warning">
-                  {safe.rolesModifierAddress
-                    ? "Step 2 of 2: grant Exit Keepa its one withdrawal permission, in Safe's own app."
-                    : "Step 1 of 2: install Zodiac's Roles Modifier on this Safe, in Safe's own app."}
-                </p>
-                <a
-                  href={
-                    safe.rolesModifierAddress
-                      ? buildRolesSafeAppUrl(safe.chainId, safe.safeAddress)
-                      : buildZodiacModulesSafeAppUrl(safe.chainId, safe.safeAddress)
-                  }
-                  target="_blank"
-                  rel="noreferrer"
-                  className={`inline-flex shrink-0 ${btnSecondarySmall}`}
-                >
-                  {safe.rolesModifierAddress ? "Grant permission →" : "Install the module →"}
-                </a>
-              </div>
-              <p className="text-pretty text-xs text-cream-500">
-                One-time setup. Connect the wallet that&apos;s actually an owner of this Safe when Safe&apos;s app
-                asks - it rejects any other wallet. After this, Exit Keepa executes on its own.
-              </p>
-            </div>
+          {authorization?.state === "protected" && (
+            <p className="mt-1 text-pretty text-xs text-mint-300">✓ Protected - {authorization.summary}</p>
           )}
           {balances && (
             <p className="mt-2 text-sm tabular-nums text-cream-200">
@@ -286,6 +236,15 @@ export default function DashboardPage() {
             </p>
           )}
         </div>
+      )}
+
+      {safe && authorization && authorization.state !== "protected" && (
+        <AuthorizationPanel
+          status={authorization}
+          safeAddress={safe.safeAddress}
+          chainId={safe.chainId}
+          onRecheck={refreshAuthorization}
+        />
       )}
 
       <div className="flex items-center justify-between">

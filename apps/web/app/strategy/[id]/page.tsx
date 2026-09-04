@@ -6,7 +6,7 @@ import { btnSecondarySmall, btnDanger, card } from "../../../lib/ui";
 import { StatusPill } from "../../../components/StatusPill";
 import { CopyButton } from "../../../components/CopyButton";
 import { ErrorDetail } from "../../../components/ErrorDetail";
-import { RolesSetupPanel } from "../../../components/RolesSetupPanel";
+import { AuthorizationPanel } from "../../../components/AuthorizationPanel";
 
 const BASESCAN = "https://basescan.org";
 
@@ -134,6 +134,8 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
   const [executions, setExecutions] = useState<any[]>([]);
   const [receipt, setReceipt] = useState<any>(null);
   const [decisions, setDecisions] = useState<any[]>([]);
+  const [authorization, setAuthorization] = useState<any>(null);
+  const [safeAccount, setSafeAccount] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -157,6 +159,14 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
       setDecisions(await api.listAgentDecisions(id));
     } catch {
       setDecisions([]);
+    }
+    // Authorization comes from chain, not from this page's assumptions.
+    try {
+      const acct = await api.getSafeAccount(s.safeId);
+      setSafeAccount(acct);
+      setAuthorization(await api.getSafeAuthorization(s.safeId));
+    } catch {
+      setAuthorization(null);
     }
   }
 
@@ -335,8 +345,13 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
       </div>
 
       {/* The one-time authorization, only when there's actually something to do. */}
-      {preview?.rolesPermission && !ready && (
-        <RolesSetupPanel spec={preview.rolesPermission} onRecheck={refresh} />
+      {authorization && authorization.state !== "protected" && safeAccount && (
+        <AuthorizationPanel
+          status={authorization}
+          safeAddress={safeAccount.safeAddress}
+          chainId={safeAccount.chainId}
+          onRecheck={refresh}
+        />
       )}
       {preview && !preview.tx && !String(preview.txError ?? "").includes("Roles Modifier") && (
         <ErrorDetail message={preview.txError} className="rounded-xl border border-warning/30 bg-warning/5 p-4" />

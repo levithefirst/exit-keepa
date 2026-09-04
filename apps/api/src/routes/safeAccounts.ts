@@ -7,6 +7,8 @@ import { HttpError } from "../middleware/errorHandler";
 import { logger } from "../logger";
 import { env } from "../env";
 import { requireSafeOwnership, requireSession } from "../auth/session";
+import { readAuthorizationStatus } from "../safe/authorizationStatus";
+import { AAVE_V3_BASE, type ExitAction } from "@exit-keepa/shared";
 
 export const safeAccountsRouter = Router();
 
@@ -115,4 +117,72 @@ safeAccountsRouter.get("/safe-accounts/:id/balances", async (req, res) => {
     logger.error({ err }, "Failed to read Safe balances");
     res.status(502).json({ error: "balance_read_failed", message: (err as Error).message });
   }
+});
+
+
+/**
+ * The one question onboarding actually needs answered: can Exit Keepa
+ * execute this Safe's exit yet, and if not, what exactly is missing?
+ *
+ * Answered from chain state (the Safe's enabled modules) plus a dry run of
+ * the exact transaction Exit Keepa would send - not from whatever happens
+ * to be stored in this database. That matters because the database can be
+ * stale, hand-entered, or simply wrong, and "the UI thinks you're set up"
+ * is not a security property.
+ *
+ * Side effect worth calling out: when a Zodiac modifier is detected on the
+ * Safe and this record doesn't have one stored, it is adopted here. That
+ * is what removes the "paste your Roles Modifier address" step from
+ * onboarding entirely - the address is read off the Safe, never typed.
+ * Only ever adopted from a real chain read of that specific Safe.
+ */
+safeAccountsRouter.get("/safe-accounts/:id/authorization", async (req, res) => {
+  const address = await requireSession(req);
+  await requireSafeOwnership(req.params.id, address);
+
+  const [row] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, req.params.id)).limit(1);
+  if (!row) throw new HttpError(404, `Safe account ${req.params.id} not found`);
+
+  // The exit every strategy on this Safe performs today - the same
+  // deterministic action buildExitTransaction is constrained to. Used only
+  // to dry-run the permission; nothing here is executed.
+  const probeAction: ExitAction = {
+    protocol: "aave-v3-base",
+    action: "withdraw",
+    asset: AAVE_V3_BASE.usdc,
+    amount: "max",
+  };
+
+  const status = await readAuthorizationStatus(
+    {
+      safeAddress: row.safeAddress,
+      chainId: row.chainId,
+      rolesModifierAddress: row.rolesModifierAddress,
+      rolesKey: row.rolesKey,
+      isSandbox: row.isSandbox,
+    },
+    probeAction,
+  );
+
+  // Adopt a modifier discovered on-chain so the user never has to supply
+  // one. Never overwrites an address already stored, and never invents one
+  // for a sandbox Safe.
+  if (!row.isSandbox && status.detectedModifierAddress && !row.rolesModifierAddress) {
+    await db
+      .update(safeAccounts)
+      .set({ rolesModifierAddress: status.detectedModifierAddress })
+      .where(eq(safeAccounts.id, row.id));
+    await db.insert(auditEvents).values({
+      entityType: "safe",
+      entityId: row.id,
+      eventType: "safe_account.modifier_detected",
+      payload: { detected: status.detectedModifierAddress, enabledModules: status.enabledModules },
+    });
+    logger.info(
+      { safeId: row.id, modifier: status.detectedModifierAddress },
+      "Adopted a Zodiac modifier detected on the Safe",
+    );
+  }
+
+  res.status(200).json(status);
 });
