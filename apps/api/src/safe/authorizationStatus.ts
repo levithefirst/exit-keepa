@@ -5,51 +5,20 @@ import { buildExitTransaction, type SafeForExecution } from "../execution/buildT
 import { simulateExitTransaction } from "../execution/executor";
 import { verifyRolesModifier } from "./authorizationTransactions";
 
-export const SELECTORS = {
-  getModulesPaginated: "0xcc2f8452",
-  avatar: "0x5aef7de6",
-  target: "0xd4b83992",
-} as const;
-
+export const SELECTORS = { getModulesPaginated: "0xcc2f8452", avatar: "0x5aef7de6", target: "0xd4b83992" } as const;
 const SENTINEL_MODULES = "0x0000000000000000000000000000000000000001";
-
 export type AuthorizationState = "needs_module" | "needs_permission" | "protected";
-
-export interface AuthorizationStatus {
-  state: AuthorizationState;
-  detectedModifierAddress: string | null;
-  enabledModules: string[];
-  permissionChecked: boolean;
-  undetermined: string | null;
-  summary: string;
-}
+export interface AuthorizationStatus { state: AuthorizationState; detectedModifierAddress: string | null; enabledModules: string[]; permissionChecked: boolean; undetermined: string | null; summary: string; }
 
 async function rpcCall(to: string, data: string): Promise<string> {
-  const response = await fetch(env.BASE_RPC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }),
-  });
-  if (!response.ok) throw new Error(`Base RPC returned HTTP ${response.status}`);
-  const body = (await response.json()) as { result?: string; error?: { message?: string } };
-  if (body.error) throw new Error(body.error.message ?? "Base RPC call failed");
-  return body.result ?? "0x";
+  const response = await fetch(env.BASE_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }) });
+  if (!response.ok) throw new Error("RPC verification failed");
+  const body = await response.json() as { result?: string; error?: unknown };
+  if (body.error || !body.result) throw new Error("RPC verification failed");
+  return body.result;
 }
-
-function encodeAddress(address: string): string {
-  return address.slice(2).toLowerCase().padStart(64, "0");
-}
-
-function encodeUint(value: bigint): string {
-  return value.toString(16).padStart(64, "0");
-}
-
-function wordAsAddress(hex: string, wordIndex: number): string {
-  const body = hex.startsWith("0x") ? hex.slice(2) : hex;
-  const word = body.slice(wordIndex * 64, wordIndex * 64 + 64);
-  return `0x${word.slice(24)}`;
-}
-
+function encodeAddress(address: string): string { return address.slice(2).toLowerCase().padStart(64, "0"); }
+function encodeUint(value: bigint): string { return value.toString(16).padStart(64, "0"); }
 export function decodeModulesPaginated(hex: string): string[] {
   const body = hex.startsWith("0x") ? hex.slice(2) : hex;
   if (body.length < 128) return [];
@@ -65,126 +34,41 @@ export function decodeModulesPaginated(hex: string): string[] {
   }
   return modules;
 }
-
 export async function detectZodiacModifier(safeAddress: string): Promise<{ enabledModules: string[]; modifier: string | null }> {
-  const data = `${SELECTORS.getModulesPaginated}${encodeAddress(SENTINEL_MODULES)}${encodeUint(20n)}`;
-  const raw = await rpcCall(safeAddress, data);
+  const raw = await rpcCall(safeAddress, `${SELECTORS.getModulesPaginated}${encodeAddress(SENTINEL_MODULES)}${encodeUint(20n)}`);
   const enabledModules = decodeModulesPaginated(raw);
-
   for (const moduleAddress of enabledModules) {
-    try {
-      if (await verifyRolesModifier(moduleAddress as `0x${string}`, safeAddress as `0x${string}`)) {
-        return { enabledModules, modifier: moduleAddress };
-      }
-    } catch {
-      // A malformed/unreadable module is not compatible. Continue checking
-      // the other enabled modules and fail closed if none is compatible.
-    }
+    try { if (await verifyRolesModifier(moduleAddress as `0x${string}`, safeAddress as `0x${string}`)) return { enabledModules, modifier: moduleAddress }; }
+    catch { /* incompatible or unreadable module, fail closed */ }
   }
   return { enabledModules, modifier: null };
 }
 
-export async function readAuthorizationStatus(
-  safe: SafeForExecution & { isSandbox: boolean },
-  action: ExitAction,
-): Promise<AuthorizationStatus> {
-  if (safe.isSandbox) {
-    return {
-      state: "protected",
-      detectedModifierAddress: safe.rolesModifierAddress,
-      enabledModules: [],
-      permissionChecked: false,
-      undetermined: null,
-      summary: "This is your private demo sandbox - it's ready to use, and there's nothing to authorize.",
-    };
-  }
-
-  if (safe.chainId !== AAVE_V3_BASE.chainId) {
-    return {
-      state: "needs_module",
-      detectedModifierAddress: null,
-      enabledModules: [],
-      permissionChecked: false,
-      undetermined: `This Safe is registered on chain ${safe.chainId}; Exit Keepa currently protects Base only.`,
-      summary: "Exit Keepa currently protects Safes on Base only.",
-    };
-  }
+export async function readAuthorizationStatus(safe: SafeForExecution & { isSandbox: boolean }, action: ExitAction): Promise<AuthorizationStatus> {
+  if (safe.isSandbox) return { state: "protected", detectedModifierAddress: safe.rolesModifierAddress, enabledModules: [], permissionChecked: false, undetermined: null, summary: "This is your private demo sandbox - it's ready to use, and there's nothing to authorize." };
+  if (safe.chainId !== AAVE_V3_BASE.chainId) return { state: "needs_module", detectedModifierAddress: null, enabledModules: [], permissionChecked: false, undetermined: "This Safe is not on Base.", summary: "Exit Keepa currently protects Safes on Base only." };
 
   let enabledModules: string[] = [];
   let modifier: string | null = null;
   try {
     const detected = await detectZodiacModifier(safe.safeAddress);
-    enabledModules = detected.enabledModules;
-    modifier = detected.modifier;
+    enabledModules = detected.enabledModules; modifier = detected.modifier;
   } catch (err) {
-    return {
-      state: "needs_module",
-      detectedModifierAddress: null,
-      enabledModules: [],
-      permissionChecked: false,
-      undetermined: `Couldn't read this Safe's settings from Base right now: ${(err as Error).message}`,
-      summary: "We couldn't check your Safe just now. This is usually temporary - try again in a moment.",
-    };
+    logger.warn({ err, safeAddress: safe.safeAddress }, "Could not inspect Safe modules");
+    return { state: "needs_module", detectedModifierAddress: null, enabledModules: [], permissionChecked: false, undetermined: "Could not verify your Safe. Try again.", summary: "We couldn't check your Safe just now. Try again in a moment." };
   }
+  if (!modifier) return { state: "needs_module", detectedModifierAddress: null, enabledModules, permissionChecked: false, undetermined: null, summary: "Your Safe needs one additional permission module before Exit Keepa can protect it." };
 
-  if (!modifier) {
-    return {
-      state: "needs_module",
-      detectedModifierAddress: null,
-      enabledModules,
-      permissionChecked: false,
-      undetermined: null,
-      summary: "Your Safe needs one additional permission module before Exit Keepa can protect it.",
-    };
-  }
-
-  // The role is fixed by Exit Keepa. Database/client values cannot change
-  // the authorization identity used by either verification or execution.
   const roleKey = canonicalRoleKey();
   let tx;
-  try {
-    tx = buildExitTransaction(action, { ...safe, rolesModifierAddress: modifier, rolesKey: roleKey });
-  } catch (err) {
-    return {
-      state: "needs_permission",
-      detectedModifierAddress: modifier,
-      enabledModules,
-      permissionChecked: false,
-      undetermined: (err as Error).message,
-      summary: "Automatic exits are not enabled yet.",
-    };
-  }
-
+  try { tx = buildExitTransaction(action, { ...safe, rolesModifierAddress: modifier, rolesKey: roleKey }); }
+  catch { return { state: "needs_permission", detectedModifierAddress: modifier, enabledModules, permissionChecked: false, undetermined: "Could not build the required exit. Try again.", summary: "Automatic exits are not enabled yet." }; }
   try {
     const result = await simulateExitTransaction(tx, safe.chainId);
-    const permitted = result.parsed?.wouldRevert === false;
-    if (permitted) {
-      return {
-        state: "protected",
-        detectedModifierAddress: modifier,
-        enabledModules,
-        permissionChecked: true,
-        undetermined: null,
-        summary: "Exit Keepa is authorized to execute this exit automatically.",
-      };
-    }
-    return {
-      state: "needs_permission",
-      detectedModifierAddress: modifier,
-      enabledModules,
-      permissionChecked: true,
-      undetermined: null,
-      summary: "Your Safe is compatible, but automatic exits are not enabled yet.",
-    };
+    if (result.parsed?.wouldRevert === false) return { state: "protected", detectedModifierAddress: modifier, enabledModules, permissionChecked: true, undetermined: null, summary: "Exit Keepa is authorized to execute this exit automatically." };
+    return { state: "needs_permission", detectedModifierAddress: modifier, enabledModules, permissionChecked: true, undetermined: null, summary: "Your Safe is compatible, but automatic exits are not enabled yet." };
   } catch (err) {
     logger.warn({ err, safeAddress: safe.safeAddress }, "Authorization permission check could not complete");
-    return {
-      state: "needs_permission",
-      detectedModifierAddress: modifier,
-      enabledModules,
-      permissionChecked: false,
-      undetermined: `Couldn't confirm the permission just now: ${(err as Error).message}`,
-      summary: "We couldn't confirm your permission just now. Try again in a moment.",
-    };
+    return { state: "needs_permission", detectedModifierAddress: modifier, enabledModules, permissionChecked: false, undetermined: "Could not confirm automatic-exit permission. Try again.", summary: "We couldn't confirm your permission just now. Try again in a moment." };
   }
 }
