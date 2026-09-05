@@ -7,27 +7,13 @@ import { safeAccounts } from "../db/schema";
 import { requireSafeOwnership, requireSession } from "../auth/session";
 import { HttpError } from "../middleware/errorHandler";
 import {
-  buildDeployModuleTransaction,
-  buildRoleConfigurationCalls,
-  buildSafeTransaction,
-  buildTypedDataForSafeTransaction,
-  classifyRolesModule,
-  encodeExecTransaction,
-  inspectEnabledModules,
-  inspectSafeForAuthorization,
-  readRolePermissionState,
-  verifyEnabledModule,
-  verifyFactory,
-  verifyNegativeRoleProbes,
-  verifyRolesModifier,
-  verifySafeTransactionHash,
-  ZODIAC_MODULE_PROXY_FACTORY,
-  ROLES_V2_1_1_MASTER_COPY,
+  buildDeployModuleTransaction, buildRoleConfigurationCalls, buildSafeTransaction, buildTypedDataForSafeTransaction, classifyRolesModule,
+  encodeExecTransaction, inspectEnabledModules, inspectSafeForAuthorization, readRolePermissionState, verifyEnabledModule, verifyFactory,
+  verifyNegativeRoleProbes, verifyRolesModifier, verifySafeTransactionHash,
 } from "../safe/authorizationTransactions";
 import { env } from "../env";
 
 export const safeAuthorizationRouter = Router();
-
 const OWNER_ETH_FLOOR_WEI = 100_000_000_000_000n;
 
 async function keeperAddress(): Promise<`0x${string}`> {
@@ -37,141 +23,74 @@ async function keeperAddress(): Promise<`0x${string}`> {
   if (!body.walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(body.walletAddress)) throw new HttpError(503, "Automatic exits are not available right now. Try again later.");
   return body.walletAddress as `0x${string}`;
 }
-
 async function ownerBalance(address: `0x${string}`): Promise<bigint> {
   const response = await fetch(env.BASE_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [address, "latest"] }) });
   if (!response.ok) throw new HttpError(502, "Could not verify the wallet balance. Try again.");
-  const body = await response.json() as { result?: string; error?: { message?: string } };
-  if (body.error || !body.result) throw new HttpError(409, "Could not verify the wallet balance.");
-  return BigInt(body.result);
+  const body = await response.json() as { result?: string; error?: { message?: string } }; if (body.error || !body.result) throw new HttpError(409, "Could not verify the wallet balance."); return BigInt(body.result);
 }
-
 async function getSafeRow(id: string, ownerAddress: string) {
-  await requireSafeOwnership(id, ownerAddress);
-  const [row] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, id)).limit(1);
-  if (!row) throw new HttpError(404, "Safe account not found");
-  if (row.isSandbox) throw new HttpError(409, "Demo Safes cannot authorize real automatic exits.");
-  return row;
+  await requireSafeOwnership(id, ownerAddress); const [row] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, id)).limit(1);
+  if (!row) throw new HttpError(404, "Safe account not found"); if (row.isSandbox) throw new HttpError(409, "Demo Safes cannot authorize real automatic exits."); return row;
 }
-
-async function persistModifier(id: string, modifier: `0x${string}`) {
-  await db.update(safeAccounts).set({ rolesModifierAddress: modifier, rolesKey: canonicalRoleKey() }).where(eq(safeAccounts.id, id));
-}
-
-function serializeSafeTx(tx: ReturnType<typeof buildSafeTransaction>) {
-  return {
-    to: tx.to, value: tx.value.toString(), data: tx.data, operation: tx.operation,
-    safeTxGas: tx.safeTxGas.toString(), baseGas: tx.baseGas.toString(), gasPrice: tx.gasPrice.toString(),
-    gasToken: tx.gasToken, refundReceiver: tx.refundReceiver, nonce: tx.nonce.toString(),
-  };
-}
-
-function serializeTypedData(typedData: ReturnType<typeof buildTypedDataForSafeTransaction>) {
-  return { ...typedData, message: Object.fromEntries(Object.entries(typedData.message).map(([key, value]) => [key, typeof value === "bigint" ? value.toString() : value])) };
+async function persistModifier(id: string, modifier: `0x${string}`) { await db.update(safeAccounts).set({ rolesModifierAddress: modifier, rolesKey: canonicalRoleKey() }).where(eq(safeAccounts.id, id)); }
+function serializeSafeTx(tx: ReturnType<typeof buildSafeTransaction>) { return { to: tx.to, value: tx.value.toString(), data: tx.data, operation: tx.operation, safeTxGas: tx.safeTxGas.toString(), baseGas: tx.baseGas.toString(), gasPrice: tx.gasPrice.toString(), gasToken: tx.gasToken, refundReceiver: tx.refundReceiver, nonce: tx.nonce.toString() }; }
+function serializeTypedData(typedData: ReturnType<typeof buildTypedDataForSafeTransaction>) { return { ...typedData, message: Object.fromEntries(Object.entries(typedData.message).map(([key, value]) => [key, typeof value === "bigint" ? value.toString() : value])) }; }
+function normalizeSafeSignature(signature: string): `0x${string}` {
+  if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) throw new HttpError(400, "The wallet signature could not be verified.");
+  const v = Number.parseInt(signature.slice(-2), 16); if (v === 0 || v === 1) return `${signature.slice(0, -2)}${(v + 27).toString(16).padStart(2, "0")}` as `0x${string}`;
+  if (v === 27 || v === 28) return signature as `0x${string}`;
+  throw new HttpError(403, "The wallet returned an unsupported Safe signature.");
 }
 
 async function preflight(safeAddress: `0x${string}`, owner: `0x${string}`) {
   const inspection = await inspectSafeForAuthorization(safeAddress, owner);
-  if (!inspection.isSafe) throw new HttpError(409, "That address is not a supported Safe on Base.");
-  if (!inspection.isOwner) throw new HttpError(403, "You are not an owner of this Safe.");
+  if (!inspection.isSafe) throw new HttpError(409, "That address is not a supported Safe on Base."); if (!inspection.isOwner) throw new HttpError(403, "You are not an owner of this Safe.");
   if (inspection.threshold !== 1) throw new HttpError(409, "This Safe needs more than one owner approval. Threshold-1 authorization is required.");
   if (inspection.version !== "1.4.1") throw new HttpError(409, "This Safe version is not supported by Exit Keepa yet.");
-  const balance = await ownerBalance(owner);
-  if (balance < OWNER_ETH_FLOOR_WEI) throw new HttpError(409, "The connected Safe owner needs more Base ETH to complete authorization.");
-  await verifyFactory();
-  return inspection;
+  if (await ownerBalance(owner) < OWNER_ETH_FLOOR_WEI) throw new HttpError(409, "The connected Safe owner needs more Base ETH to complete authorization.");
+  await verifyFactory(); return inspection;
 }
-
 async function currentModuleState(safeAddress: `0x${string}`) {
-  const modules = await inspectEnabledModules(safeAddress);
-  let compatible: `0x${string}` | null = null;
-  let incompatibleRoles = false;
-  for (const module of modules) {
-    const classification = await classifyRolesModule(module as `0x${string}`, safeAddress);
-    if (classification === "compatible") compatible = module as `0x${string}`;
-    if (classification === "incompatible_roles") incompatibleRoles = true;
-  }
+  const modules = await inspectEnabledModules(safeAddress); let compatible: `0x${string}` | null = null; let incompatibleRoles = false;
+  for (const module of modules) { const classification = await classifyRolesModule(module as `0x${string}`, safeAddress); if (classification === "compatible") compatible = module as `0x${string}`; if (classification === "incompatible_roles") incompatibleRoles = true; }
   return { modules, compatible, incompatibleRoles };
 }
-
+async function predictedCode(address: `0x${string}`) {
+  const response = await fetch(env.BASE_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getCode", params: [address, "latest"] }) });
+  if (!response.ok) throw new HttpError(502, "Could not verify the module installation. Try again."); const body = await response.json() as { result?: string }; return body.result ?? "0x";
+}
 async function nextPlan(id: string, safeAddress: `0x${string}`, owner: `0x${string}`) {
-  const inspection = await preflight(safeAddress, owner);
-  const moduleState = await currentModuleState(safeAddress);
-  let modifier = moduleState.compatible;
-
+  const inspection = await preflight(safeAddress, owner); const moduleState = await currentModuleState(safeAddress); let modifier = moduleState.compatible;
   if (!modifier) {
-    const predicted = buildDeployModuleTransaction(safeAddress).predictedProxy;
-    const predictedCode = await (async () => {
-      const response = await fetch(env.BASE_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getCode", params: [predicted, "latest"] }) });
-      const body = await response.json() as { result?: string };
-      return body.result ?? "0x";
-    })();
-    if (predictedCode !== "0x") {
-      const classification = await classifyRolesModule(predicted, safeAddress);
-      if (classification === "compatible") modifier = predicted;
-      else throw new HttpError(409, "A Roles module already occupies Exit Keepa's deterministic installation address, but it is incompatible. Setup is stopped.");
-    } else if (moduleState.incompatibleRoles) {
-      throw new HttpError(409, "Your Safe already has an incompatible permission module. Exit Keepa will not install a second one.");
-    }
+    const predicted = buildDeployModuleTransaction(safeAddress).predictedProxy; const code = await predictedCode(predicted);
+    if (code !== "0x") { const classification = await classifyRolesModule(predicted, safeAddress); if (classification === "compatible") modifier = predicted; else throw new HttpError(409, "A Roles module already occupies Exit Keepa's deterministic installation address, but it is incompatible. Setup is stopped."); }
+    else if (moduleState.incompatibleRoles) throw new HttpError(409, "Your Safe already has an incompatible permission module. Exit Keepa will not install a second one.");
   }
-
-  if (!modifier) {
-    const deploy = buildDeployModuleTransaction(safeAddress);
-    return { inspection, modifier: null, plan: [{ id: "deploy-proxy", kind: "deploy_proxy" as const, label: "Install the automatic-exit permission", txType: "eoa" as const, to: deploy.to, value: deploy.value, data: deploy.data, operation: deploy.operation, predictedProxy: deploy.predictedProxy }] };
-  }
-
+  if (!modifier) { const deploy = buildDeployModuleTransaction(safeAddress); return { inspection, modifier: null, plan: [{ id: "deploy-proxy", kind: "deploy_proxy" as const, label: "Install the automatic-exit permission", txType: "eoa" as const, to: deploy.to, value: deploy.value, data: deploy.data, operation: deploy.operation, predictedProxy: deploy.predictedProxy }] }; }
   await persistModifier(id, modifier);
-  if (!(await verifyEnabledModule(safeAddress, modifier))) {
-    const enableData = encodeEnableModule(modifier);
-    const tx = buildSafeTransaction({ to: safeAddress, data: enableData, nonce: inspection.nonce });
-    const hashes = await verifySafeTransactionHash(safeAddress, tx, 8453);
-    return { inspection, modifier, plan: [{ id: "enable-module", kind: "enable_module" as const, label: "Enable automatic exits", txType: "safe" as const, to: safeAddress, value: "0", data: tx.data, operation: 0 as const, safeTx: serializeSafeTx(tx), safeTxHash: hashes.localHash, typedData: serializeTypedData(buildTypedDataForSafeTransaction(safeAddress, tx, 8453)) }] };
-  }
-
-  const keeper = await keeperAddress();
-  const permission = await readRolePermissionState(modifier, safeAddress, keeper);
-  if (!permission.memberAssigned) return safeConfigStep(safeAddress, modifier, buildRoleConfigurationCalls(safeAddress, keeper)[0], inspection.nonce);
-  if (!permission.targetScoped) return safeConfigStep(safeAddress, modifier, buildRoleConfigurationCalls(safeAddress, keeper)[1], inspection.nonce);
-  if (!permission.functionScoped) return safeConfigStep(safeAddress, modifier, buildRoleConfigurationCalls(safeAddress, keeper)[2], inspection.nonce);
-
-  if (!(await verifyNegativeRoleProbes(modifier, safeAddress, keeper))) throw new HttpError(409, "The configured automatic-exit permission did not pass its security probes.");
-  return { inspection, modifier, plan: [] };
+  if (!(await verifyEnabledModule(safeAddress, modifier))) { const tx = buildSafeTransaction({ to: safeAddress, data: encodeEnableModule(modifier), nonce: inspection.nonce }); const hashes = await verifySafeTransactionHash(safeAddress, tx, 8453); return { inspection, modifier, plan: [{ id: "enable-module", kind: "enable_module" as const, label: "Enable automatic exits", txType: "safe" as const, to: safeAddress, value: "0", data: tx.data, operation: 0 as const, safeTx: serializeSafeTx(tx), safeTxHash: hashes.localHash, typedData: serializeTypedData(buildTypedDataForSafeTransaction(safeAddress, tx, 8453)) }] }; }
+  const keeper = await keeperAddress(); const permission = await readRolePermissionState(modifier, safeAddress, keeper); const calls = buildRoleConfigurationCalls(safeAddress, keeper);
+  if (!permission.memberAssigned) return safeConfigStep(safeAddress, modifier, calls[0], inspection.nonce); if (!permission.targetScoped) return safeConfigStep(safeAddress, modifier, calls[1], inspection.nonce); if (!permission.functionScoped) return safeConfigStep(safeAddress, modifier, calls[2], inspection.nonce);
+  if (!(await verifyNegativeRoleProbes(modifier, safeAddress, keeper))) throw new HttpError(409, "The configured automatic-exit permission did not pass its security probes."); return { inspection, modifier, plan: [] };
 }
-
-function encodeEnableModule(module: `0x${string}`): `0x${string}` {
-  return `0x610b5925${module.slice(2).padStart(64, "0")}` as `0x${string}`;
-}
-
+function encodeEnableModule(module: `0x${string}`): `0x${string}` { return `0x610b5925${module.slice(2).padStart(64, "0")}` as `0x${string}`; }
 async function safeConfigStep(safeAddress: `0x${string}`, modifier: `0x${string}`, selected: ReturnType<typeof buildRoleConfigurationCalls>[number], nonce: bigint) {
-  const tx = buildSafeTransaction({ to: modifier, data: selected.data, nonce });
-  const hashes = await verifySafeTransactionHash(safeAddress, tx, 8453);
+  const tx = buildSafeTransaction({ to: modifier, data: selected.data, nonce }); const hashes = await verifySafeTransactionHash(safeAddress, tx, 8453);
   return { modifier, plan: [{ id: selected.id, kind: selected.kind, label: selected.label, txType: "safe" as const, to: safeAddress, value: "0", data: tx.data, operation: 0 as const, safeTx: serializeSafeTx(tx), safeTxHash: hashes.localHash, typedData: serializeTypedData(buildTypedDataForSafeTransaction(safeAddress, tx, 8453)) }] };
 }
 
-safeAuthorizationRouter.get("/safe-accounts/:id/authorization", async (req, res) => {
-  const owner = await requireSession(req); const row = await getSafeRow(req.params.id, owner); if (row.chainId !== 8453) throw new HttpError(409, "Your Safe is not on Base.");
-  const result = await nextPlan(row.id, row.safeAddress as `0x${string}`, owner as `0x${string}`);
-  if (result.modifier) await persistModifier(row.id, result.modifier);
-  res.json({ status: result.plan.length === 0 ? "protected" : "needs_authorization", safeAddress: row.safeAddress, modifierAddress: result.modifier, plan: result.plan, canonicalRoleKey: canonicalRoleKey() });
-});
-
-safeAuthorizationRouter.post("/safe-accounts/:id/authorization/prepare", async (req, res) => {
-  const owner = await requireSession(req); const row = await getSafeRow(req.params.id, owner); if (row.chainId !== 8453) throw new HttpError(409, "Your Safe is not on Base.");
-  const result = await nextPlan(row.id, row.safeAddress as `0x${string}`, owner as `0x${string}`); if (result.modifier) await persistModifier(row.id, result.modifier);
-  res.json({ status: result.plan.length === 0 ? "protected" : "needs_authorization", safeAddress: row.safeAddress, modifierAddress: result.modifier, plan: result.plan, canonicalRoleKey: canonicalRoleKey() });
-});
-
+safeAuthorizationRouter.get("/safe-accounts/:id/authorization", async (req, res) => { const owner = await requireSession(req); const row = await getSafeRow(req.params.id, owner); if (row.chainId !== 8453) throw new HttpError(409, "Your Safe is not on Base."); const result = await nextPlan(row.id, row.safeAddress as `0x${string}`, owner as `0x${string}`); if (result.modifier) await persistModifier(row.id, result.modifier); res.json({ status: result.plan.length === 0 ? "protected" : "needs_authorization", safeAddress: row.safeAddress, modifierAddress: result.modifier, plan: result.plan, canonicalRoleKey: canonicalRoleKey() }); });
+safeAuthorizationRouter.post("/safe-accounts/:id/authorization/prepare", async (req, res) => { const owner = await requireSession(req); const row = await getSafeRow(req.params.id, owner); if (row.chainId !== 8453) throw new HttpError(409, "Your Safe is not on Base."); const result = await nextPlan(row.id, row.safeAddress as `0x${string}`, owner as `0x${string}`); if (result.modifier) await persistModifier(row.id, result.modifier); res.json({ status: result.plan.length === 0 ? "protected" : "needs_authorization", safeAddress: row.safeAddress, modifierAddress: result.modifier, plan: result.plan, canonicalRoleKey: canonicalRoleKey() }); });
 safeAuthorizationRouter.post("/safe-accounts/:id/authorization/execute-calldata", async (req, res) => {
   const owner = await requireSession(req); const row = await getSafeRow(req.params.id, owner); if (row.chainId !== 8453) throw new HttpError(409, "Your Safe is not on Base.");
-  const stepId = String(req.body?.stepId ?? ""); const signature = String(req.body?.signature ?? ""); const expectedHash = String(req.body?.safeTxHash ?? "").toLowerCase();
-  if (!stepId || !/^0x[0-9a-fA-F]{130}$/.test(signature) || !/^0x[0-9a-fA-F]{64}$/.test(expectedHash)) throw new HttpError(400, "The wallet signature could not be verified.");
+  const stepId = String(req.body?.stepId ?? ""); const rawSignature = String(req.body?.signature ?? ""); const expectedHash = String(req.body?.safeTxHash ?? "").toLowerCase(); const signature = normalizeSafeSignature(rawSignature);
+  if (!stepId || !/^0x[0-9a-fA-F]{64}$/.test(expectedHash)) throw new HttpError(400, "The wallet signature could not be verified.");
   const result = await nextPlan(row.id, row.safeAddress as `0x${string}`, owner as `0x${string}`); const step = result.plan[0];
   if (!step || step.txType !== "safe" || step.id !== stepId || !step.safeTxHash || step.safeTxHash.toLowerCase() !== expectedHash) throw new HttpError(409, "The authorization changed before the wallet signature was submitted. Request a new authorization step.");
-  const typedData = buildTypedDataForSafeTransaction(row.safeAddress as `0x${string}`, buildSafeTransaction({ to: step.safeTx!.to, data: step.safeTx!.data as `0x${string}`, nonce: BigInt(step.safeTx!.nonce) }), 8453);
-  const valid = await verifyTypedData({ address: owner as `0x${string}`, domain: typedData.domain, types: typedData.types, primaryType: typedData.primaryType, message: typedData.message, signature: signature as `0x${string}` });
+  const typedData = buildTypedDataForSafeTransaction(row.safeAddress as `0x${string}`, buildSafeTransaction({ to: step.safeTx!.to as `0x${string}`, data: step.safeTx!.data as `0x${string}`, nonce: BigInt(step.safeTx!.nonce) }), 8453);
+  const valid = await verifyTypedData({ address: owner as `0x${string}`, domain: typedData.domain, types: typedData.types, primaryType: typedData.primaryType, message: typedData.message, signature });
   if (!valid) throw new HttpError(403, "The wallet signature does not belong to the connected Safe owner.");
-  const current = await inspectSafeForAuthorization(row.safeAddress as `0x${string}`, owner as `0x${string}`);
-  if (current.nonce.toString() !== step.safeTx!.nonce) throw new HttpError(409, "The Safe changed before submission. Request a new authorization step.");
-  const execData = encodeExecTransaction(buildSafeTransaction({ to: step.safeTx!.to, data: step.safeTx!.data as `0x${string}`, nonce: current.nonce }), signature as `0x${string}`);
+  const current = await inspectSafeForAuthorization(row.safeAddress as `0x${string}`, owner as `0x${string}`); if (current.nonce.toString() !== step.safeTx!.nonce) throw new HttpError(409, "The Safe changed before submission. Request a new authorization step.");
+  const execData = encodeExecTransaction(buildSafeTransaction({ to: step.safeTx!.to as `0x${string}`, data: step.safeTx!.data as `0x${string}`, nonce: current.nonce }), signature);
   res.json({ to: row.safeAddress, value: "0x0", data: execData, safeTxHash: step.safeTxHash });
 });
