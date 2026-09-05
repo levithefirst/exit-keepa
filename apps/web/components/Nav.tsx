@@ -15,23 +15,16 @@ function short(addr: string) {
 }
 
 const NAV_LINKS = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/create", label: "Create strategy" },
+  { href: "/#product", label: "Product" },
+  { href: "/#how-it-works", label: "How it works" },
+  { href: "/#security", label: "Security" },
+  { href: "/#demo", label: "Demo" },
 ];
 
+const GITHUB = "https://github.com/levithefirst/exit-keepa";
+
 export function Nav() {
-  const {
-    address,
-    connecting,
-    error,
-    disconnect,
-    chainId,
-    switchToBase,
-    isDemo,
-    enterDemoMode,
-    isLocal,
-    username,
-  } = useWallet();
+  const { address, connecting, error, disconnect, chainId, switchToBase, isDemo, enterDemoMode, isLocal, username } = useWallet();
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
@@ -40,8 +33,6 @@ export function Nav() {
   const menuId = useId();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
-  // Close on Escape, and auto-close if the viewport grows past the
-  // mobile breakpoint while the panel happens to be open.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -60,16 +51,12 @@ export function Nav() {
     };
   }, []);
 
-  function closeMenu() {
-    setMenuOpen(false);
-  }
-
   async function startDemo() {
     setStartingDemo(true);
     try {
       await enterDemoMode();
     } catch {
-      // enterDemoMode already recorded this in useWallet()'s error state.
+      // enterDemoMode already records this in useWallet()'s error state.
     } finally {
       setStartingDemo(false);
     }
@@ -78,10 +65,7 @@ export function Nav() {
   const walletControls = address ? (
     <div className="flex flex-wrap items-center gap-2">
       {!isDemo && !isLocal && chainId !== 8453 && (
-        <button
-          onClick={switchToBase}
-          className={`min-h-11 rounded-lg bg-warning/15 px-2 text-xs text-warning ${linkFocus}`}
-        >
+        <button onClick={switchToBase} className={`min-h-11 rounded-lg bg-warning/15 px-2 text-xs text-warning ${linkFocus}`}>
           Wrong network. Switch to Base
         </button>
       )}
@@ -90,9 +74,7 @@ export function Nav() {
       ) : isLocal ? (
         <span className="rounded-lg bg-forest-700 px-3 py-1 text-xs text-cream-200">{username}</span>
       ) : (
-        <span className="data-mono rounded-lg bg-forest-700 px-3 py-1 font-mono text-xs text-cream-200">
-          {short(address)}
-        </span>
+        <span className="data-mono rounded-lg bg-forest-700 px-3 py-1 font-mono text-xs text-cream-200">{short(address)}</span>
       )}
       <button onClick={disconnect} className={`min-h-11 px-1 text-xs text-cream-300 hover:text-cream-50 ${linkFocus}`}>
         {isDemo ? "Exit demo" : isLocal ? "Sign out" : "Disconnect"}
@@ -100,96 +82,51 @@ export function Nav() {
     </div>
   ) : (
     <div className="flex flex-wrap items-center gap-2">
-      <button onClick={startDemo} disabled={startingDemo} className={btnGhost}>
-        {startingDemo ? "Starting demo…" : "Try demo"}
-      </button>
-      <button onClick={() => setProfileModalOpen(true)} className={btnGhost}>
-        Profile
-      </button>
-      <button onClick={() => setWalletModalOpen(true)} disabled={connecting} className={btnPrimarySmall}>
-        {connecting ? "Connecting…" : "Connect wallet"}
-      </button>
+      <button onClick={startDemo} disabled={startingDemo} className={btnGhost}>{startingDemo ? "Starting demo…" : "Try demo"}</button>
+      <button onClick={() => setProfileModalOpen(true)} className={btnGhost}>Profile</button>
+      <button onClick={() => setWalletModalOpen(true)} disabled={connecting} className={btnPrimarySmall}>{connecting ? "Connecting…" : "Connect wallet"}</button>
     </div>
   );
 
   return (
-    <nav className="sticky top-0 z-40 border-b border-cream-100/10 bg-forest-900/90 backdrop-blur">
+    <nav className="sticky top-0 z-40 border-b border-cream-100/10 bg-forest-900/90 backdrop-blur" aria-label="Primary navigation">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3.5">
-        <Link href="/" className={`shrink-0 ${linkFocus}`}>
-          <Logo />
-        </Link>
+        <Link href="/" className={`shrink-0 ${linkFocus}`} aria-label="Exit Keepa home"><Logo /></Link>
 
-        {/* Desktop nav */}
-        <div className="hidden items-center gap-6 text-sm md:flex">
-          {NAV_LINKS.map((link) => {
-            const isActive = pathname === link.href;
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={`${linkFocus} ${isActive ? "text-mint-400" : "text-cream-200 hover:text-mint-300"}`}
-              >
-                {link.label}
-              </Link>
-            );
-          })}
+        <div className="hidden items-center gap-5 text-sm md:flex">
+          {NAV_LINKS.map((link) => (
+            <Link key={link.href} href={link.href} className={`${linkFocus} text-cream-200 hover:text-mint-300`}>{link.label}</Link>
+          ))}
+          <Link href="/dashboard" className={`${linkFocus} text-cream-200 hover:text-mint-300`}>App</Link>
+          <a href={GITHUB} target="_blank" rel="noreferrer" className={`${linkFocus} text-cream-200 hover:text-mint-300`}>GitHub</a>
         </div>
 
-        <div className="hidden items-center gap-3 md:flex">
-          {walletControls}
-          <ThemeToggle />
-        </div>
+        <div className="hidden items-center gap-3 md:flex">{walletControls}<ThemeToggle /></div>
 
-        {/* Mobile: theme toggle stays visible, hamburger opens the rest */}
         <div className="flex items-center gap-1 md:hidden">
           <ThemeToggle />
-          <button
-            ref={menuButtonRef}
-            type="button"
-            className={`flex h-11 w-11 items-center justify-center rounded-lg text-cream-100 ${linkFocus}`}
-            aria-expanded={menuOpen}
-            aria-controls={menuId}
-            aria-label={menuOpen ? "Close menu" : "Open menu"}
-            onClick={() => setMenuOpen((v) => !v)}
-          >
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
-              {menuOpen ? (
-                <path strokeLinecap="round" d="M6 6l12 12M6 18L18 6" />
-              ) : (
-                <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
-              )}
+          <button ref={menuButtonRef} type="button" className={`flex h-11 w-11 items-center justify-center rounded-lg text-cream-100 ${linkFocus}`} aria-expanded={menuOpen} aria-controls={menuId} aria-label={menuOpen ? "Close menu" : "Open menu"} onClick={() => setMenuOpen((v) => !v)}>
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              {menuOpen ? <path strokeLinecap="round" d="M6 6l12 12M6 18L18 6" /> : <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />}
             </svg>
           </button>
         </div>
       </div>
 
-      {/* Mobile panel */}
       {menuOpen && (
         <div id={menuId} className="border-t border-cream-100/10 bg-forest-900 px-6 py-4 md:hidden">
           <div className="flex flex-col gap-1">
-            {NAV_LINKS.map((link) => {
-              const isActive = pathname === link.href;
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  onClick={closeMenu}
-                  className={`min-h-11 rounded-lg px-2 py-2.5 text-sm ${linkFocus} ${
-                    isActive ? "bg-mint-400/10 text-mint-400" : "text-cream-200 hover:bg-cream-100/5"
-                  }`}
-                >
-                  {link.label}
-                </Link>
-              );
-            })}
+            {NAV_LINKS.map((link) => (
+              <Link key={link.href} href={link.href} onClick={() => setMenuOpen(false)} className={`min-h-11 rounded-lg px-2 py-2.5 text-sm ${linkFocus} text-cream-200 hover:bg-cream-100/5`}>{link.label}</Link>
+            ))}
+            <Link href="/dashboard" onClick={() => setMenuOpen(false)} className={`min-h-11 rounded-lg px-2 py-2.5 text-sm ${linkFocus} text-cream-200 hover:bg-cream-100/5`}>App</Link>
+            <a href={GITHUB} target="_blank" rel="noreferrer" className={`min-h-11 rounded-lg px-2 py-2.5 text-sm ${linkFocus} text-cream-200 hover:bg-cream-100/5`}>GitHub</a>
           </div>
           <div className="mt-3 border-t border-cream-100/10 pt-3">{walletControls}</div>
         </div>
       )}
 
-      {error && !walletModalOpen && (
-        <p className="mx-auto max-w-5xl px-6 pb-2 text-xs text-pretty text-danger">{error}</p>
-      )}
+      {error && !walletModalOpen && <p className="mx-auto max-w-5xl px-6 pb-2 text-xs text-pretty text-danger" role="alert">{error}</p>}
       <WalletConnectModal open={walletModalOpen} onClose={() => setWalletModalOpen(false)} />
       <ProfileLoginModal open={profileModalOpen} onClose={() => setProfileModalOpen(false)} />
     </nav>
