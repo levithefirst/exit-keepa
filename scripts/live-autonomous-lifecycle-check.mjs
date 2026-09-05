@@ -209,6 +209,26 @@ async function uiJourney() {
     !/Roles Modifier address/i.test(dashText) && !/Role key, bytes32/i.test(dashText),
     dashText.slice(0, 160),
   );
+  check(
+    "the dashboard leads with the position, not the infrastructure",
+    /Protect your Aave position/i.test(dashText),
+    dashText.slice(0, 200),
+  );
+  check(
+    "there is a single primary action: Protect position",
+    /Protect position/i.test(dashText),
+    dashText.slice(0, 200),
+  );
+  check(
+    "no step ceremony is shown to the user",
+    !/Step 1 of 2/i.test(dashText) && !/Step 2 of 2/i.test(dashText) && !/check again/i.test(dashText),
+    dashText.slice(0, 200),
+  );
+  check(
+    "Zodiac and Roles jargon stay out of the visible copy",
+    !/\bZodiac\b/i.test(dashText) && !/Roles Modifier/i.test(dashText),
+    dashText.slice(0, 200),
+  );
 
   await page.getByRole("link", { name: /New strategy/i }).first().click();
   await page.waitForURL(/\/create/, { timeout: 20_000 }).catch(() => {});

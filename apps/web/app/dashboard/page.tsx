@@ -210,31 +210,69 @@ export default function DashboardPage() {
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">Dashboard</h1>
         {isDemo && (
           <p className="text-pretty text-sm text-cream-400">
-            Demo mode - this is your own private sandbox Safe, isolated from every other visitor and not deployed on
-            any real chain. Its Roles permission reads as ready so you can walk the full flow; simulating a strategy
-            here is mocked and clearly labeled as such, never a real KeeperHub or onchain call.
+            Demo mode - your own private sandbox, isolated from every other visitor and not on any real chain. Nothing
+            here is broadcast, and no execution is ever reported as a real onchain transaction.
           </p>
         )}
       </div>
 
       {error && <p className="text-pretty text-sm text-danger">{error}</p>}
 
+      {/* Position first. What the user came here to protect leads the page;
+          the Safe's address and chain are supporting detail, not the headline. */}
       {safe && (
         <div className={card}>
-          <h2 className="mb-2 font-semibold text-cream-50">Your Safe</h2>
-          <div className="flex items-center gap-1">
-            <p className="break-all font-mono text-sm text-cream-200">{safe.safeAddress}</p>
-            <CopyButton value={safe.safeAddress} label="Copy address" />
-          </div>
-          <p className="text-xs tabular-nums text-cream-400">Chain: Base ({safe.chainId})</p>
-          {authorization?.state === "protected" && (
-            <p className="mt-1 text-pretty text-xs text-mint-300">✓ Protected - {authorization.summary}</p>
-          )}
-          {balances && (
-            <p className="mt-2 text-sm tabular-nums text-cream-200">
-              Balances: ETH {(Number(balances.eth) / 1e18).toFixed(5)} · USDC {(Number(balances.usdc) / 1e6).toFixed(2)}
+          <h2 className="font-display text-lg font-semibold text-cream-50">Protect your Aave position</h2>
+          {balances ? (
+            <p className="mt-1 text-pretty text-sm tabular-nums text-cream-200">
+              <span className="font-mono text-base text-cream-50">
+                {(Number(balances.usdc) / 1e6).toFixed(2)} USDC
+              </span>{" "}
+              in your Safe on Base{isDemo ? " (demo)" : ""}.
+            </p>
+          ) : (
+            <p className="mt-1 text-pretty text-sm text-cream-300">
+              Your USDC position on Aave v3, Base{isDemo ? " (demo)" : ""}.
             </p>
           )}
+
+          {authorization?.state === "protected" ? (
+            <>
+              <p className="mt-3 text-pretty text-sm text-mint-300">
+                ✓ Protected - Exit Keepa will automatically execute your exit if your condition is reached.
+              </p>
+              <div className="mt-3">
+                <Link href="/create" className={`inline-flex ${btnPrimary}`}>
+                  Protect position →
+                </Link>
+              </div>
+            </>
+          ) : (
+            <div className="mt-3">
+              <Link href="/create" className={`inline-flex ${btnPrimary}`}>
+                Protect position →
+              </Link>
+            </div>
+          )}
+
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs text-cream-500 hover:text-cream-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
+              Safe details
+            </summary>
+            <div className="mt-2 space-y-1">
+              <div className="flex items-center gap-1">
+                <p className="break-all font-mono text-xs text-cream-300">{safe.safeAddress}</p>
+                <CopyButton value={safe.safeAddress} label="Copy address" />
+              </div>
+              <p className="text-xs tabular-nums text-cream-400">Chain: Base ({safe.chainId})</p>
+              {balances && (
+                <p className="text-xs tabular-nums text-cream-400">
+                  ETH {(Number(balances.eth) / 1e18).toFixed(5)} · USDC{" "}
+                  {(Number(balances.usdc) / 1e6).toFixed(2)}
+                </p>
+              )}
+            </div>
+          </details>
         </div>
       )}
 
@@ -247,22 +285,16 @@ export default function DashboardPage() {
         />
       )}
 
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-cream-50">Your strategies</h2>
-        <Link href="/create" className={btnPrimary}>
-          + New strategy
-        </Link>
-      </div>
-
-      {loading && <div className="h-16 animate-pulse rounded-xl border border-cream-100/10 bg-forest-800/40" />}
-      {!loading && strategies.length === 0 && (
-        <div className="rounded-xl border border-dashed border-cream-100/15 p-6 text-center">
-          <p className="text-pretty mb-3 text-sm text-cream-300">No strategies yet. Create one to get started.</p>
-          <Link href="/create" className={`inline-flex ${btnPrimary}`}>
+      {strategies.length > 0 && (
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-cream-50">Your strategies</h2>
+          <Link href="/create" className={btnGhost}>
             + New strategy
           </Link>
         </div>
       )}
+
+      {loading && <div className="h-16 animate-pulse rounded-xl border border-cream-100/10 bg-forest-800/40" />}
 
       <div className="space-y-3">
         {strategies.map((s) => (

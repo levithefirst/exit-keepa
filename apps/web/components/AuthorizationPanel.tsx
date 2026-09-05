@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { buildRolesSafeAppUrl, buildZodiacModulesSafeAppUrl } from "@exit-keepa/shared";
-import { btnPrimary, btnSecondarySmall, linkFocus } from "../lib/ui";
+import { btnPrimary, linkFocus } from "../lib/ui";
 
 export type AuthorizationState = "needs_module" | "needs_permission" | "protected";
 
@@ -16,25 +16,25 @@ export interface AuthorizationStatus {
 }
 
 /**
- * The one-time authorization, told as a product step rather than as a tour
- * of Safe and Zodiac.
+ * The one-time authorization, presented the way a normal DeFi app presents
+ * a signature: one sentence about what it allows, one button, and then it
+ * gets out of the way.
  *
- * What this replaces: a panel that told people to "open the Zodiac Roles
- * app and add the permission", linked straight into a Safe App deep link
- * that a real tester hit as "Safe App could not be loaded", and asked them
- * to paste a Roles Modifier address and a bytes32 role key by hand. None
- * of that is asked for any more - the modifier address is read off the
- * Safe (see the API's /authorization endpoint), and the state comes from
- * chain rather than from what the UI assumes.
+ * Two things this deliberately no longer does, because they made the user
+ * orchestrate a process Exit Keepa should be orchestrating:
  *
- * What honestly cannot change here: the transactions that install a Zodiac
- * modifier and scope its permission must be executed BY the Safe, signed
- * by its own owners. Exit Keepa holds no keys, so it cannot sign them, and
- * this project has no verified encoding for Zodiac's scopeFunction
- * condition tree (see apps/api/src/execution/rolesPermission.ts). So the
- * signing itself still happens in Safe's own app - but Exit Keepa now says
- * exactly which step you're on, how many remain, checks the result itself,
- * and moves on the moment it sees the change on-chain.
+ * - No "Step 1 of 2 / Step 2 of 2". The user is doing one thing -
+ *   authorizing this exit. That it takes two Safe transactions is an
+ *   implementation detail of Zodiac, not a fact the user should have to
+ *   track. The button simply points wherever the next real action is.
+ * - No "I've done this - check again". Exit Keepa polls the chain itself
+ *   while this panel is open and advances the moment the authorization
+ *   lands. Asking someone to tell an app what the app can read for itself
+ *   is the app being lazy.
+ *
+ * What has not changed, and cannot: the transactions that install a Zodiac
+ * modifier and scope its permission are executed BY the Safe and signed by
+ * its own owners. Exit Keepa holds no keys, so it cannot sign them.
  */
 export function AuthorizationPanel({
   status,
@@ -47,16 +47,27 @@ export function AuthorizationPanel({
   chainId: number;
   onRecheck: () => Promise<void> | void;
 }) {
-  const [checking, setChecking] = useState(false);
+  const [opened, setOpened] = useState(false);
+  const onRecheckRef = useRef(onRecheck);
+  onRecheckRef.current = onRecheck;
 
-  async function recheck() {
-    setChecking(true);
-    try {
-      await onRecheck();
-    } finally {
-      setChecking(false);
-    }
-  }
+  // Watch the chain for the authorization landing, instead of asking the
+  // user to come back and tell us. Only runs while there is genuinely
+  // something outstanding, pauses on a hidden tab, and stops as soon as
+  // the Safe is protected.
+  const outstanding = status.state !== "protected";
+  useEffect(() => {
+    if (!outstanding) return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      if (cancelled || document.hidden) return;
+      Promise.resolve(onRecheckRef.current()).catch(() => {});
+    }, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [outstanding]);
 
   if (status.state === "protected") {
     return (
@@ -67,48 +78,44 @@ export function AuthorizationPanel({
           </span>
           <h2 className="font-display text-lg font-semibold text-mint-300">Protected</h2>
         </div>
-        <p className="text-pretty mt-1 text-sm text-cream-300">{status.summary}</p>
+        <p className="text-pretty mt-1 text-sm text-cream-300">
+          Exit Keepa will automatically execute your exit if your condition is reached.
+        </p>
       </div>
     );
   }
 
-  const step = status.state === "needs_module" ? 1 : 2;
+  // Where the next real action lives. Which of the two it is comes from
+  // chain state, and is never something the user has to work out.
+  const href =
+    status.state === "needs_module"
+      ? buildZodiacModulesSafeAppUrl(chainId, safeAddress)
+      : buildRolesSafeAppUrl(chainId, safeAddress);
 
   return (
-    <div className="space-y-4 rounded-xl border border-warning/30 bg-warning/5 p-5">
+    <div className="space-y-4 rounded-xl border border-cream-100/15 bg-forest-800/60 p-5">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-warning">
-          Step {step} of 2 · one-time authorization
+        <h2 className="text-balance font-display text-lg font-semibold text-cream-50">One-time authorization</h2>
+        <p className="text-pretty mt-1 text-sm text-cream-300">
+          This lets Exit Keepa perform only this specific exit. Your Safe remains yours and Exit Keepa never receives
+          your keys.
         </p>
-        <h2 className="text-balance mt-1 font-display text-lg font-semibold text-cream-50">
-          {step === 1 ? "Authorize Exit Keepa" : "Finish authorization"}
-        </h2>
-        <p className="text-pretty mt-1 text-sm text-cream-300">{status.summary}</p>
       </div>
 
-      <p className="text-pretty text-sm text-cream-200">
-        {step === 1
-          ? "Your Safe needs to give Exit Keepa a single, narrow permission: withdraw your USDC out of Aave, back into this same Safe. Nothing else. You'll approve it in your Safe, and only your Safe's owners can grant it."
-          : "Almost there. Your Safe is set up - it just hasn't granted Exit Keepa the withdrawal permission yet. One more approval in your Safe and you're done."}
-      </p>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <a
-          href={step === 1 ? buildZodiacModulesSafeAppUrl(chainId, safeAddress) : buildRolesSafeAppUrl(chainId, safeAddress)}
-          target="_blank"
-          rel="noreferrer"
-          className={`inline-flex ${btnPrimary}`}
-        >
-          {step === 1 ? "Authorize Exit Keepa →" : "Grant the permission →"}
-        </a>
-        <button onClick={recheck} disabled={checking} className={btnSecondarySmall}>
-          {checking ? "Checking your Safe…" : "I've done this - check again"}
-        </button>
-      </div>
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        onClick={() => setOpened(true)}
+        className={`inline-flex ${btnPrimary}`}
+      >
+        Authorize in your Safe →
+      </a>
 
       <p className="text-pretty text-xs text-cream-400">
-        Opens your Safe in a new tab. Sign in with a wallet that is an owner of this Safe - it will reject any other
-        wallet. Exit Keepa checks your Safe on its own and moves you forward as soon as it sees the change.
+        {opened
+          ? "Waiting for your Safe… Exit Keepa is watching for this and will continue on its own the moment it lands. You can close that tab when you're done."
+          : "Opens your Safe in a new tab. Sign in with a wallet that owns this Safe. Exit Keepa checks for the result itself - there's nothing to come back and click."}
       </p>
 
       {status.undetermined && (
@@ -123,21 +130,20 @@ export function AuthorizationPanel({
         </summary>
         <div className="mt-2 space-y-1 font-mono text-[11px] text-cream-400">
           <p className="break-all">Safe: {safeAddress}</p>
-          <p>
-            Zodiac module detected:{" "}
-            <span className="break-all">{status.detectedModifierAddress ?? "none"}</span>
-          </p>
+          <p className="break-all">Zodiac module detected: {status.detectedModifierAddress ?? "none"}</p>
           <p className="break-all">
             Modules enabled on this Safe: {status.enabledModules.length ? status.enabledModules.join(", ") : "none"}
           </p>
           <p>Permission dry run performed: {status.permissionChecked ? "yes" : "no"}</p>
+          <p>Authorization state: {status.state}</p>
         </div>
         <p className="text-pretty mt-2 text-xs text-cream-500">
+          Exit Keepa can&apos;t sign this for you - it holds no keys, and only your Safe&apos;s owners can grant it.
           If that button opens a page that won&apos;t load, open{" "}
           <a href="https://app.safe.global" target="_blank" rel="noreferrer" className={`underline ${linkFocus}`}>
             app.safe.global
           </a>{" "}
-          directly, pick this Safe, and find Zodiac under Apps. Exit Keepa will still detect the change on its own.
+          directly and pick this Safe; Exit Keepa still detects the result on its own.
         </p>
       </details>
     </div>
