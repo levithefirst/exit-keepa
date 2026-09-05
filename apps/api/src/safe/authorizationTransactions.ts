@@ -1,20 +1,14 @@
 import {
   AAVE_V3_BASE,
+  AAVE_V3_WITHDRAW_SELECTOR,
   canonicalRoleKey,
-  type Hex,
 } from "@exit-keepa/shared";
-import {
-  encodeAbiParameters,
-  encodeFunctionData,
-  hashTypedData,
-  keccak256,
-  stringToHex,
-  toHex,
-} from "viem";
+import { encodeAbiParameters, encodeFunctionData, hashTypedData, type Hex } from "viem";
 import { env } from "../env";
 import { HttpError } from "../middleware/errorHandler";
 
 export const SAFE_ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+/** Current Zodiac Roles v2.1.1 mastercopy. v2.1.0 is known vulnerable. */
 export const ROLES_V2_1_1_MASTER_COPY = "0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5" as const;
 
 const SAFE_TX_TYPES = {
@@ -78,7 +72,11 @@ const ROLES_ABI = [
   },
 ] as const;
 
-const SAFE_ABI = [
+const SAFE_READ_ABI = [
+  { type: "function", name: "getOwners", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address[]" }] },
+  { type: "function", name: "getThreshold", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+  { type: "function", name: "nonce", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+  { type: "function", name: "VERSION", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "string" }] },
   {
     type: "function",
     name: "getTransactionHash",
@@ -95,35 +93,7 @@ const SAFE_ABI = [
       { name: "refundReceiver", type: "address" },
       { name: "_nonce", type: "uint256" },
     ],
-    outputs: [{ name: "txHash", type: "bytes32" }],
-  },
-  {
-    type: "function",
-    name: "nonce",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "getOwners",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "address[]" }],
-  },
-  {
-    type: "function",
-    name: "getThreshold",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "VERSION",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "string" }],
+    outputs: [{ name: "", type: "bytes32" }],
   },
 ] as const;
 
@@ -179,69 +149,84 @@ async function rpcCall(to: string, data: string, from?: string): Promise<string>
   return body.result;
 }
 
-function decodeAbiWord(hex: string): bigint {
-  return BigInt(hex);
+async function rpcCode(address: string): Promise<string> {
+  const response = await fetch(env.BASE_RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getCode", params: [address, "latest"] }),
+  });
+  if (!response.ok) throw new HttpError(502, "Could not verify your Safe. Try again.");
+  const body = (await response.json()) as { result?: string; error?: { message?: string } };
+  if (body.error) throw new HttpError(409, body.error.message ?? "Safe verification failed");
+  return body.result ?? "0x";
 }
 
 function decodeAddressArray(hex: string): string[] {
   const body = hex.slice(2);
-  if (body.length < 128) throw new HttpError(409, "Could not verify Safe owners");
-  const offset = Number(decodeAbiWord(`0x${body.slice(0, 64)}`));
-  const start = offset * 2;
-  const length = Number(decodeAbiWord(`0x${body.slice(start, start + 64)}`));
+  const offset = Number(BigInt(`0x${body.slice(0, 64)}`)) * 2;
+  const length = Number(BigInt(`0x${body.slice(offset, offset + 64)}`));
   const result: string[] = [];
   for (let i = 0; i < length; i++) {
-    const wordStart = start + 64 + i * 64;
-    if (body.length < wordStart + 64) throw new HttpError(409, "Could not verify Safe owners");
-    result.push(`0x${body.slice(wordStart + 24, wordStart + 64)}`);
+    const start = offset + 64 + i * 64;
+    result.push(`0x${body.slice(start + 24, start + 64)}`);
   }
   return result;
 }
 
 function decodeString(hex: string): string {
   const body = hex.slice(2);
-  const offset = Number(decodeAbiWord(`0x${body.slice(0, 64)}`));
-  const start = offset * 2;
-  const length = Number(decodeAbiWord(`0x${body.slice(start, start + 64)}`));
-  const bytes = body.slice(start + 64, start + 64 + length * 2);
-  return Buffer.from(bytes, "hex").toString("utf8");
+  const offset = Number(BigInt(`0x${body.slice(0, 64)}`)) * 2;
+  const length = Number(BigInt(`0x${body.slice(offset, offset + 64)}`));
+  return Buffer.from(body.slice(offset + 64, offset + 64 + length * 2), "hex").toString("utf8");
 }
 
-function decodeUint(hex: string): bigint {
-  return BigInt(hex);
+function safeRead(name: "getOwners" | "getThreshold" | "nonce" | "VERSION"): Hex {
+  return encodeFunctionData({ abi: SAFE_READ_ABI, functionName: name });
 }
 
-function functionData(functionName: string, args: readonly unknown[]): Hex {
-  return encodeFunctionData({
-    abi: [...ROLES_ABI, ...SAFE_ABI, ...EXEC_TRANSACTION_ABI],
-    functionName: functionName as never,
-    args: args as never,
-  });
+function parseRolesImplementation(code: string): string | null {
+  const body = code.toLowerCase().replace(/^0x/, "");
+  const prefix = "363d3d373d3d3d363d73";
+  const suffix = "5af43d82803e903d91602b57fd5bf3";
+  if (!body.startsWith(prefix) || !body.endsWith(suffix) || body.length !== 90) return null;
+  return `0x${body.slice(prefix.length, prefix.length + 40)}`;
 }
 
 export async function inspectSafeForAuthorization(safeAddress: `0x${string}`, connectedOwner: `0x${string}`) {
-  const [ownersRaw, thresholdRaw, nonceRaw, versionRaw, codeRaw] = await Promise.all([
-    rpcCall(safeAddress, functionData("getOwners", [])),
-    rpcCall(safeAddress, functionData("getThreshold", [])),
-    rpcCall(safeAddress, functionData("nonce", [])),
-    rpcCall(safeAddress, functionData("VERSION", [])),
-    fetch(env.BASE_RPC_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getCode", params: [safeAddress, "latest"] }),
-    }).then(async (r) => ((await r.json()) as { result?: string }).result ?? "0x"),
+  const [ownersRaw, thresholdRaw, nonceRaw, versionRaw, code] = await Promise.all([
+    rpcCall(safeAddress, safeRead("getOwners")),
+    rpcCall(safeAddress, safeRead("getThreshold")),
+    rpcCall(safeAddress, safeRead("nonce")),
+    rpcCall(safeAddress, safeRead("VERSION")),
+    rpcCode(safeAddress),
   ]);
-
   const owners = decodeAddressArray(ownersRaw);
-  const threshold = Number(decodeUint(thresholdRaw));
-  const version = decodeString(versionRaw);
-  const isOwner = owners.some((owner) => owner.toLowerCase() === connectedOwner.toLowerCase());
-  const isEip1167SafeProxy = codeRaw !== "0x";
+  return {
+    owners,
+    threshold: Number(BigInt(thresholdRaw)),
+    nonce: BigInt(nonceRaw),
+    version: decodeString(versionRaw),
+    isOwner: owners.some((owner) => owner.toLowerCase() === connectedOwner.toLowerCase()),
+    isSafe: code !== "0x",
+  };
+}
 
-  if (!isOwner) {
-    return { owners, threshold, nonce: decodeUint(nonceRaw), version, isOwner: false, isSafe: isEip1167SafeProxy };
-  }
-  return { owners, threshold, nonce: decodeUint(nonceRaw), version, isOwner: true, isSafe: isEip1167SafeProxy };
+export async function verifyRolesModifier(modifierAddress: `0x${string}`, safeAddress: `0x${string}`) {
+  const code = await rpcCode(modifierAddress);
+  const implementation = parseRolesImplementation(code);
+  if (!implementation || implementation.toLowerCase() !== ROLES_V2_1_1_MASTER_COPY.toLowerCase()) return false;
+
+  const [avatarRaw, targetRaw, ownerRaw] = await Promise.all([
+    rpcCall(modifierAddress, "0x5aef7de6"),
+    rpcCall(modifierAddress, "0xd4b83992"),
+    rpcCall(modifierAddress, "0x8da5cb5b"),
+  ]);
+  const safe = safeAddress.toLowerCase();
+  return (
+    `0x${avatarRaw.slice(-40)}`.toLowerCase() === safe &&
+    `0x${targetRaw.slice(-40)}`.toLowerCase() === safe &&
+    `0x${ownerRaw.slice(-40)}`.toLowerCase() === safe
+  );
 }
 
 function safeTxTypedData(safeAddress: `0x${string}`, tx: SafeTx, chainId: number) {
@@ -268,18 +253,10 @@ function addressCompValue(address: `0x${string}`): Hex {
   return encodeAbiParameters([{ type: "address" }], [address]);
 }
 
-function buildRoleConfigurationCalls(safeAddress: `0x${string}`, keeperAddress: `0x${string}`) {
+export function buildRoleConfigurationCalls(safeAddress: `0x${string}`, keeperAddress: `0x${string}`) {
   const roleKey = canonicalRoleKey();
-  const assignRoles = encodeFunctionData({
-    abi: ROLES_ABI,
-    functionName: "assignRoles",
-    args: [keeperAddress, [roleKey], [true]],
-  });
-  const scopeTarget = encodeFunctionData({
-    abi: ROLES_ABI,
-    functionName: "scopeTarget",
-    args: [roleKey, AAVE_V3_BASE.pool],
-  });
+  const assignRoles = encodeFunctionData({ abi: ROLES_ABI, functionName: "assignRoles", args: [keeperAddress, [roleKey], [true]] });
+  const scopeTarget = encodeFunctionData({ abi: ROLES_ABI, functionName: "scopeTarget", args: [roleKey, AAVE_V3_BASE.pool] });
   const conditions = [
     { parent: 0, paramType: 5, operator: 5, compValue: "0x" as Hex },
     { parent: 0, paramType: 1, operator: 16, compValue: addressCompValue(AAVE_V3_BASE.usdc) },
@@ -291,7 +268,6 @@ function buildRoleConfigurationCalls(safeAddress: `0x${string}`, keeperAddress: 
     functionName: "scopeFunction",
     args: [roleKey, AAVE_V3_BASE.pool, AAVE_V3_WITHDRAW_SELECTOR, conditions, 0],
   });
-
   return [
     { id: "assign-role", label: "Authorize the Exit Keepa keeper", data: assignRoles },
     { id: "scope-target", label: "Restrict the role to Aave on Base", data: scopeTarget },
@@ -299,57 +275,7 @@ function buildRoleConfigurationCalls(safeAddress: `0x${string}`, keeperAddress: 
   ] as const;
 }
 
-export async function prepareAuthorizationTransaction(params: {
-  safeAddress: `0x${string}`;
-  connectedOwner: `0x${string}`;
-  modifierAddress: `0x${string}`;
-  chainId: number;
-}) {
-  if (params.chainId !== AAVE_V3_BASE.chainId) throw new HttpError(409, "Your Safe is not on Base.");
-
-  const inspection = await inspectSafeForAuthorization(params.safeAddress, params.connectedOwner);
-  if (!inspection.isOwner) throw new HttpError(403, "You are not an owner of this Safe.");
-  if (inspection.threshold !== 1) {
-    throw new HttpError(409, "This Safe needs more than one owner approval. Multisig authorization is not enabled here yet.");
-  }
-  if (!["1.3.0", "1.4.1", "1.5.0"].includes(inspection.version)) {
-    throw new HttpError(409, "This Safe version is not supported by Exit Keepa yet.");
-  }
-
-  const code = await rpcCall(params.modifierAddress, "0x");
-  if (code === "0x") throw new HttpError(409, "Your Safe's permission module could not be verified.");
-
-  const moduleAvatar = await rpcCall(params.modifierAddress, "0x5aef7de6");
-  const moduleTarget = await rpcCall(params.modifierAddress, "0xd4b83992");
-  const avatar = `0x${moduleAvatar.slice(-40)}`.toLowerCase();
-  const target = `0x${moduleTarget.slice(-40)}`.toLowerCase();
-  if (avatar !== params.safeAddress.toLowerCase() || target !== params.safeAddress.toLowerCase()) {
-    throw new HttpError(409, "Your Safe's permission module is not configured for this Safe.");
-  }
-
-  const calls = buildRoleConfigurationCalls(params.safeAddress, "0x0000000000000000000000000000000000000000");
-  return {
-    safeAddress: params.safeAddress,
-    chainId: params.chainId,
-    threshold: inspection.threshold,
-    owners: inspection.owners,
-    nonce: inspection.nonce.toString(),
-    safeVersion: inspection.version,
-    roleKey: canonicalRoleKey(),
-    modifierAddress: params.modifierAddress,
-    calls,
-  };
-}
-
-export function computeSafeTransactionHash(safeAddress: `0x${string}`, tx: SafeTx, chainId: number): Hex {
-  return hashTypedData(safeTxTypedData(safeAddress, tx, chainId));
-}
-
-export function buildSafeTransaction(args: {
-  to: `0x${string}`;
-  data: Hex;
-  nonce: bigint;
-}): SafeTx {
+export function buildSafeTransaction(args: { to: `0x${string}`; data: Hex; nonce: bigint }): SafeTx {
   return {
     to: args.to,
     value: 0n,
@@ -364,38 +290,35 @@ export function buildSafeTransaction(args: {
   };
 }
 
-export function encodeExecTransaction(tx: SafeTx, signatures: Hex): Hex {
-  return encodeFunctionData({
-    abi: EXEC_TRANSACTION_ABI,
-    functionName: "execTransaction",
-    args: [
-      tx.to,
-      tx.value,
-      tx.data,
-      tx.operation,
-      tx.safeTxGas,
-      tx.baseGas,
-      tx.gasPrice,
-      tx.gasToken,
-      tx.refundReceiver,
-      signatures,
-    ],
-  });
+export function computeSafeTransactionHash(safeAddress: `0x${string}`, tx: SafeTx, chainId: number): Hex {
+  return hashTypedData(safeTxTypedData(safeAddress, tx, chainId));
 }
 
 export function buildTypedDataForSafeTransaction(safeAddress: `0x${string}`, tx: SafeTx, chainId: number) {
   return safeTxTypedData(safeAddress, tx, chainId);
 }
 
-export function validateSignatureShape(signature: string): asserts signature is Hex {
-  if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) {
-    throw new HttpError(400, "The wallet returned an invalid Safe signature.");
-  }
+export function encodeExecTransaction(tx: SafeTx, signatures: Hex): Hex {
+  return encodeFunctionData({
+    abi: EXEC_TRANSACTION_ABI,
+    functionName: "execTransaction",
+    args: [tx.to, tx.value, tx.data, tx.operation, tx.safeTxGas, tx.baseGas, tx.gasPrice, tx.gasToken, tx.refundReceiver, signatures],
+  });
 }
 
-export function signatureForSafeOwner(signature: Hex): Hex {
-  // Safe's standard ECDSA owner signature is the 65-byte r || s || v form.
-  // Do not normalize or reinterpret v here: the Safe contract validates the
-  // exact signature bytes against its owner set and threshold.
-  return signature;
+export async function verifySafeTransactionHash(safeAddress: `0x${string}`, tx: SafeTx, chainId: number) {
+  const localHash = computeSafeTransactionHash(safeAddress, tx, chainId);
+  const raw = await rpcCall(
+    safeAddress,
+    encodeFunctionData({
+      abi: SAFE_READ_ABI,
+      functionName: "getTransactionHash",
+      args: [tx.to, tx.value, tx.data, tx.operation, tx.safeTxGas, tx.baseGas, tx.gasPrice, tx.gasToken, tx.refundReceiver, tx.nonce],
+    }),
+  );
+  const onchainHash = `0x${raw.slice(-64)}` as Hex;
+  if (localHash.toLowerCase() !== onchainHash.toLowerCase()) {
+    throw new HttpError(409, "Could not verify the Safe transaction hash. Nothing was signed.");
+  }
+  return { localHash, onchainHash };
 }
