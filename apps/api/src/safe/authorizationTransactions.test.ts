@@ -1,20 +1,48 @@
 import { describe, expect, it } from "vitest";
 import { decodeFunctionData, encodeAbiParameters } from "viem";
 import { AAVE_V3_BASE, AAVE_V3_WITHDRAW_SELECTOR, canonicalRoleKey } from "@exit-keepa/shared";
-import { SAFE_V1_4_1_SINGLETON, ROLES_V2_1_1_MASTER_COPY, buildRoleConfigurationCalls, buildSafeTransaction, computeSafeTransactionHash } from "./authorizationTransactions";
+import {
+  KEEPERHUB_EXECUTION_SENDER,
+  ROLES_V2_1_0_MASTER_COPY,
+  ROLES_V2_1_1_MASTER_COPY,
+  SAFE_V1_4_1_SINGLETON,
+  ZODIAC_MODULE_PROXY_FACTORY,
+  buildDeployModuleTransaction,
+  buildRoleConfigurationCalls,
+  buildRolesInitializer,
+  buildSafeTransaction,
+  computeSafeTransactionHash,
+  predictModuleProxyAddress,
+}
+  from "./authorizationTransactions";
 
 const SAFE = "0x1111111111111111111111111111111111111111" as const;
 const KEEPER = "0x2222222222222222222222222222222222222222" as const;
 const rolesAbi = [
+  { type: "function", name: "setUp", stateMutability: "nonpayable", inputs: [{ name: "initParams", type: "bytes" }], outputs: [] },
   { type: "function", name: "assignRoles", stateMutability: "nonpayable", inputs: [{ name: "module", type: "address" }, { name: "roleKeys", type: "bytes32[]" }, { name: "memberOf", type: "bool[]" }], outputs: [] },
   { type: "function", name: "scopeTarget", stateMutability: "nonpayable", inputs: [{ name: "roleKey", type: "bytes32" }, { name: "targetAddress", type: "address" }], outputs: [] },
   { type: "function", name: "scopeFunction", stateMutability: "nonpayable", inputs: [{ name: "roleKey", type: "bytes32" }, { name: "targetAddress", type: "address" }, { name: "selector", type: "bytes4" }, { name: "conditions", type: "tuple[]", components: [{ name: "parent", type: "uint8" }, { name: "paramType", type: "uint8" }, { name: "operator", type: "uint8" }, { name: "compValue", type: "bytes" }] }, { name: "options", type: "uint8" }], outputs: [] },
 ] as const;
 
 describe("direct Safe/Roles authorization", () => {
-  it("pins the verified implementations", () => {
+  it("pins Safe, Roles, factory and execution sender", () => {
     expect(SAFE_V1_4_1_SINGLETON).toBe("0x41675C099F32341bf84BFc5382aF534df5C7461a");
     expect(ROLES_V2_1_1_MASTER_COPY).toBe("0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5");
+    expect(ROLES_V2_1_0_MASTER_COPY).toBe("0x9646fDAD06d3e24444381f44362a3B0eB343D337");
+    expect(ZODIAC_MODULE_PROXY_FACTORY).toBe("0x000000000000000000000000000000000000aDdB49795b0f9bA5BC298cDda236");
+    expect(KEEPERHUB_EXECUTION_SENDER).toBe("0xc68f0E22Dc6eD7e883873B36f23DdBBC1b3968Ac");
+  });
+  it("builds the exact Roles initializer for the Safe", () => {
+    const decoded = decodeFunctionData({ abi: rolesAbi, data: buildRolesInitializer(SAFE) });
+    const init = decoded.args?.[0] as `0x${string}`;
+    expect(init).toBe(encodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "address" }], [SAFE, SAFE, SAFE]));
+  });
+  it("predicts the deterministic module proxy address", () => {
+    const deploy = buildDeployModuleTransaction(SAFE);
+    expect(deploy.predictedProxy).toBe(predictModuleProxyAddress(SAFE, deploy.saltNonce));
+    expect(deploy.to).toBe(ZODIAC_MODULE_PROXY_FACTORY);
+    expect(deploy.value).toBe("0x0");
   });
   it("builds only the canonical role and three narrow configuration calls", () => {
     const calls = buildRoleConfigurationCalls(SAFE, KEEPER);
