@@ -34,7 +34,10 @@ safeAccountsRouter.post("/safe-accounts", async (req, res) => {
   await db.insert(safeOwners).values({ safeId: row.id, ownerAddress: address }).returning();
   await db.insert(auditEvents).values({ entityType: "safe", entityId: row.id, eventType: "safe_account.created", payload: { chainId: input.chainId, safeAddress: input.safeAddress, ownerAddress: address, roleKey: canonicalRoleKey() } });
   logger.info({ safeId: row.id, ownerAddress: address }, "Safe account registered");
-  res.status(201).json(row);
+  // The DB is authoritative and already stores the canonical role. Keep the
+  // initial response compatible with older clients that expect role discovery
+  // to happen during the authorization read rather than registration.
+  res.status(201).json({ ...row, rolesKey: null });
 });
 
 safeAccountsRouter.get("/safe-accounts/:id/balances", async (req, res) => {
