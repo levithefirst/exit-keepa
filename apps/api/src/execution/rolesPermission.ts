@@ -1,4 +1,4 @@
-import { AAVE_V3_BASE, AAVE_V3_WITHDRAW_SELECTOR, buildRolesSafeAppUrl, buildZodiacModulesSafeAppUrl, canonicalRoleKey } from "@exit-keepa/shared";
+import { AAVE_V3_BASE, AAVE_V3_WITHDRAW_SELECTOR, canonicalRoleKey } from "@exit-keepa/shared";
 
 export type RolesSetupState = "modifier_missing" | "permission_missing" | "ready";
 export interface RolesPermissionSpec {
@@ -10,7 +10,9 @@ export interface RolesPermissionSpec {
   functionSignature: string;
   conditions: Array<{ param: string; type: string; rule: string }>;
   executionOptions: "None (no value, no delegatecall)";
+  /** Retained for API compatibility. The live authorization path never uses setup links. */
   safeAppUrl: string;
+  /** Retained for API compatibility. The live authorization path never uses setup links. */
   zodiacAppUrl: string;
   setupState: RolesSetupState;
   note: string;
@@ -27,8 +29,6 @@ export function buildRolesPermissionSpec(params: {
   isSandbox: boolean;
   executable?: boolean;
 }): RolesPermissionSpec {
-  const safeAppUrl = buildRolesSafeAppUrl(params.chainId, params.safeAddress);
-  const zodiacAppUrl = buildZodiacModulesSafeAppUrl(params.chainId, params.safeAddress);
   const hasModifier = Boolean(params.rolesModifierAddress);
   const setupState: RolesSetupState = !hasModifier ? "modifier_missing" : params.executable === true ? "ready" : "permission_missing";
 
@@ -44,12 +44,12 @@ export function buildRolesPermissionSpec(params: {
       { param: "to", type: "address", rule: `equals ${params.safeAddress} (this Safe)` },
     ],
     executionOptions: "None (no value, no delegatecall)",
-    safeAppUrl,
-    zodiacAppUrl,
+    safeAppUrl: "",
+    zodiacAppUrl: "",
     setupState,
     note: hasModifier
       ? "Exit Keepa can configure this permission directly through the Safe owner signing flow."
-      : "This Safe has no compatible permission module yet. Installing one is an explicit Safe-owner security action.",
+      : "This Safe has no compatible permission module yet. Exit Keepa will install one after the Safe owner approves the required transactions.",
     needsModifier: !hasModifier,
     isSandbox: params.isSandbox,
   };
