@@ -10,14 +10,32 @@ const accent = Fraunces({ subsets: ["latin"], style: ["italic"], variable: "--fo
 const body = Inter({ subsets: ["latin"], variable: "--font-body", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Exit Keepa",
-  description: "Automated Safe exit strategies, executed via KeeperHub on Base.",
+  metadataBase: new URL("https://exit-keepa-web.vercel.app"),
+  title: {
+    default: "Exit Keepa | Automated DeFi exits",
+    template: "%s | Exit Keepa",
+  },
+  description: "Set an exit condition for your DeFi position and let Exit Keepa watch and execute the permitted exit through your Safe on Base.",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: "Exit Keepa",
+    title: "Exit Keepa | Automated DeFi exits",
+    description: "Set an exit condition. Exit Keepa watches your DeFi position and executes the permitted exit when the condition is met.",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Exit Keepa | Automated DeFi exits",
+    description: "Set an exit condition. Walk away. Exit Keepa watches and executes the permitted exit through your Safe on Base.",
+  },
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
-// Runs before paint, so the page never flashes the wrong theme. Prefers
-// a stored choice from ThemeToggle; falls back to the OS preference on
-// a visitor's first-ever load. Always lands on an explicit light/dark —
-// see ThemeToggle.tsx for why that matters.
 const THEME_INIT_SCRIPT = `
 (function () {
   try {
@@ -34,14 +52,7 @@ const THEME_INIT_SCRIPT = `
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html
-      lang="en"
-      className={`${display.variable} ${accent.variable} ${body.variable}`}
-      // THEME_INIT_SCRIPT below sets data-theme on this element before React
-      // hydrates, on purpose (see its comment) - React would otherwise flag
-      // that as a server/client mismatch every load.
-      suppressHydrationWarning
-    >
+    <html lang="en" className={`${display.variable} ${accent.variable} ${body.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
