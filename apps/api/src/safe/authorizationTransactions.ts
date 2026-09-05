@@ -5,7 +5,7 @@ import {
   encodeFunctionData,
   hashTypedData,
   keccak256,
-  toBytes,
+  stringToHex,
   type Hex,
 } from "viem";
 import { env } from "../env";
@@ -15,26 +15,23 @@ export const SAFE_ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as
 export const SAFE_V1_4_1_SINGLETON = "0x41675C099F32341bf84BFc5382aF534df5C7461a" as const;
 /** Zodiac Roles v2.1.1 mastercopy. v2.1.0 is known vulnerable and is rejected. */
 export const ROLES_V2_1_1_MASTER_COPY = "0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5" as const;
+export const ROLES_V2_1_0_MASTER_COPY = "0x9646fDAD06d3e24444381f44362a3B0eB343D337" as const;
 /** Official Gnosis Guild Zodiac ModuleProxyFactory, used for module/modifier proxies. */
 export const ZODIAC_MODULE_PROXY_FACTORY = "0x000000000000000000000000000000000000aDdB49795b0f9bA5BC298cDda236" as const;
+/** KeeperHub execution sender observed in the project's live Base simulation evidence. */
 export const KEEPERHUB_EXECUTION_SENDER = "0xc68f0E22Dc6eD7e883873B36f23DdBBC1b3968Ac" as const;
 
 const SENTINEL_MODULES = "0x0000000000000000000000000000000000000001" as const;
 const MODULE_PROXY_PREFIX = "602d8060093d393df3363d3d373d3d3d363d73";
 const MODULE_PROXY_SUFFIX = "5af43d82803e903d91602b57fd5bf3";
-const DEPLOY_SELECTOR = keccak256(toBytes("deployModule(address,bytes,uint256)")).slice(0, 10).toLowerCase();
+const DEPLOY_SELECTOR = keccak256(stringToHex("deployModule(address,bytes,uint256)")).slice(0, 10).toLowerCase();
+const ROLES_MAPPING_SLOT = 3n;
 
 const SAFE_TX_TYPES = {
   SafeTx: [
-    { name: "to", type: "address" },
-    { name: "value", type: "uint256" },
-    { name: "data", type: "bytes" },
-    { name: "operation", type: "uint8" },
-    { name: "safeTxGas", type: "uint256" },
-    { name: "baseGas", type: "uint256" },
-    { name: "gasPrice", type: "uint256" },
-    { name: "gasToken", type: "address" },
-    { name: "refundReceiver", type: "address" },
+    { name: "to", type: "address" }, { name: "value", type: "uint256" }, { name: "data", type: "bytes" },
+    { name: "operation", type: "uint8" }, { name: "safeTxGas", type: "uint256" }, { name: "baseGas", type: "uint256" },
+    { name: "gasPrice", type: "uint256" }, { name: "gasToken", type: "address" }, { name: "refundReceiver", type: "address" },
     { name: "nonce", type: "uint256" },
   ],
 } as const;
@@ -106,8 +103,7 @@ export type AuthorizationPlanStep = {
 
 async function rpc(method: string, params: unknown[]): Promise<unknown> {
   const response = await fetch(env.BASE_RPC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
   if (!response.ok) throw new HttpError(502, "Could not verify your Safe. Try again.");
@@ -126,6 +122,12 @@ async function rpcCode(address: string): Promise<string> {
   const result = await rpc("eth_getCode", [address, "latest"]);
   if (typeof result !== "string") throw new HttpError(409, "Safe verification returned no code");
   return result;
+}
+
+async function rpcStorage(address: string, slot: Hex): Promise<Hex> {
+  const result = await rpc("eth_getStorageAt", [address, slot, "latest"]);
+  if (typeof result !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(result)) throw new HttpError(409, "Safe permission state could not be read.");
+  return result as Hex;
 }
 
 function decodeAddressArray(hex: string): string[] {
@@ -183,12 +185,18 @@ export async function verifyRolesModifier(modifierAddress: `0x${string}`, safeAd
   const implementation = parseRolesImplementation(await rpcCode(modifierAddress));
   if (!implementation || implementation.toLowerCase() !== ROLES_V2_1_1_MASTER_COPY.toLowerCase()) return false;
   const [avatarRaw, targetRaw, ownerRaw] = await Promise.all([
-    rpcCall(modifierAddress, "0x5aef7de6"),
-    rpcCall(modifierAddress, "0xd4b83992"),
-    rpcCall(modifierAddress, "0x8da5cb5b"),
+    rpcCall(modifierAddress, "0x5aef7de6"), rpcCall(modifierAddress, "0xd4b83992"), rpcCall(modifierAddress, "0x8da5cb5b"),
   ]);
   const safe = safeAddress.toLowerCase();
   return `0x${avatarRaw.slice(-40)}`.toLowerCase() === safe && `0x${targetRaw.slice(-40)}`.toLowerCase() === safe && `0x${ownerRaw.slice(-40)}`.toLowerCase() === safe;
+}
+
+export async function classifyRolesModule(modifierAddress: `0x${string}`, safeAddress: `0x${string}`): Promise<"compatible" | "incompatible_roles" | "other"> {
+  const implementation = parseRolesImplementation(await rpcCode(modifierAddress));
+  if (!implementation) return "other";
+  if (implementation.toLowerCase() === ROLES_V2_1_1_MASTER_COPY.toLowerCase()) return (await verifyRolesModifier(modifierAddress, safeAddress)) ? "compatible" : "incompatible_roles";
+  if (implementation.toLowerCase() === ROLES_V2_1_0_MASTER_COPY.toLowerCase()) return "incompatible_roles";
+  return "incompatible_roles";
 }
 
 export async function verifyFactory(): Promise<void> {
@@ -199,13 +207,8 @@ export async function verifyFactory(): Promise<void> {
 
 function safeTxTypedData(safeAddress: `0x${string}`, tx: SafeTx, chainId: number) {
   return {
-    domain: { chainId, verifyingContract: safeAddress },
-    types: SAFE_TX_TYPES,
-    primaryType: "SafeTx" as const,
-    message: {
-      to: tx.to, value: tx.value, data: tx.data, operation: tx.operation, safeTxGas: tx.safeTxGas,
-      baseGas: tx.baseGas, gasPrice: tx.gasPrice, gasToken: tx.gasToken, refundReceiver: tx.refundReceiver, nonce: tx.nonce,
-    },
+    domain: { chainId, verifyingContract: safeAddress }, types: SAFE_TX_TYPES, primaryType: "SafeTx" as const,
+    message: { to: tx.to, value: tx.value, data: tx.data, operation: tx.operation, safeTxGas: tx.safeTxGas, baseGas: tx.baseGas, gasPrice: tx.gasPrice, gasToken: tx.gasToken, refundReceiver: tx.refundReceiver, nonce: tx.nonce },
   };
 }
 
@@ -244,15 +247,12 @@ export async function verifySafeTransactionHash(safeAddress: `0x${string}`, tx: 
 }
 
 export function buildRolesInitializer(safeAddress: `0x${string}`): Hex {
-  const initParams = encodeAbiParameters(
-    [{ type: "address" }, { type: "address" }, { type: "address" }],
-    [safeAddress, safeAddress, safeAddress],
-  );
+  const initParams = encodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "address" }], [safeAddress, safeAddress, safeAddress]);
   return encodeFunctionData({ abi: ROLES_ABI, functionName: "setUp", args: [initParams] });
 }
 
 export function deriveModuleSaltNonce(safeAddress: `0x${string}`): bigint {
-  return BigInt(keccak256(concatHex([toBytes("exit-keepa:roles"), safeAddress as Hex])));
+  return BigInt(keccak256(concatHex([stringToHex("exit-keepa:roles"), safeAddress as Hex])));
 }
 
 export function predictModuleProxyAddress(safeAddress: `0x${string}`, saltNonce: bigint): `0x${string}` {
@@ -262,6 +262,14 @@ export function predictModuleProxyAddress(safeAddress: `0x${string}`, saltNonce:
   const initCodeHash = keccak256(deployment);
   const addressHash = keccak256(concatHex(["0xff", ZODIAC_MODULE_PROXY_FACTORY, salt, initCodeHash]));
   return `0x${addressHash.slice(-40)}`;
+}
+
+export function buildDeployModuleTransaction(safeAddress: `0x${string}`) {
+  const saltNonce = deriveModuleSaltNonce(safeAddress);
+  const initializer = buildRolesInitializer(safeAddress);
+  const predictedProxy = predictModuleProxyAddress(safeAddress, saltNonce);
+  const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: "deployModule", args: [ROLES_V2_1_1_MASTER_COPY, initializer, saltNonce] });
+  return { to: ZODIAC_MODULE_PROXY_FACTORY as `0x${string}`, value: "0x0", data, operation: 0 as const, saltNonce, predictedProxy };
 }
 
 export async function inspectEnabledModules(safeAddress: `0x${string}`): Promise<string[]> {
@@ -290,6 +298,93 @@ export async function verifyEnabledModule(safeAddress: `0x${string}`, moduleAddr
   return BigInt(raw) !== 0n;
 }
 
-export async function verifyRolesWiring(moduleAddress: `0x${string}`, safeAddress: `0x${string}`): Promise<boolean> {
-  return verifyRolesModifier(moduleAddress, safeAddress);
+function mappingSlot(key: Hex, slot: bigint): Hex {
+  return keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }], [key, slot]));
+}
+function nestedMappingSlot(key: Hex, parentSlot: Hex): Hex {
+  return keccak256(encodeAbiParameters([{ type: "address" }, { type: "bytes32" }], [key as `0x${string}`, parentSlot]));
+}
+function roleStructBase(roleKey: Hex): Hex {
+  return mappingSlot(roleKey, ROLES_MAPPING_SLOT);
+}
+function roleMemberSlot(roleKey: Hex, member: `0x${string}`): Hex {
+  return nestedMappingSlot(member, roleStructBase(roleKey));
+}
+function roleTargetSlot(roleKey: Hex, target: `0x${string}`): Hex {
+  const base = BigInt(roleStructBase(roleKey)) + 1n;
+  return nestedMappingSlot(target, `0x${base.toString(16).padStart(64, "0")}`);
+}
+function roleScopeSlot(roleKey: Hex, target: `0x${string}`, selector: `0x${string}`): Hex {
+  const targetSelectorKey = (`0x${target.slice(2).padStart(40, "0")}${selector.slice(2).padEnd(8, "0")}${"0".repeat(24)}`) as Hex;
+  const base = BigInt(roleStructBase(roleKey)) + 2n;
+  return mappingSlot(targetSelectorKey, base);
+}
+
+function decodeRoleHeader(header: Hex) {
+  const value = BigInt(header);
+  return {
+    count: Number((value >> 240n) & 0xffffn),
+    options: Number((value >> 224n) & 0xffn),
+    wildcarded: ((value >> 216n) & 1n) === 1n,
+    pointer: `0x${(value & ((1n << 160n) - 1n)).toString(16).padStart(40, "0")}` as `0x${string}`,
+  };
+}
+
+export async function readExactRolePermission(modifierAddress: `0x${string}`, safeAddress: `0x${string}`, memberAddress: `0x${string}`): Promise<boolean> {
+  const roleKey = canonicalRoleKey();
+  const [memberWord, targetWord, scopeHeader] = await Promise.all([
+    rpcStorage(modifierAddress, roleMemberSlot(roleKey, memberAddress)),
+    rpcStorage(modifierAddress, roleTargetSlot(roleKey, AAVE_V3_BASE.pool)),
+    rpcStorage(modifierAddress, roleScopeSlot(roleKey, AAVE_V3_BASE.pool, AAVE_V3_WITHDRAW_SELECTOR)),
+  ]);
+  if ((BigInt(memberWord) & 0xffn) !== 1n) return false;
+  const targetValue = BigInt(targetWord);
+  const clearance = Number(targetValue & 0xffn);
+  const targetOptions = Number((targetValue >> 8n) & 0xffn);
+  if (clearance !== 2 || targetOptions !== 0) return false;
+
+  const header = decodeRoleHeader(scopeHeader);
+  if (header.count !== 4 || header.options !== 0 || header.wildcarded || header.pointer === SAFE_ZERO_ADDRESS) return false;
+  const pointerCode = await rpcCode(header.pointer);
+  const code = pointerCode.toLowerCase().replace(/^0x/, "");
+  if (!code.startsWith("00") || code.length < 2 + 8 * 2 + 64 * 2) return false;
+  const packed = code.slice(2);
+  const expectedNodes = "00a50030" + "0020" + "0030";
+  if (packed.slice(0, 16) !== expectedNodes) return false;
+  const comp1 = `0x${packed.slice(16, 80)}` as Hex;
+  const comp2 = `0x${packed.slice(80, 144)}` as Hex;
+  if (comp1.toLowerCase() !== keccak256(addressCompValue(AAVE_V3_BASE.usdc)).toLowerCase()) return false;
+  if (comp2.toLowerCase() !== keccak256(addressCompValue(safeAddress)).toLowerCase()) return false;
+  return true;
+}
+
+export async function verifyNegativeRoleProbes(modifierAddress: `0x${string}`, safeAddress: `0x${string}`, memberAddress: `0x${string}`): Promise<boolean> {
+  const roleKey = canonicalRoleKey();
+  const withdrawal = encodeFunctionData({ abi: [{ type: "function", name: "withdraw", stateMutability: "nonpayable", inputs: [
+    { name: "asset", type: "address" }, { name: "amount", type: "uint256" }, { name: "to", type: "address" },
+  ], outputs: [{ name: "", type: "uint256" }] }] as const, functionName: "withdraw", args: [AAVE_V3_BASE.usdc, 0n, safeAddress] });
+  const calls = [
+    { to: AAVE_V3_BASE.pool, value: 0n, data: withdrawal, operation: 0 },
+    { to: AAVE_V3_BASE.pool, value: 0n, data: encodeFunctionData({ abi: [{ type: "function", name: "withdraw", stateMutability: "nonpayable", inputs: [
+      { name: "asset", type: "address" }, { name: "amount", type: "uint256" }, { name: "to", type: "address" },
+    ], outputs: [{ name: "", type: "uint256" }] }] as const, functionName: "withdraw", args: [SAFE_ZERO_ADDRESS, 0n, safeAddress] }), operation: 0 },
+    { to: AAVE_V3_BASE.pool, value: 0n, data: withdrawal, operation: 0, recipientOverride: "0x0000000000000000000000000000000000000001" as const },
+    { to: AAVE_V3_BASE.pool, value: 1n, data: withdrawal, operation: 0 },
+    { to: AAVE_V3_BASE.pool, value: 0n, data: "0x12345678" as Hex, operation: 0 },
+    { to: AAVE_V3_BASE.pool, value: 0n, data: withdrawal, operation: 1 },
+  ];
+  for (const call of calls) {
+    const data = call.recipientOverride ? encodeFunctionData({ abi: [{ type: "function", name: "withdraw", stateMutability: "nonpayable", inputs: [
+      { name: "asset", type: "address" }, { name: "amount", type: "uint256" }, { name: "to", type: "address" },
+    ], outputs: [{ name: "", type: "uint256" }] }] as const, functionName: "withdraw", args: [AAVE_V3_BASE.usdc, 0n, call.recipientOverride] }) : call.data;
+    try {
+      await rpcCall(modifierAddress, encodeFunctionData({ abi: [{ type: "function", name: "execTransactionWithRole", stateMutability: "nonpayable", inputs: [
+        { name: "to", type: "address" }, { name: "value", type: "uint256" }, { name: "data", type: "bytes" }, { name: "operation", type: "uint8" }, { name: "roleKey", type: "bytes32" }, { name: "shouldRevert", type: "bool" },
+      ], outputs: [{ name: "success", type: "bool" }] }] as const, functionName: "execTransactionWithRole", args: [call.to, call.value, data, call.operation, roleKey, true] }), memberAddress);
+      return false;
+    } catch {
+      // Every adversarial probe must be rejected by the Roles authorization path.
+    }
+  }
+  return true;
 }
