@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { eq } from "drizzle-orm";
 import { canonicalRoleKey } from "@exit-keepa/shared";
 import { verifyTypedData } from "viem";
 import { db } from "../db";
@@ -9,7 +10,6 @@ import {
   buildRoleConfigurationCalls,
   buildSafeTransaction,
   buildTypedDataForSafeTransaction,
-  computeSafeTransactionHash,
   encodeExecTransaction,
   inspectSafeForAuthorization,
   verifyRolesModifier,
@@ -33,17 +33,12 @@ async function keeperAddress(): Promise<`0x${string}`> {
 
 async function getSafeRow(id: string, ownerAddress: string) {
   await requireSafeOwnership(id, ownerAddress);
-  const [row] = await db.select().from(safeAccounts).where((table, { eq }) => eq(table.id, id)).limit(1);
+  const [row] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, id)).limit(1);
   if (!row) throw new HttpError(404, "Safe account not found");
   if (row.isSandbox) throw new HttpError(409, "Demo Safes cannot authorize real automatic exits.");
   return row;
 }
 
-/**
- * Builds exactly one Safe transaction at the current Safe nonce. The client
- * signs the returned EIP-712 payload, then asks /execute-calldata for the
- * exact Safe execTransaction calldata. Nonce and hash are re-read there.
- */
 safeAuthorizationRouter.post("/safe-accounts/:id/authorization/prepare", async (req, res) => {
   const owner = await requireSession(req);
   const row = await getSafeRow(req.params.id, owner);
@@ -68,15 +63,14 @@ safeAuthorizationRouter.post("/safe-accounts/:id/authorization/prepare", async (
   if (!Number.isInteger(step) || step < 0 || step > 2) throw new HttpError(400, "Invalid authorization step.");
 
   const keeper = await keeperAddress();
-  const calls = buildRoleConfigurationCalls(row.safeAddress as `0x${string}`, keeper);
-  const selected = calls[step];
+  const selected = buildRoleConfigurationCalls(row.safeAddress as `0x${string}`, keeper)[step];
   const tx = buildSafeTransaction({ to: modifier, data: selected.data, nonce: inspection.nonce });
   const hashes = await verifySafeTransactionHash(row.safeAddress as `0x${string}`, tx, 8453);
   const typedData = buildTypedDataForSafeTransaction(row.safeAddress as `0x${string}`, tx, 8453);
 
   res.json({
     step,
-    stepCount: calls.length,
+    stepCount: 3,
     label: selected.label,
     safeAddress: row.safeAddress,
     modifierAddress: modifier,
@@ -103,7 +97,6 @@ safeAuthorizationRouter.post("/safe-accounts/:id/authorization/prepare", async (
   });
 });
 
-/** Converts a verified owner signature into the exact outer Safe call. */
 safeAuthorizationRouter.post("/safe-accounts/:id/authorization/execute-calldata", async (req, res) => {
   const owner = await requireSession(req);
   const row = await getSafeRow(req.params.id, owner);
@@ -139,17 +132,5 @@ safeAuthorizationRouter.post("/safe-accounts/:id/authorization/execute-calldata"
   if (!valid) throw new HttpError(403, "The wallet signature does not belong to the connected Safe owner.");
 
   const execData = encodeExecTransaction(tx, signature as `0x${string}`);
-  res.json({
-    to: row.safeAddress,
-    value: "0x0",
-    data: execData,
-    safeTxHash: hashes.localHash,
-  });
-});
-
-/** Re-read chain state after a mined Safe transaction. */
-safeAuthorizationRouter.get("/safe-accounts/:id/authorization/verify", async (req, res) => {
-  const owner = await requireSession(req);
-  await getSafeRow(req.params.id, owner);
-  res.json({ checked: true, roleKey: canonicalRoleKey() });
+  res.json({ to: row.safeAddress, value: "0x0", data: execData, safeTxHash: hashes.localHash });
 });
