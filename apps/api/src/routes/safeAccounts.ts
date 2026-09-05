@@ -1,14 +1,12 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
-import { canonicalRoleKey, createSafeAccountSchema, AAVE_V3_BASE, type ExitAction } from "@exit-keepa/shared";
+import { canonicalRoleKey, createSafeAccountSchema, AAVE_V3_BASE } from "@exit-keepa/shared";
 import { db } from "../db";
 import { auditEvents, safeAccounts, safeOwners } from "../db/schema";
 import { HttpError } from "../middleware/errorHandler";
 import { logger } from "../logger";
 import { env } from "../env";
 import { requireSafeOwnership, requireSession } from "../auth/session";
-import { inspectSafeForAuthorization } from "../safe/authorizationTransactions";
-import { readAuthorizationStatus } from "../safe/authorizationStatus";
 
 export const safeAccountsRouter = Router();
 
@@ -60,26 +58,4 @@ safeAccountsRouter.get("/safe-accounts/:id/balances", async (req, res) => {
     logger.error({ err }, "Failed to read Safe balances");
     res.status(502).json({ error: "balance_read_failed", message: "Could not read Safe balances" });
   }
-});
-
-safeAccountsRouter.get("/safe-accounts/:id/authorization", async (req, res) => {
-  const address = await requireSession(req);
-  await requireSafeOwnership(req.params.id, address);
-  const [row] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, req.params.id)).limit(1);
-  if (!row) throw new HttpError(404, `Safe account ${req.params.id} not found`);
-  const probeAction: ExitAction = { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_V3_BASE.usdc, amount: "max" };
-
-  if (!row.isSandbox) {
-    const inspection = await inspectSafeForAuthorization(row.safeAddress as `0x${string}`, address as `0x${string}`);
-    if (!inspection.isSafe) throw new HttpError(409, "That address is not a compatible Safe.");
-    if (!inspection.isOwner) throw new HttpError(403, "You are not an owner of this Safe.");
-    if (inspection.threshold !== 1) throw new HttpError(409, "This Safe needs more than one owner approval. Multisig authorization is not enabled here yet.");
-  }
-
-  const status = await readAuthorizationStatus({ safeAddress: row.safeAddress, chainId: row.chainId, rolesModifierAddress: row.rolesModifierAddress, rolesKey: canonicalRoleKey(), isSandbox: row.isSandbox }, probeAction);
-  if (!row.isSandbox && status.detectedModifierAddress && row.rolesModifierAddress !== status.detectedModifierAddress) {
-    await db.update(safeAccounts).set({ rolesModifierAddress: status.detectedModifierAddress, rolesKey: canonicalRoleKey() }).where(eq(safeAccounts.id, row.id));
-    await db.insert(auditEvents).values({ entityType: "safe", entityId: row.id, eventType: "safe_account.modifier_detected", payload: { detected: status.detectedModifierAddress, enabledModules: status.enabledModules } });
-  }
-  res.status(200).json(status);
 });
