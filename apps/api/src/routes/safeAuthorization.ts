@@ -7,7 +7,7 @@ import { safeAccounts } from "../db/schema";
 import { requireSafeOwnership, requireSession } from "../auth/session";
 import { HttpError } from "../middleware/errorHandler";
 import { env } from "../env";
-import { buildDeployModuleTransaction, buildRoleConfigurationCalls, buildSafeTransaction, buildTypedDataForSafeTransaction, classifyRolesModule, encodeExecTransaction, inspectEnabledModules, inspectSafeForAuthorization, readRolePermissionState, verifyEnabledModule, verifyFactory, verifyNegativeRoleProbes, KEEPERHUB_EXECUTION_SENDER } from "../safe/authorizationTransactions";
+import { buildDeployModuleTransaction, buildRoleConfigurationCalls, buildSafeTransaction, buildTypedDataForSafeTransaction, classifyRolesModule, encodeExecTransaction, inspectEnabledModules, inspectSafeForAuthorization, readRolePermissionState, verifyEnabledModule, verifyFactory, verifyNegativeRoleProbes, verifySafeTransactionHash, KEEPERHUB_EXECUTION_SENDER } from "../safe/authorizationTransactions";
 
 export const safeAuthorizationRouter = Router();
 const OWNER_ETH_FLOOR_WEI = 100_000_000_000_000n;
