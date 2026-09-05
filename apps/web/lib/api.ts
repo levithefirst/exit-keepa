@@ -6,15 +6,10 @@ const REQUEST_TIMEOUT_MS = 15_000;
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let response: Response;
-  try {
-    response = await fetch(`${clientEnv.NEXT_PUBLIC_API_URL}${path}`, { ...init, signal: controller.signal, headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}), ...init?.headers } });
-  } catch (err) {
-    if ((err as Error).name === "AbortError") throw new Error("Request timed out. Check your connection and try again.");
-    throw new Error("Could not reach the server. Check your connection and try again.");
-  } finally { clearTimeout(timeout); }
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error((body && (body.message || body.error)) || `Request failed (${response.status})`);
-  return body as T;
+  try { response = await fetch(`${clientEnv.NEXT_PUBLIC_API_URL}${path}`, { ...init, signal: controller.signal, headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}), ...init?.headers } }); }
+  catch (err) { if ((err as Error).name === "AbortError") throw new Error("Request timed out. Check your connection and try again."); throw new Error("Could not reach the server. Check your connection and try again."); }
+  finally { clearTimeout(timeout); }
+  const body = await response.json().catch(() => null); if (!response.ok) throw new Error((body && (body.message || body.error)) || `Request failed (${response.status})`); return body as T;
 }
 
 export const api = {
@@ -28,8 +23,8 @@ export const api = {
   getSafeAccount: (id: string) => request(`/api/safe-accounts/${id}`),
   getSafeBalances: (id: string) => request(`/api/safe-accounts/${id}/balances`),
   getSafeAuthorization: (id: string) => request<any>(`/api/safe-accounts/${id}/authorization`),
-  prepareSafeAuthorization: (id: string, step: number) => request<any>(`/api/safe-accounts/${id}/authorization/prepare`, { method: "POST", body: JSON.stringify({ step }) }),
-  buildSafeAuthorizationExecution: (id: string, input: { step: number; safeTxHash: string; signature: string }) => request<{ to: string; value: string; data: string; safeTxHash: string }>(`/api/safe-accounts/${id}/authorization/execute-calldata`, { method: "POST", body: JSON.stringify(input) }),
+  prepareSafeAuthorization: (id: string) => request<any>(`/api/safe-accounts/${id}/authorization/prepare`, { method: "POST", body: JSON.stringify({}) }),
+  buildSafeAuthorizationExecution: (id: string, input: { stepId: string; safeTxHash: string; signature: string }) => request<{ to: string; value: string; data: string; safeTxHash: string }>(`/api/safe-accounts/${id}/authorization/execute-calldata`, { method: "POST", body: JSON.stringify(input) }),
   listStrategies: (safeId?: string) => request<any[]>(`/api/exit-strategies${safeId ? `?safeId=${encodeURIComponent(safeId)}` : ""}`),
   getStrategy: (id: string) => request<any>(`/api/exit-strategies/${id}`),
   createStrategy: (input: unknown) => request("/api/exit-strategies", { method: "POST", body: JSON.stringify(input) }),
