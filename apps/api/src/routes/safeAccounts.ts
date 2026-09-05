@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
-import { createSafeAccountSchema } from "@exit-keepa/shared";
+import { canonicalRoleKey, createSafeAccountSchema, AAVE_V3_BASE, type ExitAction } from "@exit-keepa/shared";
 import { db } from "../db";
 import { auditEvents, safeAccounts, safeOwners } from "../db/schema";
 import { HttpError } from "../middleware/errorHandler";
@@ -8,19 +8,9 @@ import { logger } from "../logger";
 import { env } from "../env";
 import { requireSafeOwnership, requireSession } from "../auth/session";
 import { readAuthorizationStatus } from "../safe/authorizationStatus";
-import { AAVE_V3_BASE, type ExitAction } from "@exit-keepa/shared";
 
 export const safeAccountsRouter = Router();
 
-/**
- * Lists every Safe the current session's address owns, so the frontend
- * can skip straight to a populated dashboard for a returning wallet
- * instead of always asking for a Safe address again - including a demo
- * session, whose own sandbox Safe was auto-provisioned for it at login
- * (see POST /api/auth/demo-session). Empty for a wallet that has never
- * registered one - the dashboard falls back to the manual "Connect your
- * Safe" form in that case.
- */
 safeAccountsRouter.get("/safe-accounts", async (req, res) => {
   const address = await requireSession(req);
   const owned = await db.select().from(safeOwners).where(eq(safeOwners.ownerAddress, address));
@@ -46,39 +36,39 @@ safeAccountsRouter.post("/safe-accounts", async (req, res) => {
   const address = await requireSession(req);
   const input = createSafeAccountSchema.parse(req.body);
 
+  // rolesKey and rolesModifierAddress are intentionally NOT taken from the
+  // client. The former is a fixed Exit Keepa authority and the latter is
+  // discovered from the Safe's live module state by authorizationStatus.ts.
+  // Keeping the legacy columns avoids a destructive migration for existing
+  // rows while making new registrations deterministic.
   const [row] = await db
     .insert(safeAccounts)
     .values({
       chainId: input.chainId,
       safeAddress: input.safeAddress,
-      rolesModifierAddress: input.rolesModifierAddress ?? null,
-      rolesKey: input.rolesKey ?? null,
+      rolesModifierAddress: null,
+      rolesKey: canonicalRoleKey(),
     })
     .returning();
 
-  // The caller who registers a Safe is its owner in Exit Keepa's own
-  // database from this point on - every later read or action on this Safe
-  // (and everything hanging off it: strategies, executions, agent
-  // decisions) requires a session authenticating as this exact address.
   await db.insert(safeOwners).values({ safeId: row.id, ownerAddress: address }).returning();
 
   await db.insert(auditEvents).values({
     entityType: "safe",
     entityId: row.id,
     eventType: "safe_account.created",
-    payload: { input, ownerAddress: address },
+    payload: {
+      chainId: input.chainId,
+      safeAddress: input.safeAddress,
+      ownerAddress: address,
+      roleKey: canonicalRoleKey(),
+    },
   });
 
   logger.info({ safeId: row.id, ownerAddress: address }, "Safe account registered");
   res.status(201).json(row);
 });
 
-/**
- * Reads native ETH and Base USDC balances for a Safe directly via JSON-RPC
- * (same raw-fetch approach already used in routes/diagnostics.ts) - shown
- * on the dashboard so a user/judge can see whether the Safe actually holds
- * anything before trying to activate a strategy against it.
- */
 safeAccountsRouter.get("/safe-accounts/:id/balances", async (req, res) => {
   const address = await requireSession(req);
   await requireSafeOwnership(req.params.id, address);
@@ -115,27 +105,10 @@ safeAccountsRouter.get("/safe-accounts/:id/balances", async (req, res) => {
     });
   } catch (err) {
     logger.error({ err }, "Failed to read Safe balances");
-    res.status(502).json({ error: "balance_read_failed", message: (err as Error).message });
+    res.status(502).json({ error: "balance_read_failed", message: "Could not read Safe balances" });
   }
 });
 
-
-/**
- * The one question onboarding actually needs answered: can Exit Keepa
- * execute this Safe's exit yet, and if not, what exactly is missing?
- *
- * Answered from chain state (the Safe's enabled modules) plus a dry run of
- * the exact transaction Exit Keepa would send - not from whatever happens
- * to be stored in this database. That matters because the database can be
- * stale, hand-entered, or simply wrong, and "the UI thinks you're set up"
- * is not a security property.
- *
- * Side effect worth calling out: when a Zodiac modifier is detected on the
- * Safe and this record doesn't have one stored, it is adopted here. That
- * is what removes the "paste your Roles Modifier address" step from
- * onboarding entirely - the address is read off the Safe, never typed.
- * Only ever adopted from a real chain read of that specific Safe.
- */
 safeAccountsRouter.get("/safe-accounts/:id/authorization", async (req, res) => {
   const address = await requireSession(req);
   await requireSafeOwnership(req.params.id, address);
@@ -143,9 +116,6 @@ safeAccountsRouter.get("/safe-accounts/:id/authorization", async (req, res) => {
   const [row] = await db.select().from(safeAccounts).where(eq(safeAccounts.id, req.params.id)).limit(1);
   if (!row) throw new HttpError(404, `Safe account ${req.params.id} not found`);
 
-  // The exit every strategy on this Safe performs today - the same
-  // deterministic action buildExitTransaction is constrained to. Used only
-  // to dry-run the permission; nothing here is executed.
   const probeAction: ExitAction = {
     protocol: "aave-v3-base",
     action: "withdraw",
@@ -158,19 +128,17 @@ safeAccountsRouter.get("/safe-accounts/:id/authorization", async (req, res) => {
       safeAddress: row.safeAddress,
       chainId: row.chainId,
       rolesModifierAddress: row.rolesModifierAddress,
-      rolesKey: row.rolesKey,
+      rolesKey: canonicalRoleKey(),
       isSandbox: row.isSandbox,
+      ownerAddress: address,
     },
     probeAction,
   );
 
-  // Adopt a modifier discovered on-chain so the user never has to supply
-  // one. Never overwrites an address already stored, and never invents one
-  // for a sandbox Safe.
-  if (!row.isSandbox && status.detectedModifierAddress && !row.rolesModifierAddress) {
+  if (!row.isSandbox && status.detectedModifierAddress && row.rolesModifierAddress !== status.detectedModifierAddress) {
     await db
       .update(safeAccounts)
-      .set({ rolesModifierAddress: status.detectedModifierAddress })
+      .set({ rolesModifierAddress: status.detectedModifierAddress, rolesKey: canonicalRoleKey() })
       .where(eq(safeAccounts.id, row.id));
     await db.insert(auditEvents).values({
       entityType: "safe",
@@ -178,10 +146,6 @@ safeAccountsRouter.get("/safe-accounts/:id/authorization", async (req, res) => {
       eventType: "safe_account.modifier_detected",
       payload: { detected: status.detectedModifierAddress, enabledModules: status.enabledModules },
     });
-    logger.info(
-      { safeId: row.id, modifier: status.detectedModifierAddress },
-      "Adopted a Zodiac modifier detected on the Safe",
-    );
   }
 
   res.status(200).json(status);
