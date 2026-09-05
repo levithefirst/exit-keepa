@@ -39,6 +39,9 @@ export const createSafeAccountSchema = z.object({
   safeAddress: z
     .string()
     .regex(/^0x[a-fA-F0-9]{40}$/, "must be a checksummed EVM address"),
+  // Retained as optional input for backwards compatibility with older
+  // clients. The API never uses either field as an authorization authority:
+  // roles are discovered from chain state and the role key is canonical.
   rolesModifierAddress: z
     .string()
     .regex(/^0x[a-fA-F0-9]{40}$/)
@@ -46,7 +49,7 @@ export const createSafeAccountSchema = z.object({
     .optional(),
   rolesKey: z
     .string()
-    .regex(/^0x[a-fA-F0-9]{64}$/, "must be a bytes32 hex value")
+    .regex(/^0x[a-fA-F0-9]{64}$/)
     .nullable()
     .optional(),
 });
