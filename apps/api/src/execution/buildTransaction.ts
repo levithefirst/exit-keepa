@@ -1,5 +1,6 @@
 import {
   AAVE_V3_BASE,
+  canonicalRoleKey,
   encodeAaveV3WithdrawCalldata,
   resolveWithdrawAmount,
   type ExitAction,
@@ -13,6 +14,7 @@ export interface BuiltTransaction {
   data: string;
   operation: 0;
   rolesModifierAddress: string;
+  /** Always the canonical Exit Keepa role. Never client-controlled. */
   roleKey: string;
   decodedFunction: string;
   decodedArgs: Record<string, string>;
@@ -22,26 +24,17 @@ export interface SafeForExecution {
   safeAddress: string;
   chainId: number;
   rolesModifierAddress: string | null;
+  /** Legacy database field retained for compatibility; execution ignores it. */
   rolesKey: string | null;
 }
 
 /**
  * The single place that turns a stored strategy + its Safe into the exact
  * transaction Exit Keepa will ask KeeperHub to execute. Never accepts a
- * target/function/calldata from a caller - everything here is derived from
- * validated, DB-stored data (the strategy's `action`, already constrained
- * by exitActionSchema to Aave v3 Base USDC withdraw) plus known protocol
- * constants. This is what makes a strategy's transaction reconstructible
- * deterministically at any later point, and what keeps a compromised or
- * buggy frontend from ever steering an arbitrary call through the Safe.
+ * target/function/calldata/role key from a caller - everything here is
+ * derived from validated, DB-stored data plus known protocol constants.
  */
 export function buildExitTransaction(action: ExitAction, safe: SafeForExecution): BuiltTransaction {
-  // Every constant below (Aave Pool address, USDC address) is Base-only.
-  // A Safe registered under any other chainId (e.g. a copy-pasted
-  // Ethereum mainnet chainId with the same safeAddress) must never reach
-  // KeeperHub with a Base-targeted transaction built for a chain it
-  // never validated - fail closed here, not silently on whatever chain
-  // that address happens to resolve to.
   if (safe.chainId !== AAVE_V3_BASE.chainId) {
     throw new HttpError(
       409,
@@ -49,8 +42,8 @@ export function buildExitTransaction(action: ExitAction, safe: SafeForExecution)
     );
   }
 
-  if (!safe.rolesModifierAddress || !safe.rolesKey) {
-    throw new HttpError(409, "Safe has no Roles Modifier / role key configured yet");
+  if (!safe.rolesModifierAddress) {
+    throw new HttpError(409, "Safe has no compatible permission module configured yet");
   }
 
   const amount = resolveWithdrawAmount(action.amount);
@@ -66,7 +59,7 @@ export function buildExitTransaction(action: ExitAction, safe: SafeForExecution)
     data,
     operation: 0,
     rolesModifierAddress: safe.rolesModifierAddress,
-    roleKey: safe.rolesKey,
+    roleKey: canonicalRoleKey(),
     decodedFunction: "withdraw(address asset, uint256 amount, address to)",
     decodedArgs: { asset: action.asset, amount: amount.toString(), to: safe.safeAddress },
   };
