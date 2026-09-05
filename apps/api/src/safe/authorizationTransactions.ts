@@ -1,21 +1,46 @@
 import { AAVE_V3_BASE, AAVE_V3_WITHDRAW_SELECTOR, canonicalRoleKey } from "@exit-keepa/shared";
-import { encodeAbiParameters, encodeFunctionData, hashTypedData, type Hex } from "viem";
+import {
+  concatHex,
+  encodeAbiParameters,
+  encodeFunctionData,
+  hashTypedData,
+  keccak256,
+  toBytes,
+  type Hex,
+} from "viem";
 import { env } from "../env";
 import { HttpError } from "../middleware/errorHandler";
 
 export const SAFE_ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 export const SAFE_V1_4_1_SINGLETON = "0x41675C099F32341bf84BFc5382aF534df5C7461a" as const;
-/** Zodiac Roles v2.1.1 mastercopy. v2.1.0 is known vulnerable. */
+/** Zodiac Roles v2.1.1 mastercopy. v2.1.0 is known vulnerable and is rejected. */
 export const ROLES_V2_1_1_MASTER_COPY = "0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5" as const;
+/** Official Gnosis Guild Zodiac ModuleProxyFactory, used for module/modifier proxies. */
+export const ZODIAC_MODULE_PROXY_FACTORY = "0x000000000000000000000000000000000000aDdB49795b0f9bA5BC298cDda236" as const;
+export const KEEPERHUB_EXECUTION_SENDER = "0xc68f0E22Dc6eD7e883873B36f23DdBBC1b3968Ac" as const;
 
-const SAFE_TX_TYPES = { SafeTx: [
-  { name: "to", type: "address" }, { name: "value", type: "uint256" }, { name: "data", type: "bytes" },
-  { name: "operation", type: "uint8" }, { name: "safeTxGas", type: "uint256" }, { name: "baseGas", type: "uint256" },
-  { name: "gasPrice", type: "uint256" }, { name: "gasToken", type: "address" }, { name: "refundReceiver", type: "address" },
-  { name: "nonce", type: "uint256" },
-] } as const;
+const SENTINEL_MODULES = "0x0000000000000000000000000000000000000001" as const;
+const MODULE_PROXY_PREFIX = "602d8060093d393df3363d3d373d3d3d363d73";
+const MODULE_PROXY_SUFFIX = "5af43d82803e903d91602b57fd5bf3";
+const DEPLOY_SELECTOR = keccak256(toBytes("deployModule(address,bytes,uint256)")).slice(0, 10).toLowerCase();
+
+const SAFE_TX_TYPES = {
+  SafeTx: [
+    { name: "to", type: "address" },
+    { name: "value", type: "uint256" },
+    { name: "data", type: "bytes" },
+    { name: "operation", type: "uint8" },
+    { name: "safeTxGas", type: "uint256" },
+    { name: "baseGas", type: "uint256" },
+    { name: "gasPrice", type: "uint256" },
+    { name: "gasToken", type: "address" },
+    { name: "refundReceiver", type: "address" },
+    { name: "nonce", type: "uint256" },
+  ],
+} as const;
 
 const ROLES_ABI = [
+  { type: "function", name: "setUp", stateMutability: "nonpayable", inputs: [{ name: "initParams", type: "bytes" }], outputs: [] },
   { type: "function", name: "assignRoles", stateMutability: "nonpayable", inputs: [
     { name: "module", type: "address" }, { name: "roleKeys", type: "bytes32[]" }, { name: "memberOf", type: "bool[]" },
   ], outputs: [] },
@@ -29,6 +54,10 @@ const ROLES_ABI = [
     ] }, { name: "options", type: "uint8" },
   ], outputs: [] },
 ] as const;
+
+const FACTORY_ABI = [{ type: "function", name: "deployModule", stateMutability: "nonpayable", inputs: [
+  { name: "masterCopy", type: "address" }, { name: "initializer", type: "bytes" }, { name: "saltNonce", type: "uint256" },
+], outputs: [{ name: "proxy", type: "address" }] }] as const;
 
 const SAFE_READ_ABI = [
   { type: "function", name: "getOwners", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address[]" }] },
@@ -49,46 +78,103 @@ const EXEC_TRANSACTION_ABI = [{ type: "function", name: "execTransaction", state
   { name: "gasToken", type: "address" }, { name: "refundReceiver", type: "address" }, { name: "signatures", type: "bytes" },
 ], outputs: [{ name: "success", type: "bool" }] }] as const;
 
-type SafeTx = { to: `0x${string}`; value: bigint; data: Hex; operation: 0; safeTxGas: bigint; baseGas: bigint; gasPrice: bigint; gasToken: `0x${string}`; refundReceiver: `0x${string}`; nonce: bigint };
+const MODULE_READ_ABI = [
+  { type: "function", name: "isModuleEnabled", stateMutability: "view", inputs: [{ name: "module", type: "address" }], outputs: [{ name: "", type: "bool" }] },
+  { type: "function", name: "getModulesPaginated", stateMutability: "view", inputs: [{ name: "start", type: "address" }, { name: "pageSize", type: "uint256" }], outputs: [
+    { name: "array", type: "address[]" }, { name: "next", type: "address" },
+  ] },
+] as const;
 
-async function rpcCall(to: string, data: string, from?: string): Promise<string> {
-  const response = await fetch(env.BASE_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data, ...(from ? { from } : {}) }, "latest"] }) });
+type SafeTx = {
+  to: `0x${string}`; value: bigint; data: Hex; operation: 0; safeTxGas: bigint; baseGas: bigint; gasPrice: bigint;
+  gasToken: `0x${string}`; refundReceiver: `0x${string}`; nonce: bigint;
+};
+
+export type AuthorizationPlanStep = {
+  id: string;
+  kind: "deploy_proxy" | "enable_module" | "assign_role" | "scope_target" | "scope_function";
+  label: string;
+  txType: "eoa" | "safe";
+  to: `0x${string}`;
+  value: string;
+  data: Hex;
+  operation: 0;
+  safeTx?: SafeTx;
+  safeTxHash?: Hex;
+  typedData?: ReturnType<typeof safeTxTypedData>;
+};
+
+async function rpc(method: string, params: unknown[]): Promise<unknown> {
+  const response = await fetch(env.BASE_RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
   if (!response.ok) throw new HttpError(502, "Could not verify your Safe. Try again.");
-  const body = await response.json() as { result?: string; error?: { message?: string } };
+  const body = await response.json() as { result?: unknown; error?: { message?: string } };
   if (body.error) throw new HttpError(409, body.error.message ?? "Safe verification failed");
-  if (!body.result) throw new HttpError(409, "Safe verification returned no result");
   return body.result;
 }
+
+async function rpcCall(to: string, data: Hex, from?: string): Promise<string> {
+  const result = await rpc("eth_call", [{ to, data, ...(from ? { from } : {}) }, "latest"]);
+  if (typeof result !== "string" || !result) throw new HttpError(409, "Safe verification returned no result");
+  return result;
+}
+
 async function rpcCode(address: string): Promise<string> {
-  const response = await fetch(env.BASE_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getCode", params: [address, "latest"] }) });
-  if (!response.ok) throw new HttpError(502, "Could not verify your Safe. Try again.");
-  const body = await response.json() as { result?: string; error?: { message?: string } };
-  if (body.error) throw new HttpError(409, body.error.message ?? "Safe verification failed");
-  return body.result ?? "0x";
+  const result = await rpc("eth_getCode", [address, "latest"]);
+  if (typeof result !== "string") throw new HttpError(409, "Safe verification returned no code");
+  return result;
 }
+
 function decodeAddressArray(hex: string): string[] {
-  const body = hex.slice(2); const offset = Number(BigInt(`0x${body.slice(0, 64)}`)) * 2; const length = Number(BigInt(`0x${body.slice(offset, offset + 64)}`));
-  const result: string[] = []; for (let i = 0; i < length; i++) { const start = offset + 64 + i * 64; result.push(`0x${body.slice(start + 24, start + 64)}`); } return result;
+  const body = hex.slice(2);
+  if (body.length < 64) throw new HttpError(409, "Safe owner data could not be decoded");
+  const offset = Number(BigInt(`0x${body.slice(0, 64)}`)) * 2;
+  const length = Number(BigInt(`0x${body.slice(offset, offset + 64)}`));
+  const result: string[] = [];
+  for (let i = 0; i < length; i++) {
+    const start = offset + 64 + i * 64;
+    if (body.length < start + 64) throw new HttpError(409, "Safe owner data could not be decoded");
+    result.push(`0x${body.slice(start + 24, start + 64)}`);
+  }
+  return result;
 }
+
 function decodeString(hex: string): string {
-  const body = hex.slice(2); const offset = Number(BigInt(`0x${body.slice(0, 64)}`)) * 2; const length = Number(BigInt(`0x${body.slice(offset, offset + 64)}`));
+  const body = hex.slice(2);
+  const offset = Number(BigInt(`0x${body.slice(0, 64)}`)) * 2;
+  const length = Number(BigInt(`0x${body.slice(offset, offset + 64)}`));
   return Buffer.from(body.slice(offset + 64, offset + 64 + length * 2), "hex").toString("utf8");
 }
-function safeRead(name: "getOwners" | "getThreshold" | "nonce" | "VERSION" | "masterCopy"): Hex { return encodeFunctionData({ abi: SAFE_READ_ABI, functionName: name }); }
+
 function parseRolesImplementation(code: string): string | null {
-  const body = code.toLowerCase().replace(/^0x/, ""); const prefix = "363d3d373d3d3d363d73"; const suffix = "5af43d82803e903d91602b57fd5bf3";
-  if (!body.startsWith(prefix) || !body.endsWith(suffix) || body.length !== 90) return null; return `0x${body.slice(prefix.length, prefix.length + 40)}`;
+  const body = code.toLowerCase().replace(/^0x/, "");
+  const prefix = "363d3d373d3d3d363d73";
+  const suffix = "5af43d82803e903d91602b57fd5bf3";
+  if (!body.startsWith(prefix) || !body.endsWith(suffix) || body.length !== 90) return null;
+  return `0x${body.slice(prefix.length, prefix.length + 40)}`;
 }
 
 export async function inspectSafeForAuthorization(safeAddress: `0x${string}`, connectedOwner: `0x${string}`) {
   const [ownersRaw, thresholdRaw, nonceRaw, versionRaw, masterCopyRaw, code] = await Promise.all([
-    rpcCall(safeAddress, safeRead("getOwners")), rpcCall(safeAddress, safeRead("getThreshold")), rpcCall(safeAddress, safeRead("nonce")),
-    rpcCall(safeAddress, safeRead("VERSION")), rpcCall(safeAddress, safeRead("masterCopy")), rpcCode(safeAddress),
+    rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "getOwners" })),
+    rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "getThreshold" })),
+    rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "nonce" })),
+    rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "VERSION" })),
+    rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "masterCopy" })),
+    rpcCode(safeAddress),
   ]);
-  const owners = decodeAddressArray(ownersRaw); const masterCopy = `0x${masterCopyRaw.slice(-40)}`;
+  const owners = decodeAddressArray(ownersRaw);
+  const masterCopy = `0x${masterCopyRaw.slice(-40)}`;
   return {
-    owners, threshold: Number(BigInt(thresholdRaw)), nonce: BigInt(nonceRaw), version: decodeString(versionRaw),
-    masterCopy, isOwner: owners.some((owner) => owner.toLowerCase() === connectedOwner.toLowerCase()),
+    owners,
+    threshold: Number(BigInt(thresholdRaw)),
+    nonce: BigInt(nonceRaw),
+    version: decodeString(versionRaw),
+    masterCopy,
+    isOwner: owners.some((owner) => owner.toLowerCase() === connectedOwner.toLowerCase()),
     isSafe: code !== "0x" && masterCopy.toLowerCase() === SAFE_V1_4_1_SINGLETON.toLowerCase(),
   };
 }
@@ -96,15 +182,35 @@ export async function inspectSafeForAuthorization(safeAddress: `0x${string}`, co
 export async function verifyRolesModifier(modifierAddress: `0x${string}`, safeAddress: `0x${string}`) {
   const implementation = parseRolesImplementation(await rpcCode(modifierAddress));
   if (!implementation || implementation.toLowerCase() !== ROLES_V2_1_1_MASTER_COPY.toLowerCase()) return false;
-  const [avatarRaw, targetRaw, ownerRaw] = await Promise.all([rpcCall(modifierAddress, "0x5aef7de6"), rpcCall(modifierAddress, "0xd4b83992"), rpcCall(modifierAddress, "0x8da5cb5b")]);
+  const [avatarRaw, targetRaw, ownerRaw] = await Promise.all([
+    rpcCall(modifierAddress, "0x5aef7de6"),
+    rpcCall(modifierAddress, "0xd4b83992"),
+    rpcCall(modifierAddress, "0x8da5cb5b"),
+  ]);
   const safe = safeAddress.toLowerCase();
   return `0x${avatarRaw.slice(-40)}`.toLowerCase() === safe && `0x${targetRaw.slice(-40)}`.toLowerCase() === safe && `0x${ownerRaw.slice(-40)}`.toLowerCase() === safe;
 }
 
-function safeTxTypedData(safeAddress: `0x${string}`, tx: SafeTx, chainId: number) {
-  return { domain: { chainId, verifyingContract: safeAddress }, types: SAFE_TX_TYPES, primaryType: "SafeTx" as const, message: { to: tx.to, value: tx.value, data: tx.data, operation: tx.operation, safeTxGas: tx.safeTxGas, baseGas: tx.baseGas, gasPrice: tx.gasPrice, gasToken: tx.gasToken, refundReceiver: tx.refundReceiver, nonce: tx.nonce } };
+export async function verifyFactory(): Promise<void> {
+  const code = await rpcCode(ZODIAC_MODULE_PROXY_FACTORY);
+  if (code === "0x" || code.length <= 2) throw new HttpError(503, "Automatic Safe setup is unavailable because the verified module factory is not deployed on Base.");
+  if (!code.toLowerCase().includes(DEPLOY_SELECTOR.slice(2))) throw new HttpError(503, "Automatic Safe setup is unavailable because the verified module factory is not the expected Zodiac factory.");
 }
+
+function safeTxTypedData(safeAddress: `0x${string}`, tx: SafeTx, chainId: number) {
+  return {
+    domain: { chainId, verifyingContract: safeAddress },
+    types: SAFE_TX_TYPES,
+    primaryType: "SafeTx" as const,
+    message: {
+      to: tx.to, value: tx.value, data: tx.data, operation: tx.operation, safeTxGas: tx.safeTxGas,
+      baseGas: tx.baseGas, gasPrice: tx.gasPrice, gasToken: tx.gasToken, refundReceiver: tx.refundReceiver, nonce: tx.nonce,
+    },
+  };
+}
+
 function addressCompValue(address: `0x${string}`): Hex { return encodeAbiParameters([{ type: "address" }], [address]); }
+
 export function buildRoleConfigurationCalls(safeAddress: `0x${string}`, keeperAddress: `0x${string}`) {
   const roleKey = canonicalRoleKey();
   const assignRoles = encodeFunctionData({ abi: ROLES_ABI, functionName: "assignRoles", args: [keeperAddress, [roleKey], [true]] });
@@ -117,11 +223,12 @@ export function buildRoleConfigurationCalls(safeAddress: `0x${string}`, keeperAd
   ] as const;
   const scopeFunction = encodeFunctionData({ abi: ROLES_ABI, functionName: "scopeFunction", args: [roleKey, AAVE_V3_BASE.pool, AAVE_V3_WITHDRAW_SELECTOR, conditions, 0] });
   return [
-    { id: "assign-role", label: "Authorize the Exit Keepa keeper", data: assignRoles },
-    { id: "scope-target", label: "Restrict the role to Aave on Base", data: scopeTarget },
-    { id: "scope-function", label: "Restrict the role to the USDC withdrawal", data: scopeFunction },
+    { id: "assign-role", label: "Authorize the Exit Keepa keeper", kind: "assign_role" as const, data: assignRoles },
+    { id: "scope-target", label: "Restrict the role to Aave on Base", kind: "scope_target" as const, data: scopeTarget },
+    { id: "scope-function", label: "Restrict the role to the USDC withdrawal", kind: "scope_function" as const, data: scopeFunction },
   ] as const;
 }
+
 export function buildSafeTransaction(args: { to: `0x${string}`; data: Hex; nonce: bigint }): SafeTx {
   return { to: args.to, value: 0n, data: args.data, operation: 0, safeTxGas: 0n, baseGas: 0n, gasPrice: 0n, gasToken: SAFE_ZERO_ADDRESS, refundReceiver: SAFE_ZERO_ADDRESS, nonce: args.nonce };
 }
@@ -134,4 +241,55 @@ export async function verifySafeTransactionHash(safeAddress: `0x${string}`, tx: 
   const onchainHash = `0x${raw.slice(-64)}` as Hex;
   if (localHash.toLowerCase() !== onchainHash.toLowerCase()) throw new HttpError(409, "Could not verify the Safe transaction hash. Nothing was signed.");
   return { localHash, onchainHash };
+}
+
+export function buildRolesInitializer(safeAddress: `0x${string}`): Hex {
+  const initParams = encodeAbiParameters(
+    [{ type: "address" }, { type: "address" }, { type: "address" }],
+    [safeAddress, safeAddress, safeAddress],
+  );
+  return encodeFunctionData({ abi: ROLES_ABI, functionName: "setUp", args: [initParams] });
+}
+
+export function deriveModuleSaltNonce(safeAddress: `0x${string}`): bigint {
+  return BigInt(keccak256(concatHex([toBytes("exit-keepa:roles"), safeAddress as Hex])));
+}
+
+export function predictModuleProxyAddress(safeAddress: `0x${string}`, saltNonce: bigint): `0x${string}` {
+  const initializer = buildRolesInitializer(safeAddress);
+  const salt = keccak256(concatHex([keccak256(initializer), `0x${saltNonce.toString(16).padStart(64, "0")}`]));
+  const deployment = (`0x${MODULE_PROXY_PREFIX}${ROLES_V2_1_1_MASTER_COPY.slice(2).toLowerCase()}${MODULE_PROXY_SUFFIX}`) as Hex;
+  const initCodeHash = keccak256(deployment);
+  const addressHash = keccak256(concatHex(["0xff", ZODIAC_MODULE_PROXY_FACTORY, salt, initCodeHash]));
+  return `0x${addressHash.slice(-40)}`;
+}
+
+export async function inspectEnabledModules(safeAddress: `0x${string}`): Promise<string[]> {
+  const modules: string[] = [];
+  let start = SENTINEL_MODULES;
+  for (let page = 0; page < 10_000; page++) {
+    const raw = await rpcCall(safeAddress, encodeFunctionData({ abi: MODULE_READ_ABI, functionName: "getModulesPaginated", args: [start, 20n] }));
+    const body = raw.slice(2);
+    const offset = Number(BigInt(`0x${body.slice(0, 64)}`)) * 2;
+    const arrayLength = Number(BigInt(`0x${body.slice(offset, offset + 64)}`));
+    for (let i = 0; i < arrayLength; i++) {
+      const startWord = offset + 64 + i * 64;
+      modules.push(`0x${body.slice(startWord + 24, startWord + 64)}`);
+    }
+    const nextWord = offset + 64 + arrayLength * 64;
+    const next = `0x${body.slice(nextWord + 24, nextWord + 64)}`;
+    if (next.toLowerCase() === SENTINEL_MODULES.toLowerCase()) return modules;
+    if (arrayLength === 0) throw new HttpError(409, "Safe module pagination could not be verified.");
+    start = next;
+  }
+  throw new HttpError(409, "Safe module pagination exceeded the verification limit.");
+}
+
+export async function verifyEnabledModule(safeAddress: `0x${string}`, moduleAddress: `0x${string}`): Promise<boolean> {
+  const raw = await rpcCall(safeAddress, encodeFunctionData({ abi: MODULE_READ_ABI, functionName: "isModuleEnabled", args: [moduleAddress] }));
+  return BigInt(raw) !== 0n;
+}
+
+export async function verifyRolesWiring(moduleAddress: `0x${string}`, safeAddress: `0x${string}`): Promise<boolean> {
+  return verifyRolesModifier(moduleAddress, safeAddress);
 }
