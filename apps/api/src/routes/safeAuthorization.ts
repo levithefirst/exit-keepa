@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
-import { canonicalRoleKey } from "@exit-keepa/shared";
+import { canonicalRoleKey, AAVE_V3_BASE, type ExitAction } from "@exit-keepa/shared";
 import { verifyTypedData } from "viem";
 import { db } from "../db";
 import { safeAccounts } from "../db/schema";
@@ -8,6 +8,7 @@ import { requireSafeOwnership, requireSession } from "../auth/session";
 import { HttpError } from "../middleware/errorHandler";
 import { env } from "../env";
 import { buildDeployModuleTransaction, buildRoleConfigurationCalls, buildSafeTransaction, buildTypedDataForSafeTransaction, classifyRolesModule, encodeExecTransaction, inspectEnabledModules, inspectSafeForAuthorization, readRolePermissionState, verifyEnabledModule, verifyFactory, verifyNegativeRoleProbes, verifySafeTransactionHash, KEEPERHUB_EXECUTION_SENDER } from "../safe/authorizationTransactions";
+import { readAuthorizationStatus } from "../safe/authorizationStatus";
 
 export const safeAuthorizationRouter = Router();
 const OWNER_ETH_FLOOR_WEI = 100_000_000_000_000n;
@@ -137,11 +138,12 @@ function responseFor(row: any, result: Awaited<ReturnType<typeof nextPlan>>) {
 safeAuthorizationRouter.get("/safe-accounts/:id/authorization", async (req, res) => {
   const owner = await requireSession(req);
   const row = await getSafeRow(req.params.id, owner);
-  if (row.isSandbox) { res.json({ state: "protected", status: "protected", safeAddress: row.safeAddress, modifierAddress: null, plan: [], canonicalRoleKey: canonicalRoleKey() }); return; }
+  const probeAction: ExitAction = { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_V3_BASE.usdc, amount: "max" };
+  if (row.isSandbox) { res.json({ state: "protected", status: "protected", safeAddress: row.safeAddress, modifierAddress: null, plan: [], canonicalRoleKey: canonicalRoleKey(), permissionChecked: false, enabledModules: [], undetermined: null, summary: "This is your private demo sandbox - it is ready to use, and there is nothing to authorize." }); return; }
   if (row.chainId !== 8453) throw new HttpError(409, "Your Safe is not on Base.");
-  const result = await nextPlan(row.id, row.safeAddress as `0x${string}`, owner as `0x${string}`);
-  if (result.modifier) await persistModifier(row.id, result.modifier);
-  res.json(responseFor(row, result));
+  const status = await readAuthorizationStatus({ safeAddress: row.safeAddress, chainId: row.chainId, rolesModifierAddress: row.rolesModifierAddress, rolesKey: canonicalRoleKey(), isSandbox: row.isSandbox }, probeAction);
+  if (status.detectedModifierAddress) await persistModifier(row.id, status.detectedModifierAddress as `0x${string}`);
+  res.json(status);
 });
 
 safeAuthorizationRouter.post("/safe-accounts/:id/authorization/prepare", async (req, res) => {
