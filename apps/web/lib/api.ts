@@ -3,17 +3,11 @@ import { clientEnv } from "./env";
 let authToken: string | null = null;
 export function setAuthToken(token: string | null) { authToken = token; }
 const REQUEST_TIMEOUT_MS = 15_000;
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await fetch(`${clientEnv.NEXT_PUBLIC_API_URL}${path}`, {
-      ...init,
-      signal: controller.signal,
-      headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}), ...init?.headers },
-    });
+    response = await fetch(`${clientEnv.NEXT_PUBLIC_API_URL}${path}`, { ...init, signal: controller.signal, headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}), ...init?.headers } });
   } catch (err) {
     if ((err as Error).name === "AbortError") throw new Error("Request timed out. Check your connection and try again.");
     throw new Error("Could not reach the server. Check your connection and try again.");
