@@ -11,7 +11,17 @@ const WRONG_IMPLEMENTATION = "0x9646fdad06d3e24444381f44362a3b0eb343d337";
 const ROLES_IMPLEMENTATION = "0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5";
 const ACTION: ExitAction = { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_V3_BASE.usdc, amount: "max" };
 function word(hex: string): string { return hex.replace(/^0x/, "").padStart(64, "0"); }
-function encodeModules(modules: string[]): string { return `0x${word("0x40")}${word("0x1")}${word(BigInt(modules.length).toString(16))}${modules.map(word).join("")}${word("0x1")}`; }
+/**
+ * Genuine ABI encoding for `getModulesPaginated(address,uint256) returns
+ * (address[] array, address next)`: head word0 is the array's offset
+ * (0x40 - right after the two head words), head word1 is `next` itself
+ * (a static type, so it lives in the head, not the tail); the tail then
+ * holds the array's length followed by its items, with nothing after -
+ * unlike a naive fixture that tacks an extra sentinel word onto the end,
+ * which would silently hide a decoder reading `next` from the wrong spot.
+ */
+function encodeModules(modules: string[], next: string = SENTINEL_MODULES): string { return `0x${word("0x40")}${word(next)}${word(BigInt(modules.length).toString(16))}${modules.map(word).join("")}`; }
+const SENTINEL_MODULES = "0x0000000000000000000000000000000000000001";
 function rolesProxyCode(implementation = ROLES_IMPLEMENTATION): string { return `0x363d3d373d3d3d363d73${implementation.slice(2).toLowerCase()}5af43d82803e903d91602b57fd5bf3`; }
 function permissionPointerCode(): string { const assetHash = keccak256(encodeAbiParameters([{ type: "address" }], [AAVE_V3_BASE.usdc])); const recipientHash = keccak256(encodeAbiParameters([{ type: "address" }], [SAFE])); return `0x00${"00a5003000200030"}${assetHash.slice(2)}${recipientHash.slice(2)}`; }
 function stubChain(options: { modules?: string[]; modifierAvatar?: string; modifierTarget?: string; modifierOwner?: string; implementation?: string; failModulesRead?: boolean; exactPermission?: boolean }) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { decodeFunctionData, encodeAbiParameters } from "viem";
 import { AAVE_V3_BASE, AAVE_V3_WITHDRAW_SELECTOR, canonicalRoleKey } from "@exit-keepa/shared";
 import {
@@ -12,6 +12,7 @@ import {
   buildRolesInitializer,
   buildSafeTransaction,
   computeSafeTransactionHash,
+  inspectEnabledModules,
   predictModuleProxyAddress,
 }
   from "./authorizationTransactions";
@@ -62,5 +63,41 @@ describe("direct Safe/Roles authorization", () => {
     const tx = buildSafeTransaction({ to: KEEPER, data: "0x1234", nonce: 7n });
     expect(tx).toMatchObject({ value: 0n, operation: 0, safeTxGas: 0n, baseGas: 0n, gasPrice: 0n, gasToken: "0x0000000000000000000000000000000000000000", refundReceiver: "0x0000000000000000000000000000000000000000", nonce: 7n });
     expect(computeSafeTransactionHash(SAFE, tx, 8453)).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+});
+
+describe("inspectEnabledModules", () => {
+  const word = (hex: string) => hex.replace(/^0x/, "").padStart(64, "0");
+  const SENTINEL = "0x0000000000000000000000000000000000000001";
+  // Genuine ABI layout for getModulesPaginated's (address[] array, address
+  // next) return: `next` is a static type, so it lives in the head (word1,
+  // right after the array's offset word) - never appended after the tail.
+  // A real single-module Safe's actual returndata is exactly 4 words long
+  // (offset, next, length, one item) with nothing past it; the production
+  // regression this guards against read `next` from past the end of that
+  // buffer and crashed the following page's request with an empty address.
+  const encodePage = (modules: string[], next: string) => `0x${word("0x40")}${word(next)}${word(BigInt(modules.length).toString(16))}${modules.map(word).join("")}`;
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("decodes a single real-shaped page with no trailing data past the array", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: encodePage([KEEPER], SENTINEL) }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const modules = await inspectEnabledModules(SAFE);
+    expect(modules).toEqual([KEEPER.toLowerCase()]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows a real `next` address across pages instead of tripping on the tail", async () => {
+    const NEXT_PAGE_START = "0x5555555555555555555555555555555555555555";
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      call += 1;
+      const result = call === 1 ? encodePage([KEEPER], NEXT_PAGE_START) : encodePage([SAFE], SENTINEL);
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), { status: 200 });
+    }));
+    const modules = await inspectEnabledModules(SAFE);
+    expect(modules).toEqual([KEEPER.toLowerCase(), SAFE.toLowerCase()]);
+    expect(call).toBe(2);
   });
 });
