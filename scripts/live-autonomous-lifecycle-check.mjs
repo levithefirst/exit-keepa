@@ -230,7 +230,16 @@ async function uiJourney() {
     dashText.slice(0, 200),
   );
 
-  await page.getByRole("link", { name: /New strategy/i }).first().click();
+  // The dashboard's primary CTA is "Protect position" on a fresh Safe with
+  // no strategies yet; "+ New strategy" only appears once at least one
+  // exists. Prefer whichever is actually on screen rather than assuming one.
+  const protectCta = page.getByRole("link", { name: /Protect position/i }).first();
+  const newStrategyCta = page.getByRole("link", { name: /New strategy/i }).first();
+  if (await protectCta.count()) {
+    await protectCta.click();
+  } else {
+    await newStrategyCta.click();
+  }
   await page.waitForURL(/\/create/, { timeout: 20_000 }).catch(() => {});
   await page.waitForTimeout(2000);
 
