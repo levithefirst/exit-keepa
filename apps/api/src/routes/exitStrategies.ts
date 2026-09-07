@@ -7,6 +7,7 @@ import { HttpError } from "../middleware/errorHandler";
 import { logger } from "../logger";
 import { buildExitTransaction } from "../execution/buildTransaction";
 import { buildRolesPermissionSpec } from "../execution/rolesPermission";
+import { requireProtectedSafe } from "../safe/protectionGate";
 import { requireSafeOwnership, requireSession } from "../auth/session";
 
 export const exitStrategiesRouter = Router();
@@ -47,6 +48,12 @@ exitStrategiesRouter.post("/exit-strategies", async (req, res) => {
     throw new HttpError(404, `Safe account ${input.safeId} not found`);
   }
   await requireSafeOwnership(input.safeId, address);
+
+  // A strategy is a standing instruction to move real funds, so it may only
+  // exist behind a Safe that is verifiably protected on-chain right now.
+  // Read live rather than trusting `safe.rolesModifierAddress`, which only
+  // records what some earlier read saw.
+  await requireProtectedSafe(safe);
 
   const [row] = await db
     .insert(exitStrategies)
@@ -126,10 +133,17 @@ exitStrategiesRouter.post("/exit-strategies/:id/activate", async (req, res) => {
   const address = await requireSession(req);
   const { strategy, safe } = await loadOwnedStrategyAndSafe(req.params.id, address);
 
+  // Activation is the moment Exit Keepa is allowed to act unattended, so
+  // protection is re-read from chain here too - the Safe may have been
+  // protected when the strategy was created and had its permission revoked
+  // since. Throws 409 when it is not verifiably protected right now.
+  const verifiedSafe = await requireProtectedSafe(safe);
+
   // Throws 409 if the Safe has no Roles Modifier / role key yet - a
   // strategy can never be activated without a real, buildable transaction
-  // behind it.
-  buildExitTransaction(strategy.action as ExitAction, safe);
+  // behind it. Built against the just-verified Safe, so the transaction is
+  // bound to the module the chain confirmed rather than a stored one.
+  buildExitTransaction(strategy.action as ExitAction, verifiedSafe);
 
   const [updated] = await db
     .update(exitStrategies)

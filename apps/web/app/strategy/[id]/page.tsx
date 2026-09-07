@@ -350,6 +350,7 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
           status={authorization}
           safeAddress={safeAccount.safeAddress}
           chainId={safeAccount.chainId}
+          safeId={safeAccount.id ?? strategy.safeId}
           onRecheck={refresh}
         />
       )}

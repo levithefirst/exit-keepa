@@ -2,6 +2,7 @@ import "./setup";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import request from "supertest";
 import { createFakeDb, eq, and } from "./fakeDb";
+import { protectedSafeRpc } from "./chainStubs";
 import { createTestSession, authHeader } from "./authHelpers";
 
 const fakeDb = createFakeDb();
@@ -40,6 +41,11 @@ vi.stubGlobal(
   vi.fn(async (_url: unknown, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(init.body as string) : {};
     const data: string = body?.params?.[0]?.data ?? "";
+    // The Safe these tests configure really does read back as protected -
+    // module list, Roles invariants, exact role storage and the negative
+    // probes all answered from chain, the same reads the gate performs.
+    const authorization = protectedSafeRpc({ safeAddress: SAFE_ADDRESS, modifierAddress: ROLES_MODIFIER }, body);
+    if (authorization) return authorization;
     if (data.startsWith(GET_RESERVE_DATA_SELECTOR)) {
       return new Response(
         JSON.stringify({ jsonrpc: "2.0", id: 1, result: reserveDataHexForSupplyBps(currentSupplyRateBps) }),

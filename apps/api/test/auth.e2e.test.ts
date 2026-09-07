@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { createFakeDb, eq, and } from "./fakeDb";
+import { protectedSafeRpc } from "./chainStubs";
 import { authNonces, authSessions } from "../src/db/schema";
 
 const fakeDb = createFakeDb();
@@ -12,6 +13,20 @@ vi.mock("drizzle-orm", async (importOriginal) => {
   const actual = await importOriginal<typeof import("drizzle-orm")>();
   return { ...actual, eq, and };
 });
+
+const OWNED_SAFE = "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9";
+const OWNED_SAFE_MODIFIER = "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE";
+// These tests are about who may act on a resource, so the Safe they act on
+// has to be one that genuinely reads back as protected - otherwise the
+// authorization gate refuses first and every assertion below would be
+// testing the wrong refusal. Any other address still reads as unprotected.
+vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+  let body: unknown = {};
+  try { body = JSON.parse((init?.body as string | undefined) ?? "{}"); } catch { /* non-RPC request */ }
+  const authorization = protectedSafeRpc({ safeAddress: OWNED_SAFE, modifierAddress: OWNED_SAFE_MODIFIER }, body);
+  if (authorization) return authorization;
+  return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: `0x${(10n ** 12n).toString(16).padStart(64, "0")}` }), { status: 200 });
+}));
 
 const { createApp } = await import("../src/app");
 const app = createApp();

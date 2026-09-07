@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import * as schema from "../src/db/schema";
-import { canonicalRoleKey } from "@exit-keepa/shared";
 
 type Row = Record<string, unknown>;
 type Predicate = (row: Row) => boolean;
@@ -47,19 +46,6 @@ function applyInsertDefaults(table: unknown, values: Row): Row {
   if (table === schema.keeperhubExecutions && row.status === undefined) row.status = "pending";
   if (table === schema.keeperhubExecutions && row.createdVia === undefined) row.createdVia = "manual";
   if (table === schema.auditEvents && row.payload === undefined) row.payload = {};
-
-  // Execution/Guardian E2E fixtures represent a Safe that has already
-  // completed the new embedded authorization flow. The onboarding tests
-  // use different Safe addresses and therefore still exercise the
-  // unprotected-registration state explicitly.
-  if (
-    table === schema.safeAccounts &&
-    row.safeAddress === "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9" &&
-    row.rolesModifierAddress === null
-  ) {
-    row.rolesModifierAddress = "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE";
-    row.rolesKey = canonicalRoleKey();
-  }
 
   return row;
 }

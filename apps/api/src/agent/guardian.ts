@@ -12,6 +12,7 @@ import { executeApprovedExecution } from "../execution/executeApproved";
 import { readAaveUsdcRate, type AaveRateSnapshot } from "./aaveRateOracle";
 import { nextAgentDecision, type AgentState, type AgentDecisionKind } from "./decisionStateMachine";
 import { checkPolicy } from "./policy";
+import { verifyProtection } from "../safe/protectionGate";
 
 function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -237,10 +238,31 @@ export async function evaluateStrategy(
 
   // --- exactly one attempt happens below ---
 
+  // The last read before anything irreversible: protection is re-verified
+  // against the chain on every attempt, so a permission revoked or
+  // re-pointed since activation stops this tick here rather than at the
+  // Roles modifier. Sandbox Safes short-circuit without a chain read.
+  // Whatever it proves is what the transaction is then built against.
+  let protection: Awaited<ReturnType<typeof verifyProtection<typeof safe>>>;
+  try {
+    protection = await verifyProtection(safe);
+  } catch (err) {
+    // A chain read that could not complete is not permission to act.
+    protection = {
+      isProtected: false,
+      status: { state: "undetermined", detectedModifierAddress: null, enabledModules: [], permissionChecked: false, undetermined: (err as Error).message, summary: "We could not verify your Safe just now." },
+      safe,
+    };
+  }
+  const authorizationRefusal = protection.isProtected
+    ? null
+    : `Safe is not verifiably protected on-chain (${protection.status.state})`;
+
   let tx: BuiltTransaction | null = null;
   let txBuildError: string | null = null;
   try {
-    tx = buildExitTransaction(strategy.action as ExitAction, safe);
+    tx = protection.isProtected ? buildExitTransaction(strategy.action as ExitAction, protection.safe) : null;
+    if (!protection.isProtected) txBuildError = authorizationRefusal;
   } catch (err) {
     // Missing/invalid Roles config throws here (see buildTransaction.ts).
     // That's a real refusal reason ("missing permission"), not a route
@@ -249,7 +271,12 @@ export async function evaluateStrategy(
     txBuildError = (err as Error).message;
   }
 
-  const { policy, policyPassed, refusalReasons } = checkPolicy(tx, safe, txBuildError);
+  const policyResult = checkPolicy(tx, protection.safe, txBuildError);
+  const policy = { ...policyResult.policy, safeProtectedOnChain: protection.isProtected };
+  const policyPassed = policyResult.policyPassed && protection.isProtected;
+  const refusalReasons = authorizationRefusal
+    ? [authorizationRefusal, ...policyResult.refusalReasons]
+    : policyResult.refusalReasons;
 
   const intent = {
     strategyId: strategy.id,

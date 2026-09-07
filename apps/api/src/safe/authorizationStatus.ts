@@ -18,5 +18,24 @@ export async function readAuthorizationStatus(safe: SafeForExecution & { isSandb
     if (!permission.exact) return { state: "needs_permission", detectedModifierAddress: detected.modifier, enabledModules: detected.enabledModules, permissionChecked: true, undetermined: null, summary: "Your Safe is compatible, but automatic exits are not enabled yet." };
     if (!(await verifyNegativeRoleProbes(detected.modifier as `0x${string}`, safe.safeAddress as `0x${string}`, keeper))) return { state: "needs_permission", detectedModifierAddress: detected.modifier, enabledModules: detected.enabledModules, permissionChecked: true, undetermined: "The configured permission did not pass its security probes.", summary: "Automatic exits are not enabled." };
     return { state: "protected", detectedModifierAddress: detected.modifier, enabledModules: detected.enabledModules, permissionChecked: true, undetermined: null, summary: "Exit Keepa is authorized to execute this exit automatically." };
-  } catch (err) { logger.warn({ err, safeAddress: safe.safeAddress }, "Could not verify Safe authorization state"); return { state: "undetermined", detectedModifierAddress: null, enabledModules: [], permissionChecked: false, undetermined: "Could not verify your Safe. Try again.", summary: "We could not verify your Safe just now." }; }
+  } catch (err) { logger.warn({ err, safeAddress: safe.safeAddress }, "Could not verify Safe authorization state"); return { state: "undetermined", detectedModifierAddress: null, enabledModules: [], permissionChecked: false, undetermined: `Could not verify your Safe. Try again. (${(err as Error).message})`, summary: "We could not verify your Safe just now." }; }
+}
+
+/** The one action Exit Keepa is ever authorized to take - every protection check is read against exactly it. */
+const PROTECTION_PROBE: ExitAction = { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_V3_BASE.usdc, amount: "max" };
+
+export type SafeForProtectionCheck = SafeForExecution & { isSandbox: boolean };
+
+/**
+ * Live, fail-closed protection check. A stored `rolesModifierAddress` only
+ * records what a past read saw; this re-reads the exact on-chain Roles
+ * configuration, so a Safe whose permission was revoked, re-pointed, or
+ * never finished being configured stops counting as protected immediately.
+ * Sandbox Safes short-circuit inside readAuthorizationStatus without ever
+ * touching the chain. Any read failure lands on `undetermined`, which is
+ * not protected.
+ */
+export async function readProtectionState(safe: SafeForProtectionCheck): Promise<{ isProtected: boolean; status: AuthorizationStatus }> {
+  const status = await readAuthorizationStatus(safe, PROTECTION_PROBE);
+  return { isProtected: status.state === "protected", status };
 }

@@ -2,6 +2,7 @@ import "./setup";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import request from "supertest";
 import { createFakeDb, eq, and } from "./fakeDb";
+import { protectedSafeRpc } from "./chainStubs";
 import { createTestSession, authHeader } from "./authHelpers";
 import { KeeperHubApiError } from "../src/keeperhub/client";
 
@@ -23,12 +24,21 @@ vi.mock("../src/keeperhub/client", async (importOriginal) => {
 });
 
 const bigBalanceHex = `0x${(10n ** 12n).toString(16).padStart(64, "0")}`;
-const emptyModulesRpc = `0x${"40".padStart(64, "0")}${"1".padStart(64, "0")}${"0".padStart(64, "0")}${"1".padStart(64, "0")}`;
+const PROTECTED_SAFE = "0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9";
+const PROTECTED_SAFE_MODIFIER = "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE";
+// Real ABI shape: offset, then `next` in the head at word1, then the
+// array's length - and nothing appended after the array's items.
+const emptyModulesRpc = `0x${"40".padStart(64, "0")}${"1".padStart(64, "0")}${"0".padStart(64, "0")}`;
 vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
   const raw = (init?.body as string | undefined) ?? "{}";
   let body: { method?: string; params?: unknown[] } = {};
   try { body = JSON.parse(raw) as typeof body; } catch { /* non-RPC request */ }
   const data = String((body.params?.[0] as { data?: string } | undefined)?.data ?? "");
+  // The execution-flow Safe genuinely reads back as protected; every other
+  // address keeps answering "no modules enabled", so the onboarding tests
+  // still exercise a real unprotected Safe.
+  const authorization = protectedSafeRpc({ safeAddress: PROTECTED_SAFE, modifierAddress: PROTECTED_SAFE_MODIFIER }, body);
+  if (authorization) return authorization;
   if (body.method === "eth_call" && data.startsWith("0xcc2f8452")) return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: emptyModulesRpc }), { status: 200 });
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: bigBalanceHex }), { status: 200 });
 }));
