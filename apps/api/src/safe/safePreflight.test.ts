@@ -108,6 +108,34 @@ describe("negative role probes fail closed", () => {
     await expect(verifyNegativeRoleProbes(MODIFIER, SAFE, OWNER)).rejects.toThrow(/Could not reach the Base network/i);
   });
 
+  it("fails over to the next endpoint when the primary is rate-limited, and reads the real answer there", async () => {
+    // The whole point of failover: being over quota on one provider says
+    // nothing about the chain, so the probes are answered by the next
+    // endpoint instead of the read failing closed.
+    const hostsTried: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown, init?: RequestInit) => {
+      hostsTried.push(new URL(String(url)).host);
+      const payload = JSON.parse((init?.body as string) ?? "{}");
+      const entries = Array.isArray(payload) ? payload : [payload];
+      const error = hostsTried.length === 1
+        ? { code: -32005, message: "over rate limit" }
+        : { message: "execution reverted" };
+      return new Response(JSON.stringify(entries.map((entry: { id: number }) => ({ jsonrpc: "2.0", id: entry.id, error }))), { status: 200 });
+    }));
+    expect(await verifyNegativeRoleProbes(MODIFIER, SAFE, OWNER)).toBe(true);
+    expect(hostsTried.length).toBe(2);
+    expect(new Set(hostsTried).size).toBe(2);
+  });
+
+  it("still throws when every endpoint is rate-limited - never returns true", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const payload = JSON.parse((init?.body as string) ?? "{}");
+      const entries = Array.isArray(payload) ? payload : [payload];
+      return new Response(JSON.stringify(entries.map((entry: { id: number }) => ({ jsonrpc: "2.0", id: entry.id, error: { code: -32005, message: "over rate limit" } }))), { status: 200 });
+    }));
+    await expect(verifyNegativeRoleProbes(MODIFIER, SAFE, OWNER)).rejects.toThrow(/Could not reach the Base network/i);
+  });
+
   it("never treats an unreachable RPC as a probe being rejected", async () => {
     // The whole point: a transport failure used to be caught and counted as
     // "correctly refused", which would report an over-broad permission as

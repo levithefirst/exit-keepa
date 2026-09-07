@@ -141,7 +141,13 @@ safeAuthorizationRouter.get("/safe-accounts/:id/authorization", async (req, res)
   const probeAction: ExitAction = { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_V3_BASE.usdc, amount: "max" };
   if (row.isSandbox) { res.json({ state: "protected", status: "protected", safeAddress: row.safeAddress, modifierAddress: null, plan: [], canonicalRoleKey: canonicalRoleKey(), permissionChecked: false, enabledModules: [], undetermined: null, summary: "This is your private demo sandbox - it is ready to use, and there is nothing to authorize." }); return; }
   if (row.chainId !== 8453) throw new HttpError(409, "Your Safe is not on Base.");
-  const status = await readAuthorizationStatus({ safeAddress: row.safeAddress, chainId: row.chainId, rolesModifierAddress: row.rolesModifierAddress, rolesKey: canonicalRoleKey(), isSandbox: row.isSandbox }, probeAction);
+  // A status read, not an authorization to act. The exact on-chain Roles
+  // storage still has to be there for this to say protected; what it skips
+  // is the five adversarial probes, which are five more eth_calls that a
+  // public RPC will not always let a dashboard refresh finish. Every path
+  // that actually moves funds - readProtectionState, requireProtectedSafe,
+  // activation, and every Guardian tick - keeps them on.
+  const status = await readAuthorizationStatus({ safeAddress: row.safeAddress, chainId: row.chainId, rolesModifierAddress: row.rolesModifierAddress, rolesKey: canonicalRoleKey(), isSandbox: row.isSandbox }, probeAction, { requireProbes: false });
   if (status.detectedModifierAddress) await persistModifier(row.id, status.detectedModifierAddress as `0x${string}`);
   res.json(status);
 });

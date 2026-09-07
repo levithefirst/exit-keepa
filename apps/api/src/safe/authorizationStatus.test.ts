@@ -50,4 +50,19 @@ describe("authorization", () => {
   it("reports needs_permission when the exact on-chain permission is incomplete", async () => { stubChain({ modules: [MODIFIER], exactPermission: false }); const status = await readAuthorizationStatus(realSafe, ACTION); expect(status.state).toBe("needs_permission"); expect(status.permissionChecked).toBe(true); });
   it("reports protected only after the exact Roles state and negative probes succeed", async () => { stubChain({ modules: [MODIFIER], exactPermission: true }); const status = await readAuthorizationStatus({ ...realSafe, rolesKey: canonicalRoleKey() }, ACTION); expect(status.state).toBe("protected"); expect(status.permissionChecked).toBe(true); });
   it("fails closed when module state cannot be read", async () => { stubChain({ failModulesRead: true }); const status = await readAuthorizationStatus(realSafe, ACTION); expect(status.state).toBe("undetermined"); expect(status.undetermined).toMatch(/Could not verify/); });
+  it("reports protected without the probes when the exact on-chain storage is there", async () => {
+    // A status read still has to find the real Roles storage - the keeper
+    // assigned, the Aave pool scoped, withdraw scoped to USDC and this
+    // Safe. Only the five adversarial probes are skipped.
+    stubChain({ modules: [MODIFIER], exactPermission: true });
+    const status = await readAuthorizationStatus(realSafe, ACTION, { requireProbes: false });
+    expect(status.state).toBe("protected");
+    expect(status.permissionChecked).toBe(true);
+    expect(status.detectedModifierAddress).toBe(MODIFIER);
+  });
+  it("still refuses to call an incomplete permission protected when the probes are skipped", async () => {
+    stubChain({ modules: [MODIFIER], exactPermission: false });
+    const status = await readAuthorizationStatus(realSafe, ACTION, { requireProbes: false });
+    expect(status.state).toBe("needs_permission");
+  });
 });

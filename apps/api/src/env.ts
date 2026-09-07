@@ -24,6 +24,17 @@ const envSchema = z
 
   BASE_CHAIN_ID: z.coerce.number().int().positive().default(8453),
   BASE_RPC_URL: z.string().url().default("https://mainnet.base.org"),
+  // Verifying one Safe is a handful of batched reads, and a single public
+  // endpoint will rate-limit partway through - which fails closed and
+  // shows the owner of a protected Safe an "unverifiable" card. These are
+  // tried in turn when the primary refuses, so a public deployment can
+  // still finish a read. Independent operators, so a quota on one is not a
+  // quota on the next. Set BASE_RPC_URL to a key-authenticated endpoint
+  // and these become a fallback rather than the load-bearing path.
+  BASE_RPC_FALLBACKS: z
+    .string()
+    .default("https://base.publicnode.com,https://1rpc.io/base,https://base.drpc.org")
+    .transform((value) => value.split(",").map((s) => s.trim()).filter(Boolean)),
 
   // The autonomous Exit Guardian loop - the thing that makes Exit Keepa
   // watch a condition and execute an exit without anyone present. On by
@@ -47,6 +58,8 @@ const envSchema = z
     // Resolved here rather than as a field default so "unset" and
     // "explicitly false" stay distinguishable above.
     AGENT_POLL_ENABLED: raw.AGENT_POLL_ENABLED ?? raw.NODE_ENV === "production",
+    /** Every Base endpoint to try, primary first, de-duplicated. */
+    BASE_RPC_URLS: [...new Set([raw.BASE_RPC_URL, ...raw.BASE_RPC_FALLBACKS])],
   }));
 
 export type Env = z.infer<typeof envSchema>;

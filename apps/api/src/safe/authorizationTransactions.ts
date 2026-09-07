@@ -26,7 +26,6 @@ const MODULE_READ_ABI = [{ type: "function", name: "isModuleEnabled", stateMutab
 const ROLE_EXEC_ABI = [{ type: "function", name: "execTransactionWithRole", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "value", type: "uint256" }, { name: "data", type: "bytes" }, { name: "operation", type: "uint8" }, { name: "roleKey", type: "bytes32" }, { name: "shouldRevert", type: "bool" }], outputs: [{ name: "success", type: "bool" }] }] as const;
 const WITHDRAW_ABI = [{ type: "function", name: "withdraw", stateMutability: "nonpayable", inputs: [{ name: "asset", type: "address" }, { name: "amount", type: "uint256" }, { name: "to", type: "address" }], outputs: [{ name: "", type: "uint256" }] }] as const;
 type SafeTx = { to: `0x${string}`; value: bigint; data: Hex; operation: 0; safeTxGas: bigint; baseGas: bigint; gasPrice: bigint; gasToken: `0x${string}`; refundReceiver: `0x${string}`; nonce: bigint };
-const RPC_RETRYABLE_HTTP = new Set([429, 502, 503]);
 const RPC_MAX_ATTEMPTS = 5;
 const RPC_RETRY_BASE_MS = 300;
 const RPC_RETRY_CAP_MS = 2_500;
@@ -75,22 +74,34 @@ function bodyIsRateLimited(body: unknown): boolean {
 }
 
 /**
- * One JSON-RPC round trip, retrying only what is genuinely transient (a
- * network error, or HTTP 429/502/503) before failing closed. The thrown
- * 502 names the RPC method and the HTTP status so an unreachable provider
- * is distinguishable in logs and responses from a Safe that verifiably has
- * no module - the two used to collapse into the same opaque message.
+ * One JSON-RPC round trip, moving to the next configured Base endpoint on
+ * each attempt before failing closed. Being refused on quota says
+ * something about that provider, not about Base, so the answer is another
+ * provider rather than a longer wait on the same one - which is what lets
+ * a deployment on public endpoints finish a verification at all.
+ *
+ * The thrown 502 names the call, the failure and the host it came from, so
+ * an exhausted provider is distinguishable from a Safe that verifiably has
+ * no module - the two used to collapse into the same opaque message. Only
+ * the hostname is included: a key-authenticated URL carries its key.
  *
  * A JSON-RPC error is never turned into a 502: it is the node answering,
  * so it comes back as `ok: false` for the caller to interpret (a revert is
  * a meaningful result for a negative probe, and a 409 everywhere else).
+ * Rate limiting is the exception - see isRateLimitError.
  */
 async function postRpc(payload: unknown, label: string): Promise<unknown> {
   let lastDetail = "no response";
+  let lastUrl = env.BASE_RPC_URLS[0];
   for (let attempt = 1; attempt <= RPC_MAX_ATTEMPTS; attempt++) {
+    // Each attempt moves to the next endpoint. Being refused on quota is a
+    // fact about that provider, not about Base, so retrying the same host
+    // just burns the attempt - the next one answers immediately.
+    const url = env.BASE_RPC_URLS[(attempt - 1) % env.BASE_RPC_URLS.length];
+    lastUrl = url;
     let response: Response | null = null;
     try {
-      response = await fetch(env.BASE_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     } catch (err) {
       lastDetail = `network error (${(err as Error).message})`;
     }
@@ -103,13 +114,18 @@ async function postRpc(payload: unknown, label: string): Promise<unknown> {
         lastDetail = "rate limited by the provider";
       } else {
         lastDetail = `HTTP ${response.status}`;
-        if (!RPC_RETRYABLE_HTTP.has(response.status)) break;
       }
     }
-    if (attempt < RPC_MAX_ATTEMPTS) await sleep(retryDelayMs(attempt, response));
+    // Only wait once every endpoint has been tried - moving to a different
+    // provider is not a retry against the one that just refused, so there
+    // is nothing to back off from yet.
+    const nextAttemptReusesAnEndpoint = attempt >= env.BASE_RPC_URLS.length;
+    if (attempt < RPC_MAX_ATTEMPTS && nextAttemptReusesAnEndpoint) await sleep(retryDelayMs(attempt, response));
   }
-  logger.warn({ rpcCall: label, detail: lastDetail, attempts: RPC_MAX_ATTEMPTS }, "Base RPC call failed - failing closed");
-  throw new HttpError(502, `Could not reach the Base network to verify your Safe (${label}: ${lastDetail}). Try again.`);
+  // Hostname only: a key-authenticated endpoint carries its key in the URL.
+  const lastHost = (() => { try { return new URL(lastUrl).host; } catch { return "the configured endpoint"; } })();
+  logger.warn({ rpcCall: label, detail: lastDetail, host: lastHost, endpointsTried: env.BASE_RPC_URLS.length, attempts: RPC_MAX_ATTEMPTS }, "Every Base RPC endpoint failed - failing closed");
+  throw new HttpError(502, `Could not reach the Base network to verify your Safe (${label}: ${lastDetail} from ${lastHost}). Try again.`);
 }
 
 async function rpcOutcome(method: string, params: unknown[]): Promise<RpcOutcome> {
