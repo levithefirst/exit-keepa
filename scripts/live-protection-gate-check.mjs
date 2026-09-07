@@ -50,25 +50,34 @@ const session = await api("/api/auth/demo-session", { method: "POST", body: {} }
 const token = session.body?.token;
 check("a session is issued", session.status === 200 && Boolean(token));
 
-console.log("\n=== The documented Safe reads as protected from chain ===");
-const real = await api("/api/safe-accounts", { token, method: "POST", body: { chainId: 8453, safeAddress: REAL_SAFE } });
-check("the documented Safe registers", real.status === 201, real.raw?.slice(0, 140));
+// Three independent rounds. One lucky read against a public RPC proves
+// nothing; the read has to finish repeatably or it is not fixed.
+console.log("\n=== The documented Safe reads as protected from chain (3 rounds) ===");
+let lastRealSafeId = null;
+let lastRoundToken = token;
+for (let round = 1; round <= 3; round++) {
+  const roundSession = await api("/api/auth/demo-session", { method: "POST", body: {} });
+  const roundToken = roundSession.body?.token;
+  const real = await api("/api/safe-accounts", { token: roundToken, method: "POST", body: { chainId: 8453, safeAddress: REAL_SAFE } });
+  const auth = await api(`/api/safe-accounts/${real.body?.id}/authorization`, { token: roundToken });
+  lastRealSafeId = real.body?.id;
+  lastRoundToken = roundToken;
 
-const auth = await api(`/api/safe-accounts/${real.body?.id}/authorization`, { token });
-console.log("GET /authorization ->", JSON.stringify(auth.body));
-check("GET authorization answers 200, not 409/500", auth.status === 200, `status=${auth.status}`);
-check("it reports a valid state, not undetermined", auth.body?.state === "protected", `state=${auth.body?.state}`);
-check("it names the real Roles Modifier", auth.body?.detectedModifierAddress?.toLowerCase() === KNOWN_ROLES_MODIFIER.toLowerCase(), `detected=${auth.body?.detectedModifierAddress}`);
-check("the chain read itself succeeded", auth.body?.undetermined === null, `undetermined=${auth.body?.undetermined}`);
-check("protection was proved by an exact permission check", auth.body?.permissionChecked === true, `permissionChecked=${auth.body?.permissionChecked}`);
+  console.log(`round ${round}: GET /authorization ->`, JSON.stringify(auth.body));
+  check(`round ${round}: answers 200, not 409/500`, auth.status === 200, `status=${auth.status}`);
+  check(`round ${round}: state is protected, not undetermined`, auth.body?.state === "protected", `state=${auth.body?.state}`);
+  check(`round ${round}: names the real Roles Modifier`, auth.body?.detectedModifierAddress?.toLowerCase() === KNOWN_ROLES_MODIFIER.toLowerCase(), `detected=${auth.body?.detectedModifierAddress}`);
+  check(`round ${round}: the chain read itself succeeded`, auth.body?.undetermined === null, `undetermined=${auth.body?.undetermined}`);
+  check(`round ${round}: proved by reading the exact on-chain permission`, auth.body?.permissionChecked === true, `permissionChecked=${auth.body?.permissionChecked}`);
+}
 
-console.log("\n=== prepare is no longer an unexplained 502 ===");
-const prepare = await api(`/api/safe-accounts/${real.body?.id}/authorization/prepare`, { token, method: "POST", body: {} });
+console.log("\n=== prepare answers about ownership, not about the network ===");
+const prepare = await api(`/api/safe-accounts/${lastRealSafeId}/authorization/prepare`, { token: lastRoundToken, method: "POST", body: {} });
 console.log("POST /authorization/prepare ->", prepare.status, JSON.stringify(prepare.body));
 const prepareMessage = String(prepare.body?.message ?? prepare.body?.error ?? "");
 check(
-  "prepare is not the old opaque 502 'Could not verify your Safe. Try again.'",
-  !(prepare.status === 502 && /^could not verify your safe\. try again\.$/i.test(prepareMessage.trim())),
+  "prepare is not a network failure (502/429/rate limit)",
+  prepare.status !== 502 && !/rate limit|429/i.test(prepareMessage),
   `status=${prepare.status} message=${prepareMessage.slice(0, 160)}`,
 );
 check(
@@ -76,9 +85,6 @@ check(
   prepare.status === 403 && /not an owner/i.test(prepareMessage),
   `status=${prepare.status} message=${prepareMessage.slice(0, 160)}`,
 );
-if (prepare.status === 502) {
-  check("if prepare still fails, the reason names the RPC method and status", /eth_\w+/.test(prepareMessage), `message=${prepareMessage.slice(0, 200)}`);
-}
 
 console.log("\n=== An unprotected Safe cannot get a strategy ===");
 const unprotected = await api("/api/safe-accounts", { token, method: "POST", body: { chainId: 8453, safeAddress: NOT_A_SAFE } });
