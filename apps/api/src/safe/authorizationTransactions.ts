@@ -27,9 +27,25 @@ const ROLE_EXEC_ABI = [{ type: "function", name: "execTransactionWithRole", stat
 const WITHDRAW_ABI = [{ type: "function", name: "withdraw", stateMutability: "nonpayable", inputs: [{ name: "asset", type: "address" }, { name: "amount", type: "uint256" }, { name: "to", type: "address" }], outputs: [{ name: "", type: "uint256" }] }] as const;
 type SafeTx = { to: `0x${string}`; value: bigint; data: Hex; operation: 0; safeTxGas: bigint; baseGas: bigint; gasPrice: bigint; gasToken: `0x${string}`; refundReceiver: `0x${string}`; nonce: bigint };
 const RPC_RETRYABLE_HTTP = new Set([429, 502, 503]);
-const RPC_MAX_ATTEMPTS = 3;
-const RPC_RETRY_BASE_MS = 200;
+const RPC_MAX_ATTEMPTS = 5;
+const RPC_RETRY_BASE_MS = 300;
+const RPC_RETRY_CAP_MS = 2_500;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * How long to wait before retrying. A rate limiter needs a real pause, not
+ * the few hundred milliseconds a transient gateway blip needs, so this
+ * backs off exponentially with jitter and prefers the provider's own
+ * Retry-After hint when it sends one. Jitter matters because a single
+ * authorization read issues a dozen calls in sequence: without it, several
+ * reads that hit the same limit would retry in lockstep and re-trigger it.
+ */
+function retryDelayMs(attempt: number, response: Response | null): number {
+  const hint = Number(response?.headers?.get("retry-after"));
+  if (Number.isFinite(hint) && hint > 0) return Math.min(hint * 1000, 5_000);
+  const backoff = Math.min(RPC_RETRY_BASE_MS * 2 ** (attempt - 1), RPC_RETRY_CAP_MS);
+  return backoff + Math.floor(Math.random() * 150);
+}
 /** `ok: false` is the node reporting an execution error (a revert) - a real answer about the chain, not a failure to reach it. */
 type RpcOutcome = { ok: true; result: unknown } | { ok: false; message: string };
 
@@ -62,7 +78,7 @@ async function rpcOutcome(method: string, params: unknown[]): Promise<RpcOutcome
       lastDetail = `HTTP ${response.status}`;
       if (!RPC_RETRYABLE_HTTP.has(response.status)) break;
     }
-    if (attempt < RPC_MAX_ATTEMPTS) await sleep(RPC_RETRY_BASE_MS * attempt);
+    if (attempt < RPC_MAX_ATTEMPTS) await sleep(retryDelayMs(attempt, response));
   }
   logger.warn({ rpcMethod: method, detail: lastDetail, attempts: RPC_MAX_ATTEMPTS }, "Base RPC call failed - failing closed");
   throw new HttpError(502, `Could not reach the Base network to verify your Safe (${method}: ${lastDetail}). Try again.`);
@@ -78,8 +94,9 @@ function decodeAddressArray(hex: string): string[] { const body = returndataBody
 function decodeString(hex: string): string { const body = returndataBody(hex, "VERSION()"); const offset = Number(BigInt(`0x${body.slice(0, 64)}`)) * 2; const length = Number(BigInt(`0x${body.slice(offset, offset + 64)}`)); return Buffer.from(body.slice(offset + 64, offset + 64 + length * 2), "hex").toString("utf8"); }
 function parseRolesImplementation(code: string): string | null { const body = code.toLowerCase().replace(/^0x/, ""); const prefix = "363d3d373d3d3d363d73"; const suffix = "5af43d82803e903d91602b57fd5bf3"; return body.startsWith(prefix) && body.endsWith(suffix) && body.length === 90 ? `0x${body.slice(prefix.length, prefix.length + 40)}` : null; }
 export async function inspectSafeForAuthorization(safeAddress: `0x${string}`, connectedOwner: `0x${string}`) { const [ownersRaw, thresholdRaw, nonceRaw, versionRaw, masterCopyRaw, code] = await Promise.all([rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "getOwners" })), rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "getThreshold" })), rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "nonce" })), rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "VERSION" })), rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "masterCopy" })), rpcCode(safeAddress)]); const owners = decodeAddressArray(ownersRaw); const masterCopy = `0x${masterCopyRaw.slice(-40)}`; const version = decodeString(versionRaw); return { owners, threshold: Number(BigInt(thresholdRaw)), nonce: BigInt(nonceRaw), version, masterCopy, isOwner: owners.some((o) => o.toLowerCase() === connectedOwner.toLowerCase()), isSafe: code !== "0x" && version === "1.4.1" && SUPPORTED_SAFE_SINGLETONS.some((singleton) => singleton.toLowerCase() === masterCopy.toLowerCase()) }; }
-export async function verifyRolesModifier(modifierAddress: `0x${string}`, safeAddress: `0x${string}`) { const implementation = parseRolesImplementation(await rpcCode(modifierAddress)); if (!implementation || implementation.toLowerCase() !== ROLES_V2_1_1_MASTER_COPY.toLowerCase()) return false; const [avatar, target, owner] = await Promise.all([rpcCall(modifierAddress, "0x5aef7de6"), rpcCall(modifierAddress, "0xd4b83992"), rpcCall(modifierAddress, "0x8da5cb5b")]); const safe = safeAddress.toLowerCase(); return `0x${avatar.slice(-40)}`.toLowerCase() === safe && `0x${target.slice(-40)}`.toLowerCase() === safe && `0x${owner.slice(-40)}`.toLowerCase() === safe; }
-export async function classifyRolesModule(modifierAddress: `0x${string}`, safeAddress: `0x${string}`): Promise<"compatible" | "incompatible_roles" | "other"> { const implementation = parseRolesImplementation(await rpcCode(modifierAddress)); if (!implementation) return "other"; if (implementation.toLowerCase() === ROLES_V2_1_1_MASTER_COPY.toLowerCase()) return (await verifyRolesModifier(modifierAddress, safeAddress)) ? "compatible" : "incompatible_roles"; if (implementation.toLowerCase() === ROLES_V2_1_0_MASTER_COPY.toLowerCase()) return "incompatible_roles"; return "other"; }
+/** `knownImplementation` lets a caller that already read the proxy's bytecode pass it in, so one authorization read does not fetch the same code twice - fewer calls means fewer chances of being rate-limited mid-verification. Omit it and the code is read here. */
+export async function verifyRolesModifier(modifierAddress: `0x${string}`, safeAddress: `0x${string}`, knownImplementation?: string | null) { const implementation = knownImplementation !== undefined ? knownImplementation : parseRolesImplementation(await rpcCode(modifierAddress)); if (!implementation || implementation.toLowerCase() !== ROLES_V2_1_1_MASTER_COPY.toLowerCase()) return false; const [avatar, target, owner] = await Promise.all([rpcCall(modifierAddress, "0x5aef7de6"), rpcCall(modifierAddress, "0xd4b83992"), rpcCall(modifierAddress, "0x8da5cb5b")]); const safe = safeAddress.toLowerCase(); return `0x${avatar.slice(-40)}`.toLowerCase() === safe && `0x${target.slice(-40)}`.toLowerCase() === safe && `0x${owner.slice(-40)}`.toLowerCase() === safe; }
+export async function classifyRolesModule(modifierAddress: `0x${string}`, safeAddress: `0x${string}`): Promise<"compatible" | "incompatible_roles" | "other"> { const implementation = parseRolesImplementation(await rpcCode(modifierAddress)); if (!implementation) return "other"; if (implementation.toLowerCase() === ROLES_V2_1_1_MASTER_COPY.toLowerCase()) return (await verifyRolesModifier(modifierAddress, safeAddress, implementation)) ? "compatible" : "incompatible_roles"; if (implementation.toLowerCase() === ROLES_V2_1_0_MASTER_COPY.toLowerCase()) return "incompatible_roles"; return "other"; }
 export async function verifyFactory(): Promise<void> { const code = await rpcCode(ZODIAC_MODULE_PROXY_FACTORY); if (code === "0x" || code.length <= 2) throw new HttpError(503, "Automatic Safe setup is unavailable because the verified module factory is not deployed on Base."); if (!code.toLowerCase().includes(DEPLOY_SELECTOR.slice(2))) throw new HttpError(503, "Automatic Safe setup is unavailable because the verified module factory is not the expected Zodiac factory."); }
 function safeTxTypedData(safeAddress: `0x${string}`, tx: SafeTx, chainId: number) { return { domain: { chainId, verifyingContract: safeAddress }, types: SAFE_TX_TYPES, primaryType: "SafeTx" as const, message: { to: tx.to, value: tx.value, data: tx.data, operation: tx.operation, safeTxGas: tx.safeTxGas, baseGas: tx.baseGas, gasPrice: tx.gasPrice, gasToken: tx.gasToken, refundReceiver: tx.refundReceiver, nonce: tx.nonce } }; }
 function addressCompValue(address: `0x${string}`): Hex { return encodeAbiParameters([{ type: "address" }], [address]); }

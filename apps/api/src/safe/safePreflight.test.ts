@@ -124,6 +124,28 @@ describe("RPC transport", () => {
     expect(calls).toBeGreaterThan(1);
   });
 
+  it("recovers from a rate-limited 429 rather than reporting the Safe as unverifiable", async () => {
+    // The failure mode this guards against was live: the public Base RPC
+    // answered 429 mid-verification and a real, protected Safe came back
+    // as undetermined.
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+      calls += 1;
+      if (calls <= 2) return new Response("rate limited", { status: 429, headers: { "retry-after": "0" } });
+      const body = JSON.parse((init?.body as string) ?? "{}");
+      if (body.method === "eth_getCode") return rpcResult("0x6000");
+      const data = String(body.params?.[0]?.data ?? "");
+      if (data.startsWith(SELECTOR.getOwners)) return rpcResult(`0x${word("0x20")}${word("0x1")}${word(OWNER)}`);
+      if (data.startsWith(SELECTOR.getThreshold)) return rpcResult(`0x${word("0x1")}`);
+      if (data.startsWith(SELECTOR.nonce)) return rpcResult(`0x${word("0x5")}`);
+      if (data.startsWith(SELECTOR.version)) return rpcResult(encodeStringReturn("1.4.1"));
+      if (data.startsWith(SELECTOR.masterCopy)) return rpcResult(`0x${word(SAFE_V1_4_1_L2_SINGLETON)}`);
+      return rpcResult("0x");
+    }));
+    expect((await inspectSafeForAuthorization(SAFE, OWNER)).isSafe).toBe(true);
+    expect(calls).toBeGreaterThan(2);
+  });
+
   it("names the RPC method and HTTP status when it gives up, so an outage is not mistaken for an unprotected Safe", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("bad gateway", { status: 502 })));
     await expect(inspectSafeForAuthorization(SAFE, OWNER)).rejects.toThrow(/eth_call: HTTP 502/);
