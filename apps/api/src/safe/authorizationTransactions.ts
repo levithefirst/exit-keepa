@@ -60,43 +60,145 @@ type RpcOutcome = { ok: true; result: unknown } | { ok: false; message: string }
  * so it comes back as `ok: false` for the caller to interpret (a revert is
  * a meaningful result for a negative probe, and a 409 everywhere else).
  */
-async function rpcOutcome(method: string, params: unknown[]): Promise<RpcOutcome> {
+async function postRpc(payload: unknown, label: string): Promise<unknown> {
   let lastDetail = "no response";
   for (let attempt = 1; attempt <= RPC_MAX_ATTEMPTS; attempt++) {
     let response: Response | null = null;
     try {
-      response = await fetch(env.BASE_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+      response = await fetch(env.BASE_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     } catch (err) {
       lastDetail = `network error (${(err as Error).message})`;
     }
     if (response) {
-      if (response.ok) {
-        const body = await response.json() as { result?: unknown; error?: { message?: string } };
-        if (body.error) return { ok: false, message: body.error.message ?? `Safe verification failed on ${method}` };
-        return { ok: true, result: body.result };
-      }
+      if (response.ok) return await response.json();
       lastDetail = `HTTP ${response.status}`;
       if (!RPC_RETRYABLE_HTTP.has(response.status)) break;
     }
     if (attempt < RPC_MAX_ATTEMPTS) await sleep(retryDelayMs(attempt, response));
   }
-  logger.warn({ rpcMethod: method, detail: lastDetail, attempts: RPC_MAX_ATTEMPTS }, "Base RPC call failed - failing closed");
-  throw new HttpError(502, `Could not reach the Base network to verify your Safe (${method}: ${lastDetail}). Try again.`);
+  logger.warn({ rpcCall: label, detail: lastDetail, attempts: RPC_MAX_ATTEMPTS }, "Base RPC call failed - failing closed");
+  throw new HttpError(502, `Could not reach the Base network to verify your Safe (${label}: ${lastDetail}). Try again.`);
 }
+
+async function rpcOutcome(method: string, params: unknown[]): Promise<RpcOutcome> {
+  const body = await postRpc({ jsonrpc: "2.0", id: 1, method, params }, method) as { result?: unknown; error?: { message?: string } };
+  if (body?.error) return { ok: false, message: body.error.message ?? `Safe verification failed on ${method}` };
+  return { ok: true, result: body?.result };
+}
+
+export interface RpcRequest { method: string; params: unknown[] }
+
+/**
+ * Sends independent reads as a single JSON-RPC batch, so verifying a Safe
+ * is a handful of HTTP posts rather than one per call. That is the
+ * difference between staying inside a provider's rate limit and being
+ * throttled mid-verification - a throttled read fails closed, which shows
+ * the owner of a perfectly good Safe an "unverifiable" card.
+ *
+ * Fail-closed in every direction. An unreachable or exhausted endpoint
+ * throws out of postRpc. A response that is not an array at all means the
+ * provider does not do batching, so the same reads are re-issued one at a
+ * time rather than being abandoned. A batch that comes back missing one of
+ * its answers throws too, and is never treated as an execution error -
+ * that distinction matters because a missing answer read as a revert would
+ * make a negative probe look like it had been correctly rejected.
+ */
+async function rpcBatch(requests: RpcRequest[]): Promise<RpcOutcome[]> {
+  if (requests.length === 0) return [];
+  if (requests.length === 1) return [await rpcOutcome(requests[0].method, requests[0].params)];
+
+  const label = `batch ${requests.length}x(${[...new Set(requests.map((r) => r.method))].join(",")})`;
+  const parsed = await postRpc(requests.map((request, index) => ({ jsonrpc: "2.0", id: index, method: request.method, params: request.params })), label);
+
+  if (!Array.isArray(parsed)) {
+    logger.warn({ rpcCall: label }, "Base RPC did not answer a batch as an array - falling back to one call at a time");
+    const sequential: RpcOutcome[] = [];
+    for (const request of requests) sequential.push(await rpcOutcome(request.method, request.params));
+    return sequential;
+  }
+
+  const byId = new Map<unknown, { result?: unknown; error?: { message?: string } }>();
+  for (const entry of parsed as { id?: unknown }[]) byId.set(entry?.id, entry as { result?: unknown; error?: { message?: string } });
+
+  return requests.map((request, index) => {
+    const entry = byId.get(index);
+    if (!entry) throw new HttpError(502, `Could not reach the Base network to verify your Safe (${label}: the answer to ${request.method} was missing). Try again.`);
+    if (entry.error) return { ok: false, message: entry.error.message ?? `Safe verification failed on ${request.method}` };
+    return { ok: true, result: entry.result };
+  });
+}
+
 
 async function rpc(method: string, params: unknown[]): Promise<unknown> { const outcome = await rpcOutcome(method, params); if (!outcome.ok) throw new HttpError(409, outcome.message); return outcome.result; }
 /** Strips 0x and refuses returndata too short to decode, so an address that answers with nothing fails as a clear 409 rather than a raw BigInt("0x") crash. */
 function returndataBody(raw: string, what: string): string { const body = raw.startsWith("0x") ? raw.slice(2) : raw; if (body.length < 64) throw new HttpError(409, `${what} returned no data - this address does not answer as a Safe on Base.`); return body; }
 async function rpcCall(to: string, data: Hex): Promise<string> { const result = await rpc("eth_call", [{ to, data }, "latest"]); if (typeof result !== "string" || !result) throw new HttpError(409, "Safe verification returned no result"); return result; }
 async function rpcCode(address: string): Promise<string> { const result = await rpc("eth_getCode", [address, "latest"]); if (typeof result !== "string") throw new HttpError(409, "Safe verification returned no code"); return result; }
-async function rpcStorage(address: string, slot: Hex): Promise<Hex> { const result = await rpc("eth_getStorageAt", [address, slot, "latest"]); if (typeof result !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(result)) throw new HttpError(409, "Safe permission state could not be read."); return result as Hex; }
 function decodeAddressArray(hex: string): string[] { const body = returndataBody(hex, "getOwners()"); const offset = Number(BigInt(`0x${body.slice(0, 64)}`)) * 2; const length = Number(BigInt(`0x${body.slice(offset, offset + 64)}`)); const result: string[] = []; for (let i = 0; i < length; i++) result.push(`0x${body.slice(offset + 64 + i * 64 + 24, offset + 64 + i * 64 + 64)}`); return result; }
 function decodeString(hex: string): string { const body = returndataBody(hex, "VERSION()"); const offset = Number(BigInt(`0x${body.slice(0, 64)}`)) * 2; const length = Number(BigInt(`0x${body.slice(offset, offset + 64)}`)); return Buffer.from(body.slice(offset + 64, offset + 64 + length * 2), "hex").toString("utf8"); }
 function parseRolesImplementation(code: string): string | null { const body = code.toLowerCase().replace(/^0x/, ""); const prefix = "363d3d373d3d3d363d73"; const suffix = "5af43d82803e903d91602b57fd5bf3"; return body.startsWith(prefix) && body.endsWith(suffix) && body.length === 90 ? `0x${body.slice(prefix.length, prefix.length + 40)}` : null; }
-export async function inspectSafeForAuthorization(safeAddress: `0x${string}`, connectedOwner: `0x${string}`) { const [ownersRaw, thresholdRaw, nonceRaw, versionRaw, masterCopyRaw, code] = await Promise.all([rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "getOwners" })), rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "getThreshold" })), rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "nonce" })), rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "VERSION" })), rpcCall(safeAddress, encodeFunctionData({ abi: SAFE_READ_ABI, functionName: "masterCopy" })), rpcCode(safeAddress)]); const owners = decodeAddressArray(ownersRaw); const masterCopy = `0x${masterCopyRaw.slice(-40)}`; const version = decodeString(versionRaw); return { owners, threshold: Number(BigInt(thresholdRaw)), nonce: BigInt(nonceRaw), version, masterCopy, isOwner: owners.some((o) => o.toLowerCase() === connectedOwner.toLowerCase()), isSafe: code !== "0x" && version === "1.4.1" && SUPPORTED_SAFE_SINGLETONS.some((singleton) => singleton.toLowerCase() === masterCopy.toLowerCase()) }; }
+export async function inspectSafeForAuthorization(safeAddress: `0x${string}`, connectedOwner: `0x${string}`) { const safeRead = (functionName: "getOwners" | "getThreshold" | "nonce" | "VERSION" | "masterCopy") => ({ method: "eth_call", params: [{ to: safeAddress, data: encodeFunctionData({ abi: SAFE_READ_ABI, functionName }) }, "latest"] }); const outcomes = await rpcBatch([safeRead("getOwners"), safeRead("getThreshold"), safeRead("nonce"), safeRead("VERSION"), safeRead("masterCopy"), { method: "eth_getCode", params: [safeAddress, "latest"] }]); const [ownersRaw, thresholdRaw, nonceRaw, versionRaw, masterCopyRaw, code] = outcomes.map((outcome) => { if (!outcome.ok) throw new HttpError(409, outcome.message); if (typeof outcome.result !== "string" || !outcome.result) throw new HttpError(409, "Safe verification returned no result"); return outcome.result; }); const owners = decodeAddressArray(ownersRaw); const masterCopy = `0x${masterCopyRaw.slice(-40)}`; const version = decodeString(versionRaw); return { owners, threshold: Number(BigInt(thresholdRaw)), nonce: BigInt(nonceRaw), version, masterCopy, isOwner: owners.some((o) => o.toLowerCase() === connectedOwner.toLowerCase()), isSafe: code !== "0x" && version === "1.4.1" && SUPPORTED_SAFE_SINGLETONS.some((singleton) => singleton.toLowerCase() === masterCopy.toLowerCase()) }; }
 /** `knownImplementation` lets a caller that already read the proxy's bytecode pass it in, so one authorization read does not fetch the same code twice - fewer calls means fewer chances of being rate-limited mid-verification. Omit it and the code is read here. */
-export async function verifyRolesModifier(modifierAddress: `0x${string}`, safeAddress: `0x${string}`, knownImplementation?: string | null) { const implementation = knownImplementation !== undefined ? knownImplementation : parseRolesImplementation(await rpcCode(modifierAddress)); if (!implementation || implementation.toLowerCase() !== ROLES_V2_1_1_MASTER_COPY.toLowerCase()) return false; const [avatar, target, owner] = await Promise.all([rpcCall(modifierAddress, "0x5aef7de6"), rpcCall(modifierAddress, "0xd4b83992"), rpcCall(modifierAddress, "0x8da5cb5b")]); const safe = safeAddress.toLowerCase(); return `0x${avatar.slice(-40)}`.toLowerCase() === safe && `0x${target.slice(-40)}`.toLowerCase() === safe && `0x${owner.slice(-40)}`.toLowerCase() === safe; }
-export async function classifyRolesModule(modifierAddress: `0x${string}`, safeAddress: `0x${string}`): Promise<"compatible" | "incompatible_roles" | "other"> { const implementation = parseRolesImplementation(await rpcCode(modifierAddress)); if (!implementation) return "other"; if (implementation.toLowerCase() === ROLES_V2_1_1_MASTER_COPY.toLowerCase()) return (await verifyRolesModifier(modifierAddress, safeAddress, implementation)) ? "compatible" : "incompatible_roles"; if (implementation.toLowerCase() === ROLES_V2_1_0_MASTER_COPY.toLowerCase()) return "incompatible_roles"; return "other"; }
+export type RolesModuleClassification = "compatible" | "incompatible_roles" | "other";
+
+/**
+ * The classification decision itself, with no I/O, so the batched and
+ * single-module paths below can never drift apart on what counts as a
+ * module Exit Keepa will trust. Only Roles v2.1.1 whose avatar, target and
+ * owner are all the Safe itself is compatible; v2.1.0 is rejected
+ * outright, and a module whose invariants could not be read is treated as
+ * incompatible rather than given the benefit of the doubt.
+ */
+function classifyFromReads(implementation: string | null, invariants: { avatar: string; target: string; owner: string } | null, safeAddress: string): RolesModuleClassification {
+  if (!implementation) return "other";
+  if (implementation.toLowerCase() === ROLES_V2_1_0_MASTER_COPY.toLowerCase()) return "incompatible_roles";
+  if (implementation.toLowerCase() !== ROLES_V2_1_1_MASTER_COPY.toLowerCase()) return "other";
+  if (!invariants) return "incompatible_roles";
+  const safe = safeAddress.toLowerCase();
+  const pointsAtThisSafe = `0x${invariants.avatar.slice(-40)}`.toLowerCase() === safe && `0x${invariants.target.slice(-40)}`.toLowerCase() === safe && `0x${invariants.owner.slice(-40)}`.toLowerCase() === safe;
+  return pointsAtThisSafe ? "compatible" : "incompatible_roles";
+}
+
+/**
+ * Classifies every enabled module in a single HTTP post: each module's
+ * proxy bytecode plus its avatar/target/owner, batched together. The
+ * invariants are requested for every module rather than only for the ones
+ * that turn out to be Roles v2.1.1 - reading three extra words costs
+ * nothing inside a batch, and it removes a whole sequential round trip per
+ * module. Modules that are not Roles simply revert on those calls, which
+ * classifyFromReads reads as "not compatible".
+ */
+export async function classifyRolesModules(moduleAddresses: `0x${string}`[], safeAddress: `0x${string}`): Promise<Map<string, RolesModuleClassification>> {
+  const classifications = new Map<string, RolesModuleClassification>();
+  if (moduleAddresses.length === 0) return classifications;
+
+  const requests: RpcRequest[] = [];
+  for (const moduleAddress of moduleAddresses) {
+    requests.push({ method: "eth_getCode", params: [moduleAddress, "latest"] });
+    for (const selector of ["0x5aef7de6", "0xd4b83992", "0x8da5cb5b"]) requests.push({ method: "eth_call", params: [{ to: moduleAddress, data: selector }, "latest"] });
+  }
+  const outcomes = await rpcBatch(requests);
+
+  moduleAddresses.forEach((moduleAddress, index) => {
+    const base = index * 4;
+    const codeOutcome = outcomes[base];
+    // Bytecode that could not be read at all is a failed verification, not
+    // a module to make a judgement about.
+    if (!codeOutcome.ok) throw new HttpError(409, codeOutcome.message);
+    const implementation = parseRolesImplementation(typeof codeOutcome.result === "string" ? codeOutcome.result : "0x");
+
+    const reads = [outcomes[base + 1], outcomes[base + 2], outcomes[base + 3]];
+    const values: string[] = [];
+    for (const read of reads) if (read.ok && typeof read.result === "string" && read.result.length >= 42) values.push(read.result);
+    const invariants = values.length === 3 ? { avatar: values[0], target: values[1], owner: values[2] } : null;
+
+    classifications.set(moduleAddress.toLowerCase(), classifyFromReads(implementation, invariants, safeAddress));
+  });
+  return classifications;
+}
+
+export async function classifyRolesModule(modifierAddress: `0x${string}`, safeAddress: `0x${string}`): Promise<RolesModuleClassification> { return (await classifyRolesModules([modifierAddress], safeAddress)).get(modifierAddress.toLowerCase()) ?? "other"; }
+export async function verifyRolesModifier(modifierAddress: `0x${string}`, safeAddress: `0x${string}`): Promise<boolean> { return (await classifyRolesModule(modifierAddress, safeAddress)) === "compatible"; }
 export async function verifyFactory(): Promise<void> { const code = await rpcCode(ZODIAC_MODULE_PROXY_FACTORY); if (code === "0x" || code.length <= 2) throw new HttpError(503, "Automatic Safe setup is unavailable because the verified module factory is not deployed on Base."); if (!code.toLowerCase().includes(DEPLOY_SELECTOR.slice(2))) throw new HttpError(503, "Automatic Safe setup is unavailable because the verified module factory is not the expected Zodiac factory."); }
 function safeTxTypedData(safeAddress: `0x${string}`, tx: SafeTx, chainId: number) { return { domain: { chainId, verifyingContract: safeAddress }, types: SAFE_TX_TYPES, primaryType: "SafeTx" as const, message: { to: tx.to, value: tx.value, data: tx.data, operation: tx.operation, safeTxGas: tx.safeTxGas, baseGas: tx.baseGas, gasPrice: tx.gasPrice, gasToken: tx.gasToken, refundReceiver: tx.refundReceiver, nonce: tx.nonce } }; }
 function addressCompValue(address: `0x${string}`): Hex { return encodeAbiParameters([{ type: "address" }], [address]); }
@@ -119,17 +221,20 @@ function roleMemberSlot(roleKey: Hex, member: `0x${string}`): Hex { return neste
 function roleTargetSlot(roleKey: Hex, target: `0x${string}`): Hex { return nestedMappingSlot(target, `0x${(BigInt(roleStructBase(roleKey)) + 1n).toString(16).padStart(64, "0")}`); }
 function roleScopeSlot(roleKey: Hex, target: `0x${string}`, selector: `0x${string}`): Hex { const key = (`0x${target.slice(2).toLowerCase()}${selector.slice(2).toLowerCase()}${"0".repeat(16)}`) as Hex; return mappingSlot(key, BigInt(roleStructBase(roleKey)) + 2n); }
 function decodeRoleHeader(header: Hex) { const value = BigInt(header); return { count: Number((value >> 240n) & 0xffffn), options: Number((value >> 224n) & 0xffn), wildcarded: ((value >> 216n) & 1n) === 1n, pointer: `0x${(value & ((1n << 160n) - 1n)).toString(16).padStart(40, "0")}` as `0x${string}` }; }
-export async function readRolePermissionState(modifierAddress: `0x${string}`, safeAddress: `0x${string}`, memberAddress: `0x${string}`) { const roleKey = canonicalRoleKey(); const memberWord = await rpcStorage(modifierAddress, roleMemberSlot(roleKey, memberAddress)); const targetWord = await rpcStorage(modifierAddress, roleTargetSlot(roleKey, AAVE_V3_BASE.pool)); const scopeHeader = await rpcStorage(modifierAddress, roleScopeSlot(roleKey, AAVE_V3_BASE.pool, AAVE_V3_WITHDRAW_SELECTOR)); const memberAssigned = (BigInt(memberWord) & 0xffn) === 1n; const targetValue = BigInt(targetWord); const targetScoped = Number(targetValue & 0xffn) === 2 && Number((targetValue >> 8n) & 0xffn) === 0; const header = decodeRoleHeader(scopeHeader); let functionScoped = false; if (header.count === 4 && header.options === 0 && !header.wildcarded && header.pointer !== SAFE_ZERO_ADDRESS) { const pointerCode = (await rpcCode(header.pointer)).toLowerCase().replace(/^0x/, ""); if (pointerCode.startsWith("00")) { const packed = pointerCode.slice(2); if (packed.length >= 144 && packed.slice(0, 16) === "00a5003000200030") { const comp1 = `0x${packed.slice(16, 80)}` as Hex; const comp2 = `0x${packed.slice(80, 144)}` as Hex; functionScoped = comp1.toLowerCase() === keccak256(addressCompValue(AAVE_V3_BASE.usdc)).toLowerCase() && comp2.toLowerCase() === keccak256(addressCompValue(safeAddress)).toLowerCase(); } } } return { memberAssigned, targetScoped, functionScoped, exact: memberAssigned && targetScoped && functionScoped }; }
+export async function readRolePermissionState(modifierAddress: `0x${string}`, safeAddress: `0x${string}`, memberAddress: `0x${string}`) { const roleKey = canonicalRoleKey(); const slots = [roleMemberSlot(roleKey, memberAddress), roleTargetSlot(roleKey, AAVE_V3_BASE.pool), roleScopeSlot(roleKey, AAVE_V3_BASE.pool, AAVE_V3_WITHDRAW_SELECTOR)]; const storageOutcomes = await rpcBatch(slots.map((slot) => ({ method: "eth_getStorageAt", params: [modifierAddress, slot, "latest"] }))); const [memberWord, targetWord, scopeHeader] = storageOutcomes.map((outcome) => { if (!outcome.ok) throw new HttpError(409, outcome.message); if (typeof outcome.result !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(outcome.result)) throw new HttpError(409, "Safe permission state could not be read."); return outcome.result as Hex; }); const memberAssigned = (BigInt(memberWord) & 0xffn) === 1n; const targetValue = BigInt(targetWord); const targetScoped = Number(targetValue & 0xffn) === 2 && Number((targetValue >> 8n) & 0xffn) === 0; const header = decodeRoleHeader(scopeHeader); let functionScoped = false; if (header.count === 4 && header.options === 0 && !header.wildcarded && header.pointer !== SAFE_ZERO_ADDRESS) { const pointerCode = (await rpcCode(header.pointer)).toLowerCase().replace(/^0x/, ""); if (pointerCode.startsWith("00")) { const packed = pointerCode.slice(2); if (packed.length >= 144 && packed.slice(0, 16) === "00a5003000200030") { const comp1 = `0x${packed.slice(16, 80)}` as Hex; const comp2 = `0x${packed.slice(80, 144)}` as Hex; functionScoped = comp1.toLowerCase() === keccak256(addressCompValue(AAVE_V3_BASE.usdc)).toLowerCase() && comp2.toLowerCase() === keccak256(addressCompValue(safeAddress)).toLowerCase(); } } } return { memberAssigned, targetScoped, functionScoped, exact: memberAssigned && targetScoped && functionScoped }; }
 export async function readExactRolePermission(modifierAddress: `0x${string}`, safeAddress: `0x${string}`, memberAddress: `0x${string}`): Promise<boolean> { return (await readRolePermissionState(modifierAddress, safeAddress, memberAddress)).exact; }
-export async function verifyNegativeRoleProbes(modifierAddress: `0x${string}`, safeAddress: `0x${string}`, memberAddress: `0x${string}`): Promise<boolean> { const roleKey = canonicalRoleKey(); const validWithdrawal = encodeFunctionData({ abi: WITHDRAW_ABI, functionName: "withdraw", args: [AAVE_V3_BASE.usdc, 0n, safeAddress] }); const attacker = "0x0000000000000000000000000000000000000001" as `0x${string}`; const probes = [{ to: AAVE_V3_BASE.pool, value: 1n, data: validWithdrawal, operation: 0 }, { to: AAVE_V3_BASE.pool, value: 0n, data: encodeFunctionData({ abi: WITHDRAW_ABI, functionName: "withdraw", args: [SAFE_ZERO_ADDRESS, 0n, safeAddress] }), operation: 0 }, { to: AAVE_V3_BASE.pool, value: 0n, data: encodeFunctionData({ abi: WITHDRAW_ABI, functionName: "withdraw", args: [AAVE_V3_BASE.usdc, 0n, attacker] }), operation: 0 }, { to: AAVE_V3_BASE.pool, value: 0n, data: "0x12345678" as Hex, operation: 0 }, { to: AAVE_V3_BASE.pool, value: 0n, data: validWithdrawal, operation: 1 }]; for (const call of probes) {
-    const data = encodeFunctionData({ abi: ROLE_EXEC_ABI, functionName: "execTransactionWithRole", args: [call.to, call.value, call.data, call.operation, roleKey, true] });
-    // Only an on-chain rejection counts as a probe passing. rpcOutcome
-    // throws on a transport/HTTP failure rather than returning, so an
-    // unreachable RPC can never be mistaken for the Roles modifier
-    // refusing the call - the old `catch {}` here treated both alike and
-    // would have reported an over-broad permission as safe.
-    const outcome = await rpcOutcome("eth_call", [{ to: modifierAddress, data, from: memberAddress }, "latest"]);
-    if (outcome.ok) return false;
-  }
-  return true;
+export async function verifyNegativeRoleProbes(modifierAddress: `0x${string}`, safeAddress: `0x${string}`, memberAddress: `0x${string}`): Promise<boolean> { const roleKey = canonicalRoleKey(); const validWithdrawal = encodeFunctionData({ abi: WITHDRAW_ABI, functionName: "withdraw", args: [AAVE_V3_BASE.usdc, 0n, safeAddress] }); const attacker = "0x0000000000000000000000000000000000000001" as `0x${string}`; const probes = [{ to: AAVE_V3_BASE.pool, value: 1n, data: validWithdrawal, operation: 0 }, { to: AAVE_V3_BASE.pool, value: 0n, data: encodeFunctionData({ abi: WITHDRAW_ABI, functionName: "withdraw", args: [SAFE_ZERO_ADDRESS, 0n, safeAddress] }), operation: 0 }, { to: AAVE_V3_BASE.pool, value: 0n, data: encodeFunctionData({ abi: WITHDRAW_ABI, functionName: "withdraw", args: [AAVE_V3_BASE.usdc, 0n, attacker] }), operation: 0 }, { to: AAVE_V3_BASE.pool, value: 0n, data: "0x12345678" as Hex, operation: 0 }, { to: AAVE_V3_BASE.pool, value: 0n, data: validWithdrawal, operation: 1 }]; // All five probes go out in one batch - they are independent, and issuing
+  // them one at a time was five separate chances to be rate-limited in the
+  // middle of proving a permission is narrow.
+  //
+  // Only an on-chain rejection counts as a probe passing. rpcBatch throws
+  // on a transport failure or a missing answer rather than returning, so an
+  // unreachable RPC can never be mistaken for the Roles modifier refusing
+  // the call - the old `catch {}` here treated both alike and would have
+  // reported an over-broad permission as safe.
+  const outcomes = await rpcBatch(probes.map((call) => ({
+    method: "eth_call",
+    params: [{ to: modifierAddress, data: encodeFunctionData({ abi: ROLE_EXEC_ABI, functionName: "execTransactionWithRole", args: [call.to, call.value, call.data, call.operation, roleKey, true] }), from: memberAddress }, "latest"],
+  })));
+  return outcomes.every((outcome) => !outcome.ok);
 }

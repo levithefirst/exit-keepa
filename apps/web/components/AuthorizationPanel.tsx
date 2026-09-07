@@ -6,16 +6,41 @@ import { api } from "../lib/api";
 import { useWallet } from "../lib/wallet";
 import { resolveSafeId } from "../lib/resolveSafeId";
 
+/** Slow enough not to be the reason the RPC keeps refusing, short enough that a recovered chain is picked up without a reload. */
+const UNDETERMINED_POLL_MS = 35_000;
+const READABLE_POLL_MS = 10_000;
+const MAX_UNDETERMINED_RETRIES = 3;
+
 export type AuthorizationState = "needs_module" | "needs_permission" | "protected" | "undetermined";
 export interface AuthorizationStatus { state: AuthorizationState; detectedModifierAddress: string | null; enabledModules: string[]; permissionChecked: boolean; undetermined: string | null; summary: string; }
 type Provider = { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> };
 type PlanStep = { id: string; kind: "deploy_proxy" | "enable_module" | "assign_role" | "scope_target" | "scope_function"; label: string; txType: "eoa" | "safe"; to: string; value: string; data: string; safeTxHash?: string; typedData?: unknown; safeTx?: { to: string; value: string; data: string; operation: number; safeTxGas: string; baseGas: string; gasPrice: string; gasToken: string; refundReceiver: string; nonce: string } };
 
 export function AuthorizationPanel({ status, safeAddress, chainId, safeId, onRecheck }: { status: AuthorizationStatus; safeAddress: string; chainId: number; safeId?: string; onRecheck: () => Promise<void> | void; }) {
-  const { address, getProvider } = useWallet(); const [authorizing, setAuthorizing] = useState(false); const [currentLabel, setCurrentLabel] = useState<string | null>(null); const [message, setMessage] = useState<string | null>(null); const onRecheckRef = useRef(onRecheck); onRecheckRef.current = onRecheck;
-  useEffect(() => { if (status.state === "protected") return; let cancelled = false; const timer = setInterval(() => { if (!cancelled && !document.hidden) Promise.resolve(onRecheckRef.current()).catch(() => {}); }, 10000); return () => { cancelled = true; clearInterval(timer); }; }, [status.state]);
+  const { address, getProvider } = useWallet(); const [authorizing, setAuthorizing] = useState(false); const [currentLabel, setCurrentLabel] = useState<string | null>(null); const [message, setMessage] = useState<string | null>(null); const [pollPaused, setPollPaused] = useState(false); const attemptsRef = useRef(0); const onRecheckRef = useRef(onRecheck); onRecheckRef.current = onRecheck;
+  // An undetermined state usually means the Base RPC could not be read.
+  // Re-asking every 10 seconds is what keeps it unreadable, so back off to
+  // 35s and stop entirely after three tries - the card stays on screen and
+  // the user decides when to try again. A state we CAN read (needs_module,
+  // needs_permission) is cheap to poll and keeps the faster cadence.
+  useEffect(() => {
+    if (status.state === "protected") return;
+    const unreadable = status.state === "undetermined";
+    if (unreadable && pollPaused) return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      if (cancelled || document.hidden) return;
+      if (unreadable) {
+        attemptsRef.current += 1;
+        if (attemptsRef.current > MAX_UNDETERMINED_RETRIES) { setPollPaused(true); return; }
+      }
+      Promise.resolve(onRecheckRef.current()).catch(() => {});
+    }, unreadable ? UNDETERMINED_POLL_MS : READABLE_POLL_MS);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [status.state, pollPaused]);
+  function retryNow() { attemptsRef.current = 0; setPollPaused(false); void Promise.resolve(onRecheckRef.current()).catch(() => {}); }
   if (status.state === "protected") return <div className="rounded-xl border border-mint-400/30 bg-mint-400/5 p-5"><h2 className="font-display text-lg font-semibold text-mint-300">Your Safe is protected.</h2><p className="mt-1 text-pretty text-sm text-cream-300">Automatic exits are enabled. Exit Keepa can withdraw Base USDC from Aave only when your strategy says to exit.</p></div>;
-  if (status.state === "undetermined") return <div className="space-y-3 rounded-xl border border-cream-100/15 bg-forest-800/60 p-5"><h2 className="font-display text-lg font-semibold text-cream-50">Protect your Safe</h2><p className="text-pretty text-sm text-cream-300">Exit Keepa could not verify the Safe authorization state.</p><p className="text-pretty text-sm text-cream-400">{status.undetermined ?? "Try again when the Base chain can be read normally."}</p><button onClick={() => void onRecheckRef.current()} className={btnPrimary}>Retry verification</button></div>;
+  if (status.state === "undetermined") return <div className="space-y-3 rounded-xl border border-cream-100/15 bg-forest-800/60 p-5"><h2 className="font-display text-lg font-semibold text-cream-50">Protect your Safe</h2><p className="text-pretty text-sm text-cream-300">Exit Keepa could not verify the Safe authorization state.</p><p className="text-pretty text-sm text-cream-400">{status.undetermined ?? "Try again when the Base chain can be read normally."}</p>{pollPaused && <p className="text-pretty text-xs text-cream-500">Automatic re-checking has stopped so it stops adding load to the Base network. Your Safe is unchanged.</p>}<button onClick={retryNow} className={btnPrimary}>Retry verification</button></div>;
   async function ensureBase(provider: Provider) { const raw = await provider.request({ method: "eth_chainId" }); if (String(raw).toLowerCase() === "0x2105") return; await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] }); const switched = await provider.request({ method: "eth_chainId" }); if (String(switched).toLowerCase() !== "0x2105") throw new Error("Switch your wallet to Base before authorizing automatic exits."); }
   async function waitForReceipt(provider: Provider, txHash: string) { for (let attempt = 0; attempt < 90; attempt++) { const receipt = await provider.request({ method: "eth_getTransactionReceipt", params: [txHash] }) as { status?: string } | null; if (receipt) { if (receipt.status !== "0x1") throw new Error("The authorization transaction failed. Exit Keepa has not marked your Safe as protected."); return; } await new Promise((resolve) => setTimeout(resolve, 2000)); } throw new Error("The authorization transaction is still pending. Exit Keepa has not marked your Safe as protected."); }
   async function authorize() {

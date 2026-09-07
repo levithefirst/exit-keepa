@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { createFakeDb, eq, and } from "./fakeDb";
-import { protectedSafeRpc } from "./chainStubs";
+import { answerRpc } from "./chainStubs";
 import { authNonces, authSessions } from "../src/db/schema";
 
 const fakeDb = createFakeDb();
@@ -23,8 +23,8 @@ const OWNED_SAFE_MODIFIER = "0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE";
 vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
   let body: unknown = {};
   try { body = JSON.parse((init?.body as string | undefined) ?? "{}"); } catch { /* non-RPC request */ }
-  const authorization = protectedSafeRpc({ safeAddress: OWNED_SAFE, modifierAddress: OWNED_SAFE_MODIFIER }, body);
-  if (authorization) return authorization;
+  const answered = answerRpc({ safeAddress: OWNED_SAFE, modifierAddress: OWNED_SAFE_MODIFIER }, body, () => `0x${(10n ** 12n).toString(16).padStart(64, "0")}`);
+  if (answered) return answered;
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: `0x${(10n ** 12n).toString(16).padStart(64, "0")}` }), { status: 200 });
 }));
 

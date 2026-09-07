@@ -2,7 +2,7 @@ import "./setup";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import request from "supertest";
 import { createFakeDb, eq, and } from "./fakeDb";
-import { protectedSafeRpc } from "./chainStubs";
+import { answerRpc } from "./chainStubs";
 import { createTestSession, authHeader } from "./authHelpers";
 
 const fakeDb = createFakeDb();
@@ -40,22 +40,17 @@ vi.stubGlobal(
   "fetch",
   vi.fn(async (_url: unknown, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(init.body as string) : {};
-    const data: string = body?.params?.[0]?.data ?? "";
     // The Safe these tests configure really does read back as protected -
     // module list, Roles invariants, exact role storage and the negative
     // probes all answered from chain, the same reads the gate performs.
-    const authorization = protectedSafeRpc({ safeAddress: SAFE_ADDRESS, modifierAddress: ROLES_MODIFIER }, body);
-    if (authorization) return authorization;
-    if (data.startsWith(GET_RESERVE_DATA_SELECTOR)) {
-      return new Response(
-        JSON.stringify({ jsonrpc: "2.0", id: 1, result: reserveDataHexForSupplyBps(currentSupplyRateBps) }),
-        { status: 200 },
-      );
-    }
-    if (data.startsWith(BALANCE_OF_SELECTOR)) {
-      const balanceHex = `0x${currentPositionBalance.toString(16).padStart(64, "0")}`;
-      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: balanceHex }), { status: 200 });
-    }
+    // Handles batched requests too, which is how production sends them.
+    const answered = answerRpc({ safeAddress: SAFE_ADDRESS, modifierAddress: ROLES_MODIFIER }, body, (request) => {
+      const data = String(request.params?.[0]?.data ?? "");
+      if (data.startsWith(GET_RESERVE_DATA_SELECTOR)) return reserveDataHexForSupplyBps(currentSupplyRateBps);
+      if (data.startsWith(BALANCE_OF_SELECTOR)) return `0x${currentPositionBalance.toString(16).padStart(64, "0")}`;
+      return undefined;
+    });
+    if (answered) return answered;
     throw new Error(`Unexpected RPC call in test: ${JSON.stringify(body)}`);
   }),
 );

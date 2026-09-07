@@ -322,7 +322,7 @@ to boot with missing/malformed required configuration.
 | `DATABASE_URL` | API | Neon Postgres connection string |
 | `KEEPERHUB_API_KEY` | API | Never logged or exposed to the client |
 | `KEEPERHUB_WEBHOOK_SECRET` | API | HMAC secret for `/api/webhooks/keeperhub` |
-| `BASE_CHAIN_ID` / `BASE_RPC_URL` | API | Default to Base mainnet |
+| `BASE_CHAIN_ID` / `BASE_RPC_URL` | API | Default to Base mainnet. **`BASE_RPC_URL` must be a key-authenticated provider endpoint (Alchemy/Infura/QuickNode) in any deployed environment** - verifying one Safe issues a batch of reads (module list, module bytecode + Roles invariants, role storage slots, five negative probes), and the free public `mainnet.base.org` rate-limits (HTTP 429) before that completes. A read that cannot complete fails closed to "could not verify", never to "protected". Set it as a host environment variable; never commit the key. |
 | `CORS_ORIGINS` | API | Set to `*` in production (this API has no cookie/session auth to protect) - unset means CORS is fully disabled and every browser request from the deployed frontend fails |
 | `NEXT_PUBLIC_API_URL` | Web | Must point at the deployed API's public URL |
 

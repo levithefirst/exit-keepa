@@ -2,7 +2,7 @@ import "./setup";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import request from "supertest";
 import { createFakeDb, eq, and } from "./fakeDb";
-import { protectedSafeRpc } from "./chainStubs";
+import { answerRpc } from "./chainStubs";
 import { createTestSession, authHeader } from "./authHelpers";
 import { KeeperHubApiError } from "../src/keeperhub/client";
 
@@ -37,9 +37,11 @@ vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
   // The execution-flow Safe genuinely reads back as protected; every other
   // address keeps answering "no modules enabled", so the onboarding tests
   // still exercise a real unprotected Safe.
-  const authorization = protectedSafeRpc({ safeAddress: PROTECTED_SAFE, modifierAddress: PROTECTED_SAFE_MODIFIER }, body);
-  if (authorization) return authorization;
-  if (body.method === "eth_call" && data.startsWith("0xcc2f8452")) return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: emptyModulesRpc }), { status: 200 });
+  const answered = answerRpc({ safeAddress: PROTECTED_SAFE, modifierAddress: PROTECTED_SAFE_MODIFIER }, body, (request) => {
+    if (request.method === "eth_call" && String(request.params?.[0]?.data ?? "").startsWith("0xcc2f8452")) return emptyModulesRpc;
+    return bigBalanceHex;
+  });
+  if (answered) return answered;
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: bigBalanceHex }), { status: 200 });
 }));
 

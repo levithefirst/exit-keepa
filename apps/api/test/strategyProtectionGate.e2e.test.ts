@@ -2,7 +2,7 @@ import "./setup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { createFakeDb, eq, and } from "./fakeDb";
-import { protectedSafeRpc } from "./chainStubs";
+import { answerRpc } from "./chainStubs";
 import { createTestSession, authHeader } from "./authHelpers";
 
 const fakeDb = createFakeDb();
@@ -57,16 +57,19 @@ vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
     }
   }
 
-  if (chainMode === "needs_permission") {
-    // The module is there and valid, but the role's storage is empty - the
-    // permission was never finished (or has been revoked).
-    if (body.method === "eth_getStorageAt") {
-      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: `0x${word("0x0")}` }), { status: 200 });
-    }
-  }
+  // The module is there and valid, but the role's storage is empty - the
+  // permission was never finished, or has been revoked. Applied per
+  // sub-request so it holds inside a batched read too.
+  const emptyRoleStorage = (request: { method: string }) =>
+    chainMode === "needs_permission" && request.method === "eth_getStorageAt" ? `0x${word("0x0")}` : undefined;
 
-  const authorization = protectedSafeRpc({ safeAddress: SAFE, modifierAddress: MODIFIER }, body);
-  if (authorization) return authorization;
+  const answered = answerRpc(
+    { safeAddress: SAFE, modifierAddress: MODIFIER },
+    body,
+    () => `0x${(10n ** 12n).toString(16).padStart(64, "0")}`,
+    emptyRoleStorage,
+  );
+  if (answered) return answered;
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: `0x${(10n ** 12n).toString(16).padStart(64, "0")}` }), { status: 200 });
 }));
 

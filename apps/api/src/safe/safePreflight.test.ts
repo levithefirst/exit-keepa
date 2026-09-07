@@ -104,6 +104,82 @@ describe("negative role probes fail closed", () => {
   });
 });
 
+describe("JSON-RPC batching", () => {
+  it("reads the whole Safe preflight in a single HTTP post", async () => {
+    let posts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+      posts += 1;
+      const payload = JSON.parse((init?.body as string) ?? "{}");
+      expect(Array.isArray(payload)).toBe(true);
+      // Answered out of order on purpose: a batch is matched by id, never by position.
+      const answers = payload.map((entry: { id: number; method: string; params: any[] }) => {
+        if (entry.method === "eth_getCode") return { jsonrpc: "2.0", id: entry.id, result: "0x6000" };
+        const data = String(entry.params[0]?.data ?? "");
+        if (data.startsWith(SELECTOR.getOwners)) return { jsonrpc: "2.0", id: entry.id, result: `0x${word("0x20")}${word("0x1")}${word(OWNER)}` };
+        if (data.startsWith(SELECTOR.getThreshold)) return { jsonrpc: "2.0", id: entry.id, result: `0x${word("0x1")}` };
+        if (data.startsWith(SELECTOR.nonce)) return { jsonrpc: "2.0", id: entry.id, result: `0x${word("0x5")}` };
+        if (data.startsWith(SELECTOR.version)) return { jsonrpc: "2.0", id: entry.id, result: encodeStringReturn("1.4.1") };
+        return { jsonrpc: "2.0", id: entry.id, result: `0x${word(SAFE_V1_4_1_L2_SINGLETON)}` };
+      });
+      return new Response(JSON.stringify(answers.reverse()), { status: 200 });
+    }));
+    const inspection = await inspectSafeForAuthorization(SAFE, OWNER);
+    expect(inspection.isSafe).toBe(true);
+    expect(inspection.nonce).toBe(5n);
+    expect(posts).toBe(1);
+  });
+
+  it("falls back to one call at a time when the provider does not support batching", async () => {
+    let posts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+      posts += 1;
+      const payload = JSON.parse((init?.body as string) ?? "{}");
+      if (Array.isArray(payload)) return new Response(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "batch not supported" } }), { status: 200 });
+      if (payload.method === "eth_getCode") return rpcResult("0x6000");
+      const data = String(payload.params[0]?.data ?? "");
+      if (data.startsWith(SELECTOR.getOwners)) return rpcResult(`0x${word("0x20")}${word("0x1")}${word(OWNER)}`);
+      if (data.startsWith(SELECTOR.getThreshold)) return rpcResult(`0x${word("0x1")}`);
+      if (data.startsWith(SELECTOR.nonce)) return rpcResult(`0x${word("0x5")}`);
+      if (data.startsWith(SELECTOR.version)) return rpcResult(encodeStringReturn("1.4.1"));
+      return rpcResult(`0x${word(SAFE_V1_4_1_L2_SINGLETON)}`);
+    }));
+    expect((await inspectSafeForAuthorization(SAFE, OWNER)).isSafe).toBe(true);
+    expect(posts).toBeGreaterThan(1);
+  });
+
+  it("fails closed when a batch comes back missing one of its answers", async () => {
+    // A dropped answer must never read as an execution error: that is what
+    // a negative probe counts as "correctly rejected".
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const payload = JSON.parse((init?.body as string) ?? "{}");
+      const answers = (payload as { id: number }[]).slice(1).map((entry) => ({ jsonrpc: "2.0", id: entry.id, result: "0x6000" }));
+      return new Response(JSON.stringify(answers), { status: 200 });
+    }));
+    await expect(inspectSafeForAuthorization(SAFE, OWNER)).rejects.toThrow(/was missing/i);
+  });
+
+  it("sends all five negative probes in one batch and still requires every one to revert", async () => {
+    let posts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+      posts += 1;
+      const payload = JSON.parse((init?.body as string) ?? "{}");
+      return new Response(JSON.stringify((payload as { id: number }[]).map((entry) => ({ jsonrpc: "2.0", id: entry.id, error: { message: "execution reverted" } }))), { status: 200 });
+    }));
+    expect(await verifyNegativeRoleProbes(MODIFIER, SAFE, OWNER)).toBe(true);
+    expect(posts).toBe(1);
+  });
+
+  it("still fails the probes when one call in the batch is accepted", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const payload = JSON.parse((init?.body as string) ?? "{}");
+      return new Response(JSON.stringify((payload as { id: number }[]).map((entry, index) => (
+        index === 3 ? { jsonrpc: "2.0", id: entry.id, result: `0x${word("0x1")}` } : { jsonrpc: "2.0", id: entry.id, error: { message: "execution reverted" } }
+      ))), { status: 200 });
+    }));
+    expect(await verifyNegativeRoleProbes(MODIFIER, SAFE, OWNER)).toBe(false);
+  });
+});
+
 describe("RPC transport", () => {
   it("retries a transient 503 and succeeds, without reporting a false failure", async () => {
     let calls = 0;
@@ -148,6 +224,6 @@ describe("RPC transport", () => {
 
   it("names the RPC method and HTTP status when it gives up, so an outage is not mistaken for an unprotected Safe", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("bad gateway", { status: 502 })));
-    await expect(inspectSafeForAuthorization(SAFE, OWNER)).rejects.toThrow(/eth_call: HTTP 502/);
+    await expect(inspectSafeForAuthorization(SAFE, OWNER)).rejects.toThrow(/batch .*eth_call.*: HTTP 502/);
   });
 });

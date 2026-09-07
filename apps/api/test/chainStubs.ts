@@ -26,12 +26,12 @@ function word(hex: string): string {
   return hex.replace(/^0x/, "").padStart(64, "0");
 }
 
-function rpcResult(result: unknown): Response {
-  return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), { status: 200 });
+function rpcResult(result: unknown): SingleAnswer {
+  return { result };
 }
 
-function rpcError(message: string): Response {
-  return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { message } }), { status: 200 });
+function rpcError(message: string): SingleAnswer {
+  return { error: { message } };
 }
 
 /**
@@ -63,12 +63,52 @@ export interface ProtectedSafeFixture {
   pointerAddress?: string;
 }
 
+/** The `result` for one JSON-RPC request, `{ error }` for a call the chain rejects, or null for a request this fixture does not model. */
+type SingleAnswer = { result: unknown } | { error: { message: string } } | null;
+
 /**
- * Answers the authorization RPC calls for a fully protected Safe, and
- * returns null for anything it does not model so a caller's own stub
- * (Aave rate reads, balances) can handle it.
+ * Answers a JSON-RPC request - single or batched - for a fully protected
+ * Safe. Production sends independent reads as one batched array, so the
+ * fixture has to speak both shapes or the tests would stop exercising the
+ * real transport. `fallback` handles anything this fixture does not model
+ * (Aave rate reads, balances), per sub-request, so a mixed batch is still
+ * answered correctly.
  */
+export function answerRpc(
+  fixture: ProtectedSafeFixture,
+  body: any,
+  fallback?: (request: { method: string; params: any[] }) => unknown,
+  /** Runs before the fixture, per sub-request, so a test can model one read differently (a role whose storage is empty, say) even inside a batch. */
+  override?: (request: { method: string; params: any[] }) => unknown,
+): Response | null {
+  const answerOne = (request: any): SingleAnswer =>
+    fallbackAnswer(request, override) ?? resolveSingle(fixture, request) ?? fallbackAnswer(request, fallback);
+
+  if (Array.isArray(body)) {
+    const answers = body.map((entry) => {
+      const answer = answerOne(entry);
+      return answer ? { jsonrpc: "2.0", id: entry?.id, ...answer } : null;
+    });
+    if (answers.some((answer) => answer === null)) return null;
+    return new Response(JSON.stringify(answers), { status: 200 });
+  }
+  const answer = answerOne(body);
+  if (!answer) return null;
+  return new Response(JSON.stringify({ jsonrpc: "2.0", id: body?.id ?? 1, ...answer }), { status: 200 });
+}
+
+function fallbackAnswer(request: any, fallback?: (request: { method: string; params: any[] }) => unknown): SingleAnswer {
+  if (!fallback) return null;
+  const result = fallback({ method: request?.method ?? "", params: request?.params ?? [] });
+  return result === undefined ? null : { result };
+}
+
+/** Back-compat wrapper for callers that only need the fixture's own answers. */
 export function protectedSafeRpc(fixture: ProtectedSafeFixture, body: any): Response | null {
+  return answerRpc(fixture, body);
+}
+
+function resolveSingle(fixture: ProtectedSafeFixture, body: any): SingleAnswer {
   const pointer = fixture.pointerAddress ?? "0x4444444444444444444444444444444444444444";
   const safe = fixture.safeAddress.toLowerCase();
   const modifier = fixture.modifierAddress.toLowerCase();
