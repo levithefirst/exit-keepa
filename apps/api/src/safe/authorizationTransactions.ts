@@ -49,6 +49,31 @@ function retryDelayMs(attempt: number, response: Response | null): number {
 /** `ok: false` is the node reporting an execution error (a revert) - a real answer about the chain, not a failure to reach it. */
 type RpcOutcome = { ok: true; result: unknown } | { ok: false; message: string };
 
+/** Rate limiting as a JSON-RPC error: -32005 limit exceeded, and the codes Alchemy/Infura/QuickNode use for capacity. */
+const RPC_RATE_LIMIT_CODES = new Set([-32005, -32029, -32097]);
+
+/**
+ * Distinguishes "the node refused to answer because we are over quota"
+ * from "the chain answered, and the answer is a revert". They arrive in
+ * the same shape, and conflating them is a fail-open, not a nuisance: a
+ * negative permission probe counts an execution error as the Roles
+ * modifier correctly rejecting the call, so five throttled probes would
+ * read as five rejections and a Safe could reach "protected" without any
+ * of them actually being checked. A rate limit is therefore treated as a
+ * transport failure - retried, and thrown if it persists.
+ */
+function isRateLimitError(error: { code?: number; message?: string } | undefined): boolean {
+  if (!error) return false;
+  if (typeof error.code === "number" && RPC_RATE_LIMIT_CODES.has(error.code)) return true;
+  return /rate limit|rate-limit|too many requests|limit exceeded|exceeded .*quota|over capacity|throttl/i.test(error.message ?? "");
+}
+
+/** True when a 200 response is really the provider refusing on quota grounds, single or batched. */
+function bodyIsRateLimited(body: unknown): boolean {
+  const entries = Array.isArray(body) ? body : [body];
+  return entries.some((entry) => isRateLimitError((entry as { error?: { code?: number; message?: string } })?.error));
+}
+
 /**
  * One JSON-RPC round trip, retrying only what is genuinely transient (a
  * network error, or HTTP 429/502/503) before failing closed. The thrown
@@ -70,9 +95,16 @@ async function postRpc(payload: unknown, label: string): Promise<unknown> {
       lastDetail = `network error (${(err as Error).message})`;
     }
     if (response) {
-      if (response.ok) return await response.json();
-      lastDetail = `HTTP ${response.status}`;
-      if (!RPC_RETRYABLE_HTTP.has(response.status)) break;
+      if (response.ok) {
+        const body = await response.json();
+        // A 200 carrying a rate-limit error is the provider refusing, not
+        // the chain answering - retry it exactly like an HTTP 429.
+        if (!bodyIsRateLimited(body)) return body;
+        lastDetail = "rate limited by the provider";
+      } else {
+        lastDetail = `HTTP ${response.status}`;
+        if (!RPC_RETRYABLE_HTTP.has(response.status)) break;
+      }
     }
     if (attempt < RPC_MAX_ATTEMPTS) await sleep(retryDelayMs(attempt, response));
   }

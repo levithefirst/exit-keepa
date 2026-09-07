@@ -95,6 +95,19 @@ describe("negative role probes fail closed", () => {
     expect(await verifyNegativeRoleProbes(MODIFIER, SAFE, OWNER)).toBe(false);
   });
 
+  it("never treats a rate-limited probe as a probe being rejected", async () => {
+    // Providers report quota refusals as a JSON-RPC error, the same shape a
+    // revert arrives in. Counting one as the other would let five throttled
+    // probes read as five rejections and reach "protected" with nothing
+    // actually checked.
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const payload = JSON.parse((init?.body as string) ?? "{}");
+      const entries = Array.isArray(payload) ? payload : [payload];
+      return new Response(JSON.stringify(entries.map((entry: { id: number }) => ({ jsonrpc: "2.0", id: entry.id, error: { code: -32005, message: "over rate limit" } }))), { status: 200 });
+    }));
+    await expect(verifyNegativeRoleProbes(MODIFIER, SAFE, OWNER)).rejects.toThrow(/Could not reach the Base network/i);
+  });
+
   it("never treats an unreachable RPC as a probe being rejected", async () => {
     // The whole point: a transport failure used to be caught and counted as
     // "correctly refused", which would report an over-broad permission as
