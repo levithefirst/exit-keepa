@@ -1,0 +1,33 @@
+name: Live protection gate check
+
+# Manual only - read-only verification against production that the
+# documented Safe reads as protected, that prepare answers honestly rather
+# than with an opaque 502, and that a Safe which is not verifiably protected
+# cannot get a strategy. Never signs, deploys, or broadcasts anything. See
+# scripts/live-protection-gate-check.mjs.
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "API URL to test"
+        default: "https://api-production-2e11.up.railway.app"
+        required: false
+      web_url:
+        description: "Web URL to test"
+        default: "https://exit-keepa-web.vercel.app"
+        required: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run live protection gate check
+        run: node scripts/live-protection-gate-check.mjs
+        env:
+          API_URL: ${{ inputs.api_url }}
+          WEB_URL: ${{ inputs.web_url }}
