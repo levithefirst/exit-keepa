@@ -1,0 +1,92 @@
+{
+  "$schema": "https://github.com/levithefirst/exit-keepa/packages/shared/src/workflows/keeperhubWorkflow.ts",
+  "name": "aave-usdc-protective-exit",
+  "version": 1,
+  "chainId": 8453,
+  "description": "Protective exit for a Safe's Aave v3 Base USDC supply position: watch the supply APR, run Exit Keepa's deterministic policy gate, simulate execTransactionWithRole through the Safe's Zodiac Roles Modifier, and stop there. The broadcast step is described but disabled.",
+  "surface": "keeperhub-workflow",
+  "liveProofSurface": "keeperhub-direct-execution-rest",
+  "authoredBy": "exit-keepa-agent",
+  "registeredWithKeeperhub": false,
+  "broadcast": {
+    "enabled": false,
+    "gatedBy": { "envVar": "EXIT_KEEPA_ALLOW_BROADCAST", "equals": "1" },
+    "note": "Nothing in this repository registers or runs this document, and no code path here sends simulate: false on its behalf. The broadcast step is written down so the shape of the authorized write is reviewable, not so it can be triggered from this file."
+  },
+  "steps": [
+    {
+      "id": "observe-supply-apr",
+      "kind": "rate-condition",
+      "description": "Read the live Aave v3 Base USDC supply APR and compare it against the strategy's threshold. Nothing downstream runs unless this crosses.",
+      "condition": {
+        "market": "aave-v3-base",
+        "metric": "supply_apr",
+        "comparator": "lt",
+        "thresholdBps": 300
+      },
+      "source": {
+        "contract": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+        "functionName": "getReserveData(address)",
+        "field": "currentLiquidityRate"
+      }
+    },
+    {
+      "id": "policy-gate",
+      "kind": "policy-check",
+      "description": "Exit Keepa's own deterministic gate (apps/api/src/agent/policy.ts). Plain boolean and string comparisons - no model, no heuristic. Every check must pass or the attempt is refused before KeeperHub is contacted at all.",
+      "checks": [
+        "chainAllowed",
+        "rolesConfigured",
+        "transactionBuildable",
+        "targetAllowed",
+        "actionAllowed",
+        "selectorBound",
+        "assetBound",
+        "recipientBound"
+      ],
+      "onFailure": "refuse"
+    },
+    {
+      "id": "simulate-exit",
+      "kind": "contract-call",
+      "description": "Dry run against real chain state: execTransactionWithRole on the Safe's Roles Modifier, simulate: true. A revert here is a hard stop - the exit ends failed and nothing is sent.",
+      "contract": "roles-modifier",
+      "functionName": "execTransactionWithRole",
+      "simulate": true,
+      "innerCall": {
+        "target": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+        "selector": "0x69328dec",
+        "signature": "withdraw(address asset, uint256 amount, address to)",
+        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "amount": "max",
+        "recipient": "safe",
+        "operation": 0
+      }
+    },
+    {
+      "id": "broadcast-exit",
+      "kind": "contract-call",
+      "description": "The real write: the byte-identical body from the simulate step with simulate removed and an Idempotency-Key attached. Disabled here. In the running product this step is apps/api/src/execution/executeApproved.ts over Direct Execution REST, which is what produced the live proof.",
+      "contract": "roles-modifier",
+      "functionName": "execTransactionWithRole",
+      "simulate": false,
+      "enabled": false,
+      "gatedBy": { "envVar": "EXIT_KEEPA_ALLOW_BROADCAST", "equals": "1" },
+      "innerCall": {
+        "target": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+        "selector": "0x69328dec",
+        "signature": "withdraw(address asset, uint256 amount, address to)",
+        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "amount": "max",
+        "recipient": "safe",
+        "operation": 0
+      }
+    }
+  ],
+  "notes": [
+    "This is the agent-authored workflow surface. It describes the exit as a KeeperHub workflow so the authorized write is inspectable before anything runs.",
+    "Exit Keepa's live proof did NOT go through this surface. It went through KeeperHub's Direct Execution REST API - POST /execute/contract-call with simulate: true, then the same body with an Idempotency-Key, then GET /execute/{executionId}/status until a receipt confirmed it. See docs/SUBMISSION.md section 6.",
+    "recipient is the literal string \"safe\": the Roles Modifier's own parameter condition already fixes `to` to the Safe, and Exit Keepa's policy check fixes it again independently. Neither this document nor any caller can name a different recipient.",
+    "The withdraw amount is Aave's max-uint256 sentinel, which self-limits to whatever the position actually holds."
+  ]
+}
