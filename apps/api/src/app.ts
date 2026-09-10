@@ -12,6 +12,7 @@ import { executionsRouter } from "./routes/executions";
 import { webhooksRouter } from "./routes/webhooks";
 import { agentRouter } from "./routes/agent";
 import { authRouter } from "./routes/auth";
+import { liveProofRouter } from "./routes/liveProof";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 
 export function createApp() {
@@ -29,6 +30,7 @@ export function createApp() {
   app.use("/api", webhooksRouter);
   app.use("/api", agentRouter);
   app.use("/api", authRouter);
+  app.use("/api", liveProofRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

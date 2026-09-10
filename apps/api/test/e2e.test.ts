@@ -169,3 +169,51 @@ describe("blocked-call demo: a withdraw pointed anywhere but the Safe is refused
     expect(callContractFunction).not.toHaveBeenCalled();
   });
 });
+
+describe("GET /api/live-proof - the audit trail for the one real execution", () => {
+  it("serves the canonical proof without a session", async () => {
+    const res = await request(app).get("/api/live-proof");
+
+    expect(res.status).toBe(200);
+    expect(res.body.proof.txHash).toBe("0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b");
+    expect(res.body.proof.keeperhubExecutionId).toBe("u9zr4vzbfurjvzgwz687g");
+    expect(res.body.proof.safeAddress).toBe("0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9");
+    expect(res.body.proof.rolesModifierAddress).toBe("0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE");
+  });
+
+  it("recomputes the policy check rather than quoting a stored verdict", async () => {
+    const res = await request(app).get("/api/live-proof");
+
+    expect(res.body.policyPassed).toBe(true);
+    expect(res.body.refusalReasons).toEqual([]);
+    expect(res.body.policy.recipientBound).toBe(true);
+    expect(res.body.policy.assetBound).toBe(true);
+    // Rebuilt by buildExitTransaction, so the audit page shows the real
+    // calldata rather than a copy pasted into a fixture.
+    expect(res.body.transaction.to).toBe("0xA238Dd80C259a72e81d7e4664a9801593F98d1c5");
+    expect(res.body.transaction.data.startsWith("0x69328dec")).toBe(true);
+    expect(res.body.transaction.decodedArgs.to).toBe("0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9");
+  });
+
+  it("lists the five lifecycle stages in order, and says which one it cannot evidence", async () => {
+    const res = await request(app).get("/api/live-proof");
+
+    expect(res.body.stages.map((stage: { id: string }) => stage.id)).toEqual([
+      "condition",
+      "policy",
+      "simulate",
+      "execution",
+      "receipt",
+    ]);
+    const byId = Object.fromEntries(res.body.stages.map((s: { id: string }) => [s.id, s]));
+    expect(byId.condition.evidence).toBe("not-published");
+    expect(byId.policy.evidence).toBe("recomputed");
+    expect(byId.receipt.evidence).toBe("onchain");
+  });
+
+  it("never contacts KeeperHub to serve it", async () => {
+    await request(app).get("/api/live-proof");
+    expect(callContractFunction).not.toHaveBeenCalled();
+    expect(getDirectExecutionStatus).not.toHaveBeenCalled();
+  });
+});
