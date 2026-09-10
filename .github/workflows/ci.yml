@@ -44,5 +44,8 @@ jobs:
       - name: Test (packages/shared)
         run: npm run test --workspace packages/shared
 
+      - name: Test (packages/mcp)
+        run: npm run test --workspace packages/mcp
+
       - name: Build
         run: npm run build
