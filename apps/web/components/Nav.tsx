@@ -19,6 +19,9 @@ const NAV_LINKS = [
   { href: "/#how-it-works", label: "How it works" },
   { href: "/#security", label: "Security" },
   { href: "/#demo", label: "Demo" },
+  // Reachable without a wallet or a session: it is the page a judge is
+  // most likely to want first.
+  { href: "/audit", label: "Audit" },
 ];
 
 const GITHUB = "https://github.com/levithefirst/exit-keepa";

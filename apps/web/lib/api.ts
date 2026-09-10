@@ -39,4 +39,10 @@ export const api = {
   evaluateAgent: (strategyId: string) => request<any>(`/api/exit-strategies/${strategyId}/agent/evaluate`, { method: "POST" }),
   listAgentDecisions: (strategyId: string) => request<any[]>(`/api/exit-strategies/${strategyId}/agent/decisions`),
   getAgentReceipt: (decisionId: string) => request<any>(`/api/agent/decisions/${decisionId}`),
+  // Public, session-free: the audit trail for the one real on-chain
+  // execution. A judge can read it before signing in to anything.
+  getLiveProof: () => request<any>("/api/live-proof"),
+  // Builds a withdraw pointed somewhere other than the Safe and returns
+  // the refusal. Contacts nothing - see apps/api/src/execution/blockedCall.ts.
+  blockedCallDemo: (strategyId: string) => request<any>(`/api/exit-strategies/${strategyId}/blocked-call-demo`, { method: "POST" }),
 };

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { api } from "../../../lib/api";
 import { btnSecondarySmall, btnDanger, card } from "../../../lib/ui";
 import { StatusPill } from "../../../components/StatusPill";
@@ -276,8 +277,13 @@ export default function StrategyDetailPage({ params }: { params: { id: string } 
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <h1 className="text-balance font-display text-2xl font-bold text-cream-50">{strategy.name}</h1>
-        <div className="mt-1">
+        <div className="mt-1 flex flex-wrap items-center gap-3">
           <StatusPill status={strategy.status} />
+          {/* The full ordered trail - condition, policy, simulation,
+              execution id, receipt - alongside the live-proof one. */}
+          <Link href="/audit" className="text-xs text-cream-400 underline hover:text-cream-200">
+            Audit trail →
+          </Link>
         </div>
       </div>
 
