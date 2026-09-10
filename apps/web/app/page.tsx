@@ -24,7 +24,7 @@ const HERO_BADGES = [
 const STATS = [
   { value: "1", label: "function the executor can ever call" },
   { value: "$0", label: "gas cost on the exit, sponsored" },
-  { value: "322", label: "tests passing (run npm run judge for the live count)" },
+  { value: "323", label: "tests passing (run npm run judge for the live count)" },
   { value: "0", label: "LLM calls anywhere in the decision path" },
 ];
 

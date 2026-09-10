@@ -141,14 +141,35 @@ describe("simulate_exit", () => {
     expect(keeperHubClient.callContractFunction).not.toHaveBeenCalled();
   });
 
-  it("does not contact KeeperHub at all when the policy check refuses", async () => {
-    // A Safe registered on the wrong chain fails chainAllowed. buildExitTransaction
-    // refuses to build it, so this throws before any network call - the same
-    // fail-closed behaviour the API has.
+  it("refuses a Safe on any chain but Base at input validation, before any network call", async () => {
+    // Rejected by the tool's own input schema, which pins chainId to Base -
+    // so an unsupported Safe never even reaches buildExitTransaction, let
+    // alone the wire.
     await expect(
       simulateExit({ safeAddress: SAFE, rolesModifierAddress: ROLES, chainId: 1 as never }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/8453/);
     expect(keeperHubClient.callContractFunction).not.toHaveBeenCalled();
+  });
+
+  it("returns a refusal without contacting KeeperHub when the policy check fails", async () => {
+    // The policy check cannot fail for a transaction buildExitTransaction
+    // agreed to build - it is defence in depth, not a reachable input. Drive
+    // it directly to prove the short-circuit is real rather than decorative.
+    const { checkPolicy } = await import("../../../apps/api/src/agent/policy");
+    const spy = vi.spyOn(await import("../../../apps/api/src/agent/policy"), "checkPolicy");
+    spy.mockImplementationOnce((tx, safe, err) => ({
+      ...checkPolicy(tx, safe, err),
+      policyPassed: false,
+      refusalReasons: ["Policy check failed: recipientBound"],
+    }));
+
+    const result = await simulateExit({ safeAddress: SAFE, rolesModifierAddress: ROLES });
+
+    expect(result.policyPassed).toBe(false);
+    expect(result.keeperhubRequest).toBeNull();
+    expect(result.wouldRevert).toBeNull();
+    expect(keeperHubClient.callContractFunction).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 

@@ -212,9 +212,11 @@ against real chain state, under the permission state described above.
    happened, with a BaseScan link for any receipt-confirmed transaction;
    a still-confirming execution keeps re-checking on its own.
 
-## For judges
+## For judges: what is and isn't real
 
-See [`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md) for the exact click path
+The links and the one-command summary are at the top of this file; this
+section is the detail behind them. See
+[`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md) for the exact click path
 (under 5 minutes), and [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for the
 full pitch and honest-limitations list. A demo video script for a human
 to record is at [`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md).
@@ -357,8 +359,8 @@ npm run test --workspace apps/api
 npm run test --workspace packages/mcp
 ```
 
-322 tests total at the time of writing — 254 in `apps/api`, 36 in
-`packages/shared`, 32 in `packages/mcp`. Rather than trusting that number
+323 tests total at the time of writing — 254 in `apps/api`, 36 in
+`packages/shared`, 33 in `packages/mcp`. Rather than trusting that number
 here, run `npm run judge`: it reports the counts by actually running the
 suites, which is the only version that cannot go stale.
 

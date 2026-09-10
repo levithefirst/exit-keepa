@@ -339,7 +339,7 @@ mode, which is the exact call that produced the JSON quoted above.
   wallet needed.
 - **API:** https://api-production-2e11.up.railway.app (health check:
   `/health`; public audit record: `/api/live-proof`)
-- **Source:** https://github.com/levithefirst/exit-keepa
+- **Source:** https://github.com/levithefirst/exit-keepa (default branch: `claude/exit-keepa-init-v5lzuy`)
 - **One-command summary:** `npm install && npm run judge`
 
 ## 8. Architecture
@@ -412,8 +412,8 @@ values).
   wallet, but is never an exception to this: every click auto-provisions
   a brand-new, private sandbox Safe unique to that session, never the
   project's own real Safe or another visitor's session - see
-  `JUDGE_DEMO.md` §2-4. 322 tests pass (254 in `apps/api`, 36 in
-  `packages/shared`, 32 in `packages/mcp`), including a dedicated
+  `JUDGE_DEMO.md` §2-4. 323 tests pass (254 in `apps/api`, 36 in
+  `packages/shared`, 33 in `packages/mcp`), including a dedicated
   end-to-end cross-wallet ownership proof and a demo-session isolation
   proof. Don't take that number from this document - `npm run judge`
   reports it by running the suites.
