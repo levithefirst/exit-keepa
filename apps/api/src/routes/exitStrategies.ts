@@ -6,6 +6,7 @@ import { auditEvents, exitStrategies, safeAccounts } from "../db/schema";
 import { HttpError } from "../middleware/errorHandler";
 import { logger } from "../logger";
 import { buildExitTransaction } from "../execution/buildTransaction";
+import { buildBlockedCallDemo } from "../execution/blockedCall";
 import { buildRolesPermissionSpec } from "../execution/rolesPermission";
 import { requireProtectedSafe } from "../safe/protectionGate";
 import { requireSafeOwnership, requireSession } from "../auth/session";
@@ -179,4 +180,31 @@ exitStrategiesRouter.post("/exit-strategies/:id/pause", async (req, res) => {
   });
 
   res.status(200).json(updated);
+});
+
+/**
+ * The refusal demo: builds a withdraw pointed at somewhere other than the
+ * Safe, runs the real policy check over it, and returns the refusal.
+ *
+ * Deliberately a POST even though it writes nothing - it is an action a
+ * judge takes ("try a blocked call"), not a resource they read, and the
+ * response describes what happened rather than what exists.
+ *
+ * It cannot broadcast and it cannot simulate against KeeperHub: the policy
+ * check refuses first, and this handler has no call to the KeeperHub
+ * client to reach in the first place. See execution/blockedCall.ts, which
+ * throws rather than return a passing verdict.
+ */
+exitStrategiesRouter.post("/exit-strategies/:id/blocked-call-demo", async (req, res) => {
+  const address = await requireSession(req);
+  const { strategy, safe } = await loadOwnedStrategyAndSafe(req.params.id, address);
+
+  const result = buildBlockedCallDemo(strategy.action as ExitAction, safe);
+
+  logger.info(
+    { exitStrategyId: strategy.id, failedChecks: result.failedChecks },
+    "Blocked-call demo refused before contacting KeeperHub",
+  );
+
+  res.status(200).json({ ...result, isSandbox: safe.isSandbox, safeAddress: safe.safeAddress });
 });

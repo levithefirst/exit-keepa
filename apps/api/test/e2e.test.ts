@@ -91,3 +91,81 @@ describe("Safe authorization status - onboarding reads chain, not assumptions", 
   it("a demo sandbox Safe is protected without any chain read or KeeperHub call", async () => { const demoRes = await request(app).post("/api/auth/demo-session").send({}); const demoToken: string = demoRes.body.token; const safes = await request(app).get("/api/safe-accounts").set(authHeader(demoToken)); const res = await request(app).get(`/api/safe-accounts/${safes.body[0].id}/authorization`).set(authHeader(demoToken)); expect(res.status).toBe(200); expect(res.body.state).toBe("protected"); expect(res.body.permissionChecked).toBe(false); expect(res.body.summary).toMatch(/demo sandbox/i); expect(callContractFunction).not.toHaveBeenCalled(); });
   it("refuses to report authorization for a Safe the session does not own", async () => { const safe = await registerRealSafe("0x00000000000000000000000000000000000000cc"); const otherToken = await createTestSession(fakeDb, "0xDdD0000000000000000000000000000000000dDd"); const res = await request(app).get(`/api/safe-accounts/${safe.body.id}/authorization`).set(authHeader(otherToken)); expect(res.status).toBe(403); });
 });
+
+describe("blocked-call demo: a withdraw pointed anywhere but the Safe is refused", () => {
+  /** Spins up a demo session with an activated sandbox strategy, the way the UI does. */
+  async function demoStrategy() {
+    const demoRes = await request(app).post("/api/auth/demo-session").send({});
+    const demoToken: string = demoRes.body.token;
+    const mySafes = await request(app).get("/api/safe-accounts").set(authHeader(demoToken));
+    const sandboxSafe = mySafes.body[0];
+    const strategyRes = await request(app)
+      .post("/api/exit-strategies")
+      .set(authHeader(demoToken))
+      .send({
+        safeId: sandboxSafe.id,
+        name: "Blocked-call demo strategy",
+        condition: { market: "aave-v3-base", metric: "supply_apr", comparator: "lt", thresholdBps: 200 },
+        action: { protocol: "aave-v3-base", action: "withdraw", asset: AAVE_USDC, amount: "max" },
+      });
+    await request(app).post(`/api/exit-strategies/${strategyRes.body.id}/activate`).set(authHeader(demoToken));
+    return { demoToken, strategyId: strategyRes.body.id as string, sandboxSafe };
+  }
+
+  it("refuses on recipientBound and reports what it refused", async () => {
+    const { demoToken, strategyId, sandboxSafe } = await demoStrategy();
+
+    const res = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/blocked-call-demo`)
+      .set(authHeader(demoToken));
+
+    expect(res.status).toBe(200);
+    expect(res.body.blocked).toBe(true);
+    expect(res.body.policyPassed).toBe(false);
+    expect(res.body.failedChecks).toEqual(["recipientBound"]);
+    expect(res.body.attempted.recipient).toBe("0x000000000000000000000000000000000000dEaD");
+    expect(res.body.permitted.recipient).toBe(sandboxSafe.safeAddress);
+    expect(res.body.isSandbox).toBe(true);
+  });
+
+  it("never calls KeeperHub at all - and so never with simulate: false", async () => {
+    const { demoToken, strategyId } = await demoStrategy();
+
+    await request(app).post(`/api/exit-strategies/${strategyId}/blocked-call-demo`).set(authHeader(demoToken));
+
+    expect(callContractFunction).not.toHaveBeenCalled();
+    const simulateFlags = callContractFunction.mock.calls.map(([request_]) => request_.simulate);
+    expect(simulateFlags).not.toContain(false);
+  });
+
+  it("does not broadcast, and leaves the strategy with no execution behind it", async () => {
+    const { demoToken, strategyId } = await demoStrategy();
+
+    const res = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/blocked-call-demo`)
+      .set(authHeader(demoToken));
+
+    expect(res.body.broadcast).toBe(false);
+    expect(res.body.keeperhubContacted).toBe(false);
+
+    // A refusal is not an attempt: nothing was recorded against the
+    // strategy, so a judge clicking this cannot leave a stray execution row
+    // in the demo's own audit trail.
+    const executions = await request(app)
+      .get(`/api/exit-strategies/${strategyId}/executions`)
+      .set(authHeader(demoToken));
+    expect(executions.body).toEqual([]);
+  });
+
+  it("refuses a caller who does not own the strategy", async () => {
+    const { strategyId } = await demoStrategy();
+    const otherToken = await createTestSession(fakeDb, "0xDdD0000000000000000000000000000000DdD1");
+
+    const res = await request(app)
+      .post(`/api/exit-strategies/${strategyId}/blocked-call-demo`)
+      .set(authHeader(otherToken));
+
+    expect(res.status).toBe(403);
+    expect(callContractFunction).not.toHaveBeenCalled();
+  });
+});
