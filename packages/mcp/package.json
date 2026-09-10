@@ -1,0 +1,27 @@
+{
+  "name": "@exit-keepa/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server exposing Exit Keepa's read-only exit-condition, calldata, simulation and proof tools",
+  "bin": {
+    "exit-keepa-mcp": "./bin/exit-keepa-mcp.mjs"
+  },
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@exit-keepa/shared": "*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "viem": "^2.56.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.15",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.9"
+  }
+}
