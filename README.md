@@ -1,5 +1,18 @@
 # Exit Keepa
 
+1. **Live app** — https://exit-keepa-web.vercel.app
+2. **On-chain proof** — [BaseScan: `0xc8a00cc2…49fd8b`](https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b)
+3. **Demo video** — _placeholder: link to be added once recorded._ Shot list
+   and script: [`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md)
+
+Live projects: Aave v3, Gnosis Safe, Zodiac Roles. Exit Keepa is the
+permissioned write path. KeeperHub is the execution layer.
+
+---
+
+> "If the monitored rate crosses my threshold, withdraw my position back
+> to my Safe."
+
 Exit Keepa integrates **KeeperHub** as the deterministic execution layer
 for protective exits of **Aave v3** positions held in user-owned
 **Gnosis Safes**, constrained by **Zodiac Roles**. Aave and Safe are the
@@ -7,24 +20,63 @@ live systems users already use; Exit Keepa + KeeperHub are how a
 rate-based exit condition becomes a simulated-then-broadcast withdraw
 that lands onchain without ever giving the agent the user's keys.
 
-> "If the monitored rate crosses my threshold, withdraw my position back
-> to my Safe."
-
 **Built for KeeperHub's Agent Economy hackathon**
 ([dorahacks.io/hackathon/agent-economy](https://dorahacks.io/hackathon/agent-economy/detail)).
 See [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for the full submission.
 
-**Live demo:** [`https://exit-keepa-web.vercel.app`](https://exit-keepa-web.vercel.app) —
-the full app, live. API: `https://api-production-2e11.up.railway.app`.
-Click **"Try demo"** in the nav bar to explore the full flow against the
-live-proof Safe, without a wallet extension. See
-[`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md) for an exact, timed
-click-through.
+## For judges, in one command
 
-**Hackathon judges:** see [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for
-the pitch, live evidence (on-chain Roles config + a real simulation
-response, re-verified against production right before submission), and
-the exact judge path.
+```bash
+npm install && npm run judge
+```
+
+Prints the live-proof transaction and execution id, the live URLs with a
+real health probe, the agent surfaces, whether broadcasting is disabled,
+and the current test counts — each derived from the code rather than
+quoted, so none of it can quietly rot. Add `--fast` to skip running the
+suites.
+
+Three things a judge can click, with no wallet and no new transaction:
+
+| | |
+|---|---|
+| **Audit trail** | [`/audit`](https://exit-keepa-web.vercel.app/audit) — one exit at a time, in order: condition snapshot → policy verdict → simulation → KeeperHub execution id → receipt. Seeded with the real on-chain execution, so there is real data to read before doing anything. Live-proof rows and demo-sandbox rows are labelled on every row and never mixed. |
+| **A blocked call** | On `/audit`, **"Try a blocked call"** builds a withdraw that pays out to `0x…dEaD` instead of your Safe and shows Exit Keepa refusing it. It contacts KeeperHub not at all, stores nothing, and can never broadcast. |
+| **The live proof** | The BaseScan link above. Pre-existing chain history — a judge verifies it rather than triggering it. |
+
+Full click-through: [`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md). Click
+**"Try demo"** in the nav bar to walk the whole flow against a private
+sandbox Safe, with no wallet extension.
+
+## Agent surfaces
+
+- **MCP server** ([`packages/mcp`](packages/mcp/README.md)) — five tools
+  over the API's own execution helpers: `evaluate_exit_condition`,
+  `build_exit_calldata`, `simulate_exit`, `get_execution_status`,
+  `get_live_proof`. Read-and-simulate only: **it has no broadcast tool**,
+  and `simulate_exit` refuses outright if asked to. Run it with
+  `node packages/mcp/bin/exit-keepa-mcp.mjs`.
+- **Workflow artifact**
+  ([`docs/workflows/aave-usdc-protective-exit.json`](docs/workflows/aave-usdc-protective-exit.json))
+  — the protective exit described as a KeeperHub workflow: rate condition
+  → policy gate → simulated `execTransactionWithRole` → a broadcast step
+  that is written down but disabled and env-gated. Schema-validated in
+  tests; never registered or executed. The live proof went through
+  Direct Execution REST, not this surface.
+- **Public audit API** — `GET /api/live-proof` serves the canonical record
+  with the policy check recomputed per request. No session required.
+
+## Broadcasting is off by default
+
+`EXIT_KEEPA_ALLOW_BROADCAST` defaults to unset. No broadcast code path in
+this repository runs unless it is exactly the string `"1"` — not `"true"`,
+not `"yes"`, not `"1 "`. The MCP server is stronger than gated: it has no
+broadcast implementation at all, and setting the flag does not add one.
+
+Exit Keepa has exactly one path that has ever sent a transaction —
+`apps/api/src/execution/executeApproved.ts`, the autonomous path that
+produced the proof above — and this work deliberately did not add a
+second.
 
 ## What it actually does (v1 scope)
 
@@ -239,9 +291,11 @@ on Safes they registered themselves. See
 ## Architecture
 
 ```
-apps/web    Next.js (App Router) — wallet connect, dashboard, strategy CRUD, simulate/execute UI
-apps/api    Express + Drizzle ORM — strategy/execution state machine, KeeperHub integration
-packages/shared   Types, Zod schemas, and the Aave v3 Base protocol module (address constants + calldata encoder)
+apps/web        Next.js (App Router) — wallet connect, dashboard, strategy CRUD, simulate/execute UI, audit trail
+apps/api        Express + Drizzle ORM — strategy/execution state machine, KeeperHub integration
+packages/shared Types, Zod schemas, the Aave v3 Base protocol module (address constants + calldata encoder),
+                the canonical live-proof record, and the workflow-artifact schema
+packages/mcp    MCP server — a read-and-simulate adapter over apps/api's own execution helpers
 ```
 
 Key backend pieces:
@@ -291,25 +345,58 @@ Health checks: `GET /health` on the API, `GET /api/health` on the web app.
 ## Testing
 
 ```bash
-npm run test --workspace apps/api
-npm run test --workspace packages/shared
+npm test                                   # all three suites
+npm run judge                              # the same counts, plus everything else a judge needs
 ```
 
-182 tests total (173 in `apps/api`, 9 in `packages/shared`, verified by
-running both commands above): chain-boundary enforcement (rejecting a
-Safe registered on any chain other than Base before building a
-Base-targeted transaction), calldata correctness (against
-independently-computed hex fixtures, not the encoder checking itself),
-condition-comparator logic, execution state-transition/idempotency
-rules, KeeperHub response parsing (including refusing to trust a
-malformed hash, distinguishing a confirmed KeeperHub rejection from an
-ambiguous network/timeout failure, and the Safe First-Write Sequence's
-Idempotency-Key/status-polling handling), and end-to-end tests
-(`apps/api/test/e2e.test.ts`, `apps/api/test/auth.e2e.test.ts`) that
-walk create strategy → activate → condition check → simulate →
-broadcast → duplicate-broadcast rejection → recorded transaction hash,
-against an in-memory fake of the database and a mocked KeeperHub
-client.
+Or one at a time:
+
+```bash
+npm run test --workspace packages/shared
+npm run test --workspace apps/api
+npm run test --workspace packages/mcp
+```
+
+322 tests total at the time of writing — 254 in `apps/api`, 36 in
+`packages/shared`, 32 in `packages/mcp`. Rather than trusting that number
+here, run `npm run judge`: it reports the counts by actually running the
+suites, which is the only version that cannot go stale.
+
+What they cover: chain-boundary enforcement (rejecting a Safe registered
+on any chain other than Base before building a Base-targeted
+transaction), calldata correctness (against independently-computed hex
+fixtures, not the encoder checking itself), condition-comparator logic,
+execution state-transition/idempotency rules, KeeperHub response parsing
+(including refusing to trust a malformed hash, distinguishing a confirmed
+KeeperHub rejection from an ambiguous network/timeout failure, and the
+Safe First-Write Sequence's Idempotency-Key/status-polling handling), and
+end-to-end tests (`apps/api/test/e2e.test.ts`,
+`apps/api/test/auth.e2e.test.ts`) that walk create strategy → activate →
+condition check → simulate → broadcast → duplicate-broadcast rejection →
+recorded transaction hash, against an in-memory fake of the database and
+a mocked KeeperHub client.
+
+The tests added for the agent surfaces are specifically about what must
+*not* happen:
+
+- `simulate_exit` never sends `simulate: false` — asserted by inspecting
+  every `simulate` value the KeeperHub client was handed, with only the
+  network boundary mocked so the request under inspection is the one the
+  production code builds (`packages/mcp/src/tools.test.ts`).
+- Broadcasting is refused unless `EXIT_KEEPA_ALLOW_BROADCAST` is exactly
+  `"1"`, and refused again with a different, explicit reason when it is
+  (there is no broadcast implementation in the MCP surface to enable).
+- The blocked-call demo fails on `recipientBound` and nothing else, and
+  never contacts KeeperHub at all
+  (`apps/api/src/execution/blockedCall.test.ts`, `apps/api/test/e2e.test.ts`).
+- `get_live_proof` returns the exact canonical hash and ids, makes no
+  network call, and cannot return a freshly-generated one.
+- The shipped workflow artifact validates against its schema — the file
+  itself, not a fixture copy
+  (`packages/shared/src/workflows/keeperhubWorkflow.test.ts`).
+- A real MCP client drives the real server over a linked in-memory
+  transport, checking the tool list and the refusal shape
+  (`packages/mcp/src/server.test.ts`).
 
 ## Environment variables
 
@@ -356,8 +443,10 @@ npm run db:migrate --workspace apps/api    # apply migrations
 
 ## KeeperHub integration
 
-**KeeperHub surfaces used** (all through the plain REST Direct Execution
-API — no MCP client/server in this repo):
+**KeeperHub surfaces used.** Every write this project has ever made went
+through the plain REST Direct Execution API. `packages/mcp` adds an
+agent-facing adapter over the same helpers, but it is read-and-simulate
+only — it has no broadcast tool, so it is not a second write path:
 
 - `POST /execute/contract-call` — `execTransactionWithRole` against the
   Roles Modifier, `simulate: true` first, then `simulate: false` once

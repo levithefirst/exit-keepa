@@ -98,7 +98,13 @@ that actually process the call underneath. See §6 for the literal trace.
 
 ## 4. Surfaces used
 
-**REST Direct Execution, end-to-end simulate → broadcast → status:**
+Exit Keepa now presents four surfaces onto one execution path. Only the
+first of them can broadcast, and that is deliberate.
+
+### 4a. REST Direct Execution — the write path (simulate → broadcast → status)
+
+This is the surface that moved real value, and the only one that ever
+has.
 
 - `POST /execute/contract-call` (`apps/api/src/keeperhub/client.ts`'s
   `callContractFunction`) — simulate-first then broadcast, with explicit
@@ -116,17 +122,77 @@ that actually process the call underneath. See §6 for the literal trace.
   are the authoritative source for success/failure, per §3.
 - `GET /chains` (`listChains`) — live-verified, used to confirm Base is
   enabled.
-- **(Documented, not implemented in this app) MCP tools that mirror the
-  same operations for agents** — KeeperHub's hosted MCP server exposes
-  `execute_contract_call`, `execute_check_and_execute`, and
-  `get_direct_execution_status` as the agent-facing equivalents of the
-  three REST calls above, with the identical simulate-first /
-  Idempotency-Key / poll-until-terminal contract
-  ([docs.keeperhub.com/ai-tools/mcp-server](https://docs.keeperhub.com/ai-tools/mcp-server#direct-on-chain-execution)).
-  Exit Keepa's backend calls the REST endpoints directly rather than
-  running an MCP client — noted here only because it's the same
-  underlying execution surface, not because this app runs an MCP server
-  or client anywhere. No MCP code exists in this repo.
+
+`apps/api/src/execution/executeApproved.ts` is the one code path in this
+repository that has ever sent a transaction. Nothing added since is a
+second one.
+
+### 4b. MCP adapter (`packages/mcp`) — read and simulate, and **it cannot broadcast**
+
+An MCP server over stdio exposing five tools to any MCP client:
+`evaluate_exit_condition`, `build_exit_calldata`, `simulate_exit`,
+`get_execution_status`, `get_live_proof`.
+
+Each is a thin adapter over the API's own helpers —
+`buildExitTransaction`, `checkPolicy`, `evaluateRateCondition`,
+`simulateExitTransaction`, `deriveExecutionOutcomeFromStatus`, the
+KeeperHub client — imported from source, not copied. An agent driving
+Exit Keepa through MCP therefore gets the product's own decisions rather
+than a parallel approximation that could drift from them.
+
+**It has no broadcast tool.** `simulate_exit` only ever sends
+`simulate: true` and asserts as much on the outgoing request before
+returning; asking it to broadcast throws a typed
+`BroadcastNotPermittedError` naming `EXIT_KEEPA_ALLOW_BROADCAST` and its
+one enabling value, `"1"`. That flag defaults to unset, and no broadcast
+code path in this repo runs without it — but for the MCP surface the
+answer is stronger than "gated by default": setting the flag changes only
+the refusal's reason, because there is no broadcast implementation there
+to enable. It also refuses to contact KeeperHub at all for a transaction
+the policy check rejects.
+
+See `packages/mcp/README.md` for how to point Claude Code (or any MCP
+client) at it.
+
+### 4c. Agent-authored workflow artifact — described, never registered
+
+`docs/workflows/aave-usdc-protective-exit.json` describes the protective
+exit as a KeeperHub *workflow*: rate condition → deterministic policy
+gate → simulated `execTransactionWithRole` → a broadcast step that is
+written down but carries `enabled: false` and the env gate.
+
+It is an artifact, not a second write path. Nothing in this repo calls
+`POST /workflows` or `POST /workflows/{id}/execute` with it. Its schema
+(`packages/shared/src/workflows/keeperhubWorkflow.ts`) enforces the
+invariants rather than leaving them to review — an ungated or enabled
+broadcast step, a broadcast before its simulate, a target other than the
+Aave v3 Pool, an asset other than USDC, or a recipient other than the
+Safe are all rejected — and the tests validate the shipped file itself,
+not a fixture copy. The document also records, in its own fields, that
+the live proof went through Direct Execution REST and not through this
+surface.
+
+### 4d. Audit trail and CLI — how a judge reads any of it
+
+- **`/audit`** in the web app: one exit at a time, in lifecycle order —
+  condition snapshot → policy verdict → simulation → KeeperHub execution
+  id → receipt. Seeded with the real on-chain execution so a visitor sees
+  real data without executing anything, and with the demo-sandbox rows of
+  their own session kept strictly separate: both carry their kind badge on
+  every row, and a sandbox row can never show a transaction hash because a
+  sandbox produces no transaction. Every row also states how strongly it
+  is backed — on-chain, KeeperHub record, recomputed now, recorded,
+  sandbox, or **not published**.
+- **`GET /api/live-proof`**: the same record, session-free, with the
+  policy check genuinely recomputed per request rather than quoted.
+- **"Try a blocked call"** on `/audit`: builds a withdraw paying out to
+  `0x…dEaD` instead of the Safe and shows Exit Keepa refusing it on
+  `recipientBound`. It contacts KeeperHub not at all, writes nothing, and
+  has no path to a broadcast.
+- **`npm run judge`**: prints the live-proof transaction and execution id,
+  the live URLs with a real health probe, the agent surfaces, the
+  broadcast state, and the test counts — each derived rather than quoted.
+  The counts come from actually running the suites.
 
 **Evaluated and deliberately not used — `check-and-execute`:** KeeperHub's
 `POST /execute/check-and-execute` can conditionally run a write whose
@@ -153,11 +219,17 @@ reasoning.
 KeeperHub's own materials but have zero code paths in this repo — no
 handshake, no payment logic. The generic workflow endpoints (`POST
 /workflows`, `.../execute`) are wrapped in the client but never called by
-the execution path; the Safe-specific KeeperHub surfaces (pending-tx
-monitoring, signature tracking) are left unimplemented rather than
-guessed at — see the doc comments in `apps/api/src/keeperhub/client.ts`
-and `docs/keeperhub-integration.md` for the full verification trail of
-what was and wasn't confirmed live.
+any path, including the workflow artifact in §4c; the Safe-specific
+KeeperHub surfaces (pending-tx monitoring, signature tracking) are left
+unimplemented rather than guessed at — see the doc comments in
+`apps/api/src/keeperhub/client.ts` and `docs/keeperhub-integration.md`
+for the full verification trail of what was and wasn't confirmed live.
+KeeperHub's own hosted MCP server (`execute_contract_call`,
+`execute_check_and_execute`, `get_direct_execution_status`) is the
+agent-facing mirror of the REST calls in §4a; Exit Keepa's backend calls
+the REST endpoints directly rather than running a client against it, and
+`packages/mcp` is Exit Keepa's *own* MCP server exposing Exit Keepa's
+tools — not a client of KeeperHub's.
 
 ## 5. Mainnet vs. testnet
 
@@ -262,8 +334,13 @@ mode, which is the exact call that produced the JSON quoted above.
 ## 7. Live URLs
 
 - **Frontend:** https://exit-keepa-web.vercel.app
-- **API:** https://api-production-2e11.up.railway.app (health check: `/health`)
-- **Source:** https://github.com/levithefirst/exit-keepa (default branch: `claude/exit-keepa-init-v5lzuy`)
+- **Audit trail:** https://exit-keepa-web.vercel.app/audit — the ordered
+  lifecycle for the real execution, plus a one-click blocked call. No
+  wallet needed.
+- **API:** https://api-production-2e11.up.railway.app (health check:
+  `/health`; public audit record: `/api/live-proof`)
+- **Source:** https://github.com/levithefirst/exit-keepa
+- **One-command summary:** `npm install && npm run judge`
 
 ## 8. Architecture
 
@@ -335,9 +412,11 @@ values).
   wallet, but is never an exception to this: every click auto-provisions
   a brand-new, private sandbox Safe unique to that session, never the
   project's own real Safe or another visitor's session - see
-  `JUDGE_DEMO.md` §2-4. 182 tests pass (173 in `apps/api`, 9 in
-  `packages/shared`), including a dedicated end-to-end cross-wallet
-  ownership proof and a demo-session isolation proof.
+  `JUDGE_DEMO.md` §2-4. 322 tests pass (254 in `apps/api`, 36 in
+  `packages/shared`, 32 in `packages/mcp`), including a dedicated
+  end-to-end cross-wallet ownership proof and a demo-session isolation
+  proof. Don't take that number from this document - `npm run judge`
+  reports it by running the suites.
 - **Roles permission is genuinely scoped, not a rubber stamp — and this
   is independently confirmed from chain state, not asserted.** The live
   grant on the real, live-proof Safe (never a demo sandbox) is
@@ -385,6 +464,19 @@ values).
    genuine Roles Modifier deployed for a sandbox Safe to check against).
    See `JUDGE_DEMO.md` §4 for exactly what's real vs. mocked there, and
    why.
+
+5. Open **https://exit-keepa-web.vercel.app/audit** — the same execution
+   as an ordered lifecycle: condition snapshot → policy verdict →
+   simulation → KeeperHub execution id → receipt, with each row saying
+   how strongly it is backed. The policy row is recomputed on the spot by
+   the API rather than quoted; the condition row says *not published*,
+   because that reading was never persisted anywhere a third party could
+   check, and a made-up number would be worse than an absent one.
+6. On that page, click **"Try a blocked call"** (start a demo session
+   first if you have not). It builds a withdraw paying out to `0x…dEaD`
+   instead of the Safe and shows Exit Keepa refusing it on
+   `recipientBound` — no KeeperHub call, nothing stored, no path to a
+   broadcast.
 
 See [`JUDGE_DEMO.md`](JUDGE_DEMO.md) for the full click-by-click version
 (under 5 minutes), including a deliberate refusal case.

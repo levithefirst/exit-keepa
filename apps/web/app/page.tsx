@@ -8,8 +8,11 @@ import { btnPrimary, btnSecondary, linkFocus } from "../lib/ui";
 import { FeatureSwitcher } from "../components/FeatureSwitcher";
 import { Faq } from "../components/Faq";
 import { WalletConnectModal } from "../components/WalletConnectModal";
+import { EXIT_KEEPA_LIVE_PROOF } from "@exit-keepa/shared";
 
-const PROOF_TX = "0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b";
+// One canonical record, read rather than re-transcribed - see
+// packages/shared/src/liveProof.ts.
+const PROOF_TX = EXIT_KEEPA_LIVE_PROOF.txHash;
 
 const HERO_BADGES = [
   { label: "Simulate-first", pos: "lg:right-2 lg:top-0", rotate: "rotate-3" },
@@ -21,7 +24,7 @@ const HERO_BADGES = [
 const STATS = [
   { value: "1", label: "function the executor can ever call" },
   { value: "$0", label: "gas cost on the exit, sponsored" },
-  { value: "222", label: "tests passing in the current build" },
+  { value: "322", label: "tests passing (run npm run judge for the live count)" },
   { value: "0", label: "LLM calls anywhere in the decision path" },
 ];
 
@@ -161,9 +164,14 @@ export default function HomePage() {
           </p>
           <p className="text-cream-300">Result: success. USDC returned to the Safe.</p>
         </div>
-        <a href={`https://basescan.org/tx/${PROOF_TX}`} target="_blank" rel="noreferrer" className={`mt-4 inline-flex ${btnSecondary}`}>
-          Verify on BaseScan →
-        </a>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <a href={EXIT_KEEPA_LIVE_PROOF.basescanUrl} target="_blank" rel="noreferrer" className={btnSecondary}>
+            Verify on BaseScan →
+          </a>
+          <Link href="/audit" className={btnSecondary}>
+            See the full audit trail →
+          </Link>
+        </div>
       </section>
 
       <section id="how-it-works" className="scroll-mt-24" aria-labelledby="how-title">

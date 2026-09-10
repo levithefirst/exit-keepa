@@ -82,6 +82,67 @@ execution finishes as **`demo_completed`**, never `succeeded`, with **no
 transaction hash**, because no transaction exists. Exit Keepa does not
 show you a hash it can't back. For a real hash, see step 6.
 
+## 4b. The audit trail, and one deliberate refusal
+
+Click **Audit** in the top nav (or go straight to `/audit` — it needs no
+wallet and no session to read).
+
+**The live proof, as a lifecycle.** The top of the page shows the real
+Base mainnet execution as five ordered rows: condition snapshot → policy
+verdict → simulation → KeeperHub execution id → receipt. Each row states
+how strongly it is backed:
+
+- the **receipt** row is `on-chain` — re-fetchable from Base by anyone;
+- the **execution id** and **simulate** rows are `KeeperHub record` —
+  in KeeperHub's own execution record, which needs the org's API key to
+  read directly;
+- the **policy** row is `recomputed now` — genuinely re-run on that
+  request by `GET /api/live-proof`, which rebuilds the transaction with
+  `buildExitTransaction` and re-evaluates `agent/policy.ts` against the
+  live-proof Safe. It is not a saved verdict;
+- the **condition** row is `not published`, and says so. The rate reading
+  that fired this exit predates Exit Keepa's agent-decision receipts and
+  was never persisted anywhere a third party could check. A plausible
+  number here would be a fabrication, so there isn't one.
+
+**Your own rows, kept separate.** Below it, your demo session's own
+lifecycle renders the same five stages. Live-proof rows and demo-sandbox
+rows carry their badge on *every* row and are never interleaved — and a
+sandbox row can never show a transaction hash, because a sandbox produces
+no transaction.
+
+**Try a blocked call.** The button under your session's trail builds a
+withdraw that pays out to `0x…dEaD` instead of your Safe, and shows Exit
+Keepa refusing it on `recipientBound` — every other check still passing,
+so the refusal is unambiguous. Worth saying exactly what does and does not
+happen: KeeperHub is never contacted, nothing is simulated, nothing is
+stored, and there is no code path from that button to a broadcast. The
+transaction has to be hand-built for the demo at all because
+`buildExitTransaction` — the only path a real exit takes — has no input
+that names a recipient.
+
+## 4c. The agent surfaces (optional, for a technical judge)
+
+```bash
+npm install && npm run judge
+```
+
+Prints the live-proof transaction and execution id, the live URLs with a
+real health probe, the agent surfaces, whether broadcasting is disabled,
+and the test counts — derived, not quoted.
+
+The MCP server is `node packages/mcp/bin/exit-keepa-mcp.mjs` (see
+`packages/mcp/README.md` for a Claude Code config snippet). Five tools:
+`evaluate_exit_condition`, `build_exit_calldata`, `simulate_exit`,
+`get_execution_status`, `get_live_proof`. **None of them can broadcast** —
+`simulate_exit` only ever sends `simulate: true`, and asking it to
+broadcast returns a typed refusal naming `EXIT_KEEPA_ALLOW_BROADCAST`.
+
+`docs/workflows/aave-usdc-protective-exit.json` describes the same exit as
+a KeeperHub workflow, with its broadcast step written down but disabled
+and env-gated. It is schema-validated in tests and never registered or
+run; the live proof went through Direct Execution REST.
+
 ## 5. The real thing: independently-verifiable proof, not a live demo
 
 The interactive walkthrough above intentionally never touches this
@@ -126,8 +187,9 @@ truth for whether it happened.
 
 ## What to never click during a live demo
 
-- Nothing in the sandbox walkthrough (step 4) needs caution — a sandbox
-  Safe has no chain to reach, so no click there can move real money.
+- Nothing in the sandbox walkthrough (steps 4-4c) needs caution — a
+  sandbox Safe has no chain to reach, so no click there can move real
+  money, and "Try a blocked call" contacts nothing at all.
 - Anything on `app.safe.global` / `roles.gnosisguild.org` if you follow a
   "Open Zodiac Roles app" link on a *real, non-sandbox* Safe you don't
   control — that opens the real Safe Apps UI for that Safe's actual
