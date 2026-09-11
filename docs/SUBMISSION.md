@@ -339,7 +339,8 @@ mode, which is the exact call that produced the JSON quoted above.
   wallet needed.
 - **API:** https://api-production-2e11.up.railway.app (health check:
   `/health`; public audit record: `/api/live-proof`)
-- **Source:** https://github.com/levithefirst/exit-keepa (default branch: `claude/exit-keepa-init-v5lzuy`)
+- **Source:** https://github.com/levithefirst/exit-keepa (default branch: `claude/exit-keepa-mcp-audit-t78hy1`)
+- **Demo video:** https://youtu.be/WzgAuy__2Qo
 - **One-command summary:** `npm install && npm run judge`
 
 ## 8. Architecture
@@ -488,6 +489,8 @@ Issues: https://github.com/levithefirst/exit-keepa/issues
 
 ## 12. Demo video
 
-Shot list and 150–180s voiceover script for a human to record:
+https://youtu.be/WzgAuy__2Qo
+
+Shot list and 150–180s voiceover script behind it:
 [`DEMO_VIDEO_SCRIPT.md`](DEMO_VIDEO_SCRIPT.md).
 

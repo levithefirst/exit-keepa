@@ -2,8 +2,7 @@
 
 1. **Live app** — https://exit-keepa-web.vercel.app
 2. **On-chain proof** — [BaseScan: `0xc8a00cc2…49fd8b`](https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b)
-3. **Demo video** — _placeholder: link to be added once recorded._ Shot list
-   and script: [`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md)
+3. **Demo video** — https://youtu.be/WzgAuy__2Qo
 
 Live projects: Aave v3, Gnosis Safe, Zodiac Roles. Exit Keepa is the
 permissioned write path. KeeperHub is the execution layer.
@@ -218,8 +217,9 @@ The links and the one-command summary are at the top of this file; this
 section is the detail behind them. See
 [`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md) for the exact click path
 (under 5 minutes), and [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for the
-full pitch and honest-limitations list. A demo video script for a human
-to record is at [`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md).
+full pitch and honest-limitations list. The demo video is at
+https://youtu.be/WzgAuy__2Qo; the shot list and script behind it are in
+[`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md).
 
 - You can do everything through step 6 (simulate) with **zero funds at
   risk** — connecting a wallet, registering any Safe address, creating a
