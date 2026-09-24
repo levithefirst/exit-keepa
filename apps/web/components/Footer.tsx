@@ -58,6 +58,7 @@ export function Footer() {
           <div>
             <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-cream-400">Project</h3>
             <ul className="space-y-2">
+              <li><FooterLink href="/#token" external={false}>$KEEPA</FooterLink></li>
               <li><FooterLink href={REPO}>GitHub</FooterLink></li>
               <li><FooterLink href={`${REPO}/issues`}>Report an issue</FooterLink></li>
             </ul>

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../lib/wallet";
 import { btnPrimary, btnSecondary, linkFocus } from "../lib/ui";
+import { CopyButton } from "../components/CopyButton";
 import { FeatureSwitcher } from "../components/FeatureSwitcher";
 import { Faq } from "../components/Faq";
 import { WalletConnectModal } from "../components/WalletConnectModal";
@@ -75,6 +76,9 @@ const GUARANTEES = [
   },
 ];
 
+// Shown and copied exactly as published, never re-cased.
+const KEEPA_CONTRACT = "0x0ac781fab70e83c8c5ce0fc60f502b0227a70d1c";
+
 export default function HomePage() {
   const { address, connecting, error, enterDemoMode } = useWallet();
   const router = useRouter();
@@ -132,14 +136,30 @@ export default function HomePage() {
         {error && !walletModalOpen && <p className="text-pretty relative text-sm text-danger">{error}</p>}
       </section>
 
-      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-cream-100/10 bg-cream-100/10 sm:grid-cols-4" aria-label="Project facts">
-        {STATS.map((s) => (
-          <div key={s.label} className="bg-forest-950 px-4 py-6 text-center sm:px-5">
-            <p className="data-mono font-display text-3xl font-bold text-mint-400">{s.value}</p>
-            <p className="text-pretty mt-1 text-xs text-cream-400">{s.label}</p>
+      <div className="space-y-4">
+        <section id="token" className="scroll-mt-24 flex flex-col gap-4 rounded-xl border border-cream-100/10 bg-forest-800/60 p-5 sm:flex-row sm:items-center sm:justify-between sm:gap-8 sm:px-6" aria-labelledby="token-title">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-cream-400">Exit Keepa token</p>
+            <h2 id="token-title" className="mt-1 font-display text-3xl font-bold text-mint-400">$KEEPA</h2>
           </div>
-        ))}
-      </section>
+          <div className="min-w-0 sm:max-w-md sm:flex-1">
+            <p className="text-xs uppercase tracking-wide text-cream-500">Contract Address</p>
+            <div className="mt-1.5 flex items-center justify-between gap-1 rounded-lg bg-forest-950/60 pl-3">
+              <code className="min-w-0 break-all py-2.5 font-mono text-xs text-cream-100 md:text-sm">{KEEPA_CONTRACT}</code>
+              <CopyButton value={KEEPA_CONTRACT} />
+            </div>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-cream-100/10 bg-cream-100/10 sm:grid-cols-4" aria-label="Project facts">
+          {STATS.map((s) => (
+            <div key={s.label} className="bg-forest-950 px-4 py-6 text-center sm:px-5">
+              <p className="data-mono font-display text-3xl font-bold text-mint-400">{s.value}</p>
+              <p className="text-pretty mt-1 text-xs text-cream-400">{s.label}</p>
+            </div>
+          ))}
+        </section>
+      </div>
 
       <section id="proof" className="scroll-mt-24 rounded-xl border border-mint-400/25 bg-forest-800/60 p-6 sm:p-8" aria-labelledby="proof-title">
         <div className="mb-1 flex items-center gap-2">
