@@ -484,7 +484,7 @@ See [`JUDGE_DEMO.md`](JUDGE_DEMO.md) for the full click-by-click version
 
 ## 11. Contact
 
-Repo owner: `josephmorounfoluwa@gmail.com` (GitHub: `levithefirst`).
+Repo owner: GitHub [`levithefirst`](https://github.com/levithefirst).
 Issues: https://github.com/levithefirst/exit-keepa/issues
 
 ## 12. Demo video

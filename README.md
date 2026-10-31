@@ -8,7 +8,7 @@ You set the condition, Exit Keepa watches the rate, and KeeperHub executes a wit
 
 [Web app](https://exit-keepa-web.vercel.app) · [On-chain proof](https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b) · [Demo video](https://youtu.be/WzgAuy__2Qo) · [Submission](docs/SUBMISSION.md)
 
-![CI](https://github.com/levithefirst/exit-keepa/actions/workflows/ci.yml/badge.svg?branch=claude%2Fexit-keepa-mcp-audit-t78hy1)
+[![CI](https://github.com/levithefirst/exit-keepa/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/levithefirst/exit-keepa/actions/workflows/ci.yml)
 ![Node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-14-000000?logo=nextdotjs&logoColor=white)
@@ -40,6 +40,7 @@ Exit Keepa turns that sentence into a policy-checked, simulated, then broadcast 
 - [Configuration](#configuration)
 - [Testing](#testing)
 - [Deployment](#deployment)
+- [Known limitations](#known-limitations)
 - [Further reading](#further-reading)
 - [License](#license)
 
@@ -136,6 +137,15 @@ The canonical record lives in `packages/shared` and is served by `GET /api/live-
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    Web["apps/web<br/>Next.js, Vercel"] -->|HTTPS| API["apps/api<br/>Express + Drizzle"]
+    API --> DB[("Neon Postgres")]
+    API -->|"execTransactionWithRole<br/>simulate, then broadcast"| KH["KeeperHub"]
+    KH --> Roles["Zodiac Roles Modifier"] --> Safe["Your Safe"] --> Aave["Aave v3 Pool.withdraw<br/>Base"]
+    MCP["packages/mcp<br/>read and simulate only"] -.-> API
+```
+
 ```
 apps/web         Next.js 14 (App Router): wallet connect, dashboard, strategy CRUD, audit trail
 apps/api         Express + Drizzle ORM on Postgres: poller, policy, state machine, KeeperHub client
@@ -225,6 +235,15 @@ Without the shared build step, the `apps/api` suites fail to resolve `@exit-keep
 | API | Railway | [`apps/api/railway.json`](apps/api/railway.json) | down: `404 Application not found` |
 | Web | Vercel (`exit-keepa-web`) | [`docs/VERCEL_DEPLOY.md`](docs/VERCEL_DEPLOY.md) | up, but an older build without `/audit`; it still points at the Railway API |
 
+## Known limitations
+
+- **The hosted API is down.** As of 2026-10-26 the Railway API returns `404 Application not found`, so live strategies, the demo sandbox and `/api/live-proof` do not work, and the Vercel web app is an older build. The on-chain proof is still verifiable on BaseScan.
+- **One action only.** v1 supports a single Aave v3 USDC `withdraw` on Base, and nothing else is encoded.
+- **Real funds, automatic broadcast.** It targets Base mainnet, and in production the API poller is on by default and broadcasts when a condition crosses and the simulation passes.
+- **`amount` is not restricted** by the Roles scope; only the asset (USDC) and the recipient (the Safe) are.
+- **`EXIT_KEEPA_ALLOW_BROADCAST` does not gate the API**, only the MCP server and the workflow artifact.
+- **The KeeperHub workflow artifact has never been registered or executed**, and the MCP server has no broadcast tool.
+
 ## Further reading
 
 - [`docs/SUBMISSION.md`](docs/SUBMISSION.md) is the full hackathon write-up.
@@ -234,4 +253,4 @@ Without the shared build step, the `apps/api` suites fail to resolve `@exit-keep
 
 ## License
 
-No license specified. All rights reserved by the author unless a license is added.
+MIT. See [LICENSE](LICENSE).
