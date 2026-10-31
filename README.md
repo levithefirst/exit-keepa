@@ -1,516 +1,237 @@
+<div align="center">
+
 # Exit Keepa
 
-1. **Live app** — https://exit-keepa-web.vercel.app
-2. **On-chain proof** — [BaseScan: `0xc8a00cc2…49fd8b`](https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b)
-3. **Demo video** — https://youtu.be/WzgAuy__2Qo
+**Rate-triggered protective exits for Aave v3 positions held in your own Safe.**
 
-Live projects: Aave v3, Gnosis Safe, Zodiac Roles. Exit Keepa is the
-permissioned write path. KeeperHub is the execution layer.
+You set the condition, Exit Keepa watches the rate, and KeeperHub executes a withdraw that can only return funds to your Safe. The agent never holds your keys.
 
----
+[Web app](https://exit-keepa-web.vercel.app) · [On-chain proof](https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b) · [Demo video](https://youtu.be/WzgAuy__2Qo) · [Submission](docs/SUBMISSION.md)
 
-> "If the monitored rate crosses my threshold, withdraw my position back
-> to my Safe."
+![CI](https://github.com/levithefirst/exit-keepa/actions/workflows/ci.yml/badge.svg?branch=claude%2Fexit-keepa-mcp-audit-t78hy1)
+![Node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-14-000000?logo=nextdotjs&logoColor=white)
+![Network](https://img.shields.io/badge/Base-mainnet_8453-0052FF)
 
-Exit Keepa integrates **KeeperHub** as the deterministic execution layer
-for protective exits of **Aave v3** positions held in user-owned
-**Gnosis Safes**, constrained by **Zodiac Roles**. Aave and Safe are the
-live systems users already use; Exit Keepa + KeeperHub are how a
-rate-based exit condition becomes a simulated-then-broadcast withdraw
-that lands onchain without ever giving the agent the user's keys.
+</div>
 
-**Built for KeeperHub's Agent Economy hackathon**
-([dorahacks.io/hackathon/agent-economy](https://dorahacks.io/hackathon/agent-economy/detail)).
-See [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for the full submission.
+> "If the monitored rate crosses my threshold, withdraw my position back to my Safe."
 
-## For judges, in one command
+Exit Keepa turns that sentence into a policy-checked, simulated, then broadcast `withdraw` on Base. Aave v3 and Gnosis Safe are the systems the user already uses. Zodiac Roles limits what the executor may call. [KeeperHub](https://app.keeperhub.com) is the execution layer. It was built for KeeperHub's [Agent Economy hackathon](https://dorahacks.io/hackathon/agent-economy/detail).
+
+> [!WARNING]
+> Exit Keepa targets **Base mainnet** (chain `8453`) and real funds. In production the API's background poller is **on by default**, and it broadcasts automatically when a condition crosses and the simulation passes. Read [How execution is authorized](#how-execution-is-authorized) before you point it at a Safe you care about.
+
+> [!NOTE]
+> **Deployment status, checked 2026-10-26:** the Railway API (`api-production-2e11.up.railway.app`) returns `404 Application not found`, so live strategies, the demo sandbox and `/api/live-proof` do not work. The Vercel web app still loads, but it is an older build: `/audit` returns 404 there even though the page exists in this branch. The on-chain proof needs no server and is still verifiable on BaseScan.
+
+## Contents
+
+- [Quick look](#quick-look)
+- [What it does (v1 scope)](#what-it-does-v1-scope)
+- [How execution is authorized](#how-execution-is-authorized)
+- [User flow](#user-flow)
+- [Live proof](#live-proof)
+- [Agent surfaces](#agent-surfaces)
+- [The broadcast flag](#the-broadcast-flag)
+- [Architecture](#architecture)
+- [Run it locally](#run-it-locally)
+- [Configuration](#configuration)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Further reading](#further-reading)
+- [License](#license)
+
+## Quick look
 
 ```bash
-npm install && npm run judge
+npm install
+npm run judge            # runs the suites and prints real counts
+npm run judge -- --fast  # skips the suites
 ```
 
-Prints the live-proof transaction and execution id, the live URLs with a
-real health probe, the agent surfaces, whether broadcasting is disabled,
-and the current test counts — each derived from the code rather than
-quoted, so none of it can quietly rot. Add `--fast` to skip running the
-suites.
+`scripts/judge.mjs` prints the following, all worked out from the code rather than copied from this file:
 
-Three things a judge can click, with no wallet and no new transaction:
+- the live-proof transaction and execution id
+- the live URLs, with a real health probe
+- the agent surfaces
+- whether broadcasting is enabled
+- the test counts
 
-| | |
-|---|---|
-| **Audit trail** | [`/audit`](https://exit-keepa-web.vercel.app/audit) — one exit at a time, in order: condition snapshot → policy verdict → simulation → KeeperHub execution id → receipt. Seeded with the real on-chain execution, so there is real data to read before doing anything. Live-proof rows and demo-sandbox rows are labelled on every row and never mixed. |
-| **A blocked call** | On `/audit`, **"Try a blocked call"** builds a withdraw that pays out to `0x…dEaD` instead of your Safe and shows Exit Keepa refusing it. It contacts KeeperHub not at all, stores nothing, and can never broadcast. |
-| **The live proof** | The BaseScan link above. Pre-existing chain history — a judge verifies it rather than triggering it. |
+## What it does (v1 scope)
 
-Full click-through: [`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md). Click
-**"Try demo"** in the nav bar to walk the whole flow against a private
-sandbox Safe, with no wallet extension.
-
-## Agent surfaces
-
-- **MCP server** ([`packages/mcp`](packages/mcp/README.md)) — five tools
-  over the API's own execution helpers: `evaluate_exit_condition`,
-  `build_exit_calldata`, `simulate_exit`, `get_execution_status`,
-  `get_live_proof`. Read-and-simulate only: **it has no broadcast tool**,
-  and `simulate_exit` refuses outright if asked to. Run it with
-  `node packages/mcp/bin/exit-keepa-mcp.mjs`.
-- **Workflow artifact**
-  ([`docs/workflows/aave-usdc-protective-exit.json`](docs/workflows/aave-usdc-protective-exit.json))
-  — the protective exit described as a KeeperHub workflow: rate condition
-  → policy gate → simulated `execTransactionWithRole` → a broadcast step
-  that is written down but disabled and env-gated. Schema-validated in
-  tests; never registered or executed. The live proof went through
-  Direct Execution REST, not this surface.
-- **Public audit API** — `GET /api/live-proof` serves the canonical record
-  with the policy check recomputed per request. No session required.
-
-## Broadcasting is off by default
-
-`EXIT_KEEPA_ALLOW_BROADCAST` defaults to unset. No broadcast code path in
-this repository runs unless it is exactly the string `"1"` — not `"true"`,
-not `"yes"`, not `"1 "`. The MCP server is stronger than gated: it has no
-broadcast implementation at all, and setting the flag does not add one.
-
-Exit Keepa has exactly one path that has ever sent a transaction —
-`apps/api/src/execution/executeApproved.ts`, the autonomous path that
-produced the proof above — and this work deliberately did not add a
-second.
-
-## What it actually does (v1 scope)
-
-Exit Keepa v1 supports exactly **one** protocol and **one** action,
-deliberately, rather than a generic "call any protocol" system:
-
-- **Protocol:** Aave v3 on Base
-- **Action:** `withdraw(asset, amount, to)` on Aave's Pool contract —
-  withdraws a USDC supply position back to your Safe
-- **Trigger:** a rate condition (`supply_apr`/`borrow_apr`/`utilization`
-  vs. a basis-point threshold) you define per strategy
-
-Every address and function selector below was independently verified,
-not guessed:
+v1 supports exactly one protocol action: an **Aave v3 USDC `withdraw` on Base**.
 
 | | |
 |---|---|
-| Aave v3 Pool (Base) | `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5` — cross-checked against `bgd-labs/aave-address-book`'s `AaveV3Base.sol`, the canonical address list Aave Labs itself maintains |
-| USDC (Base) | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
-| Function | `withdraw(address asset, uint256 amount, address to)` |
-| Selector | `0x69328dec` — computed locally via keccak256, not recalled |
+| Aave v3 Pool | `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5` |
+| Asset | USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| Function | `withdraw(address,uint256,address)`, selector `0x69328dec` |
+| Recipient | always the Safe itself |
+| Trigger | live Aave supply or borrow rate crossing your threshold |
 
-This requires the Safe to already hold a USDC supply position on Aave v3
-Base (i.e. you've separately called `supply()` there). No `approve` step
-is needed for the exit itself — an aToken burn is internal to the Pool
-contract.
+The `withdraw` call is encoded in a single place, [`packages/shared/src/protocols/aaveV3Base.ts`](packages/shared/src/protocols/aaveV3Base.ts), which throws rather than encode anything for a non-USDC asset.
 
-## How execution is authorized (Safe + Zodiac Roles)
+## How execution is authorized
 
 ```
 Safe  →  Zodiac Roles Modifier  →  execTransactionWithRole  →  Safe executes
 ```
 
-This path was independently verified earlier in this project: a real,
-harmless self-call transaction was broadcast and confirmed on Base
-(`0xf2122ab591a73f81c1d1290f4830d5576866e0a5e817d9687450f2b11481278c`).
+KeeperHub executes, but it can only call `execTransactionWithRole` on your Roles Modifier, and **a role permits nothing by default**. The fully scoped permission for Exit Keepa takes two steps:
 
-KeeperHub is the executor, but it can only ever call
-`execTransactionWithRole` on your Roles Modifier — and the Roles Modifier
-only permits what's explicitly scoped to a role. **A role permits nothing
-by default.** The fully-scoped target for Exit Keepa's `withdraw` action
-is:
+1. `scopeTarget(roleKey, AavePool)`. This changes the Pool's clearance from `None` to `Function`, so no function on it is callable yet.
+2. `scopeFunction(roleKey, AavePool, 0x69328dec, conditions, None)`. This allows `withdraw` only when `asset == USDC` and `to == the Safe`. `amount` is left unrestricted, and value and delegatecall are not allowed.
 
-1. `scopeTarget(roleKey, targetAddress)` — `targetAddress` = the Aave Pool
-   (`0xA238Dd80C259a72e81d7e4664a9801593F98d1c5`). Moves the target's
-   clearance from `None` to `Function`, so *no* function is callable on it
-   until step 2 explicitly allows one.
-2. `scopeFunction(roleKey, targetAddress, selector, conditions, options)`
-   — `selector` = `0x69328dec` (`withdraw`), `options` = `None` (plain
-   call, no value, no delegatecall), with a parameter condition fixing
-   `asset == USDC` and `to == the Safe itself` (`amount` left
-   unrestricted). Once this is live, the role can withdraw USDC from
-   Aave and the funds can only ever land back in the Safe that owns them.
+Both steps are live on the live-proof Safe. The owner submitted them in tx [`0x41d61e34…e81f1`](https://basescan.org/tx/0x41d61e34a1e94ea693a3c6c2fc86e5fcc6c845a9b692fe86a9363e761e6e81f1), and the full verification record is in [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md).
 
-**What's actually granted on the live-proof Safe right now** is that
-fully-scoped end state — both steps are live onchain:
+On top of the Roles Modifier, Exit Keepa runs its own policy check in [`apps/api/src/agent/policy.ts`](apps/api/src/agent/policy.ts). It confirms the right chain, contract, function and asset, that funds return only to your Safe, and that Roles is configured. The two layers are meant to work together as defense in depth.
 
-- **Step 1 is live**: `scopeTarget` has been applied, so the Aave Pool's
-  clearance is `Function`, not whole-target `allowTarget`.
-- **Step 2 is live**: the `withdraw` selector (`0x69328dec`) is allowed
-  for the role with parameter conditions fixing `asset == USDC` and
-  `to == the Safe itself` (`amount` left unrestricted), submitted by the
-  Safe's own owner
-  (tx [`0x41d61e34...e81f1`](https://basescan.org/tx/0x41d61e34a1e94ea693a3c6c2fc86e5fcc6c845a9b692fe86a9363e761e6e81f1))
-  and independently re-verified by decoding that transaction's own
-  calldata directly from Base RPC — not assumed from the transaction
-  merely succeeding. See [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md)
-  for the full verification record. **No other function on the Aave
-  Pool is callable through this role**, and a `withdraw` call is only
-  permitted if `asset` is USDC and `to` is this exact Safe — enforced by
-  the Roles Modifier itself, before Exit Keepa's own application-level
-  policy check (`agent/policy.ts`'s `assetBound`/`recipientBound`, see
-  below) ever runs. That application-level check still runs too — this
-  is defense in depth, not a replacement for it.
-- The live-proof Safe may also still show a **`Wildcard` clearance on the Safe
-  address itself** in the Roles config. That's residual from earlier demo
-  setup, unrelated to the Aave withdraw path above — it does not grant
-  anything against the Aave Pool, and should not be read as part of this
-  permission's scope. It's flagged here so a judge inspecting the Roles
-  config directly isn't misled by it.
-
-**A real Aave v3 USDC withdraw has been executed end-to-end through this
-exact path** — see "Live proof" below — proving the architecture works
-against real chain state, under the permission state described above.
+> [!NOTE]
+> The live-proof Safe may still show a `Wildcard` clearance on the Safe's own address in its Roles config. It is left over from earlier demo setup and grants nothing against the Aave Pool. The earlier harmless self-call through this path is [`0xf2122ab5…1278c`](https://basescan.org/tx/0xf2122ab591a73f81c1d1290f4830d5576866e0a5e817d9687450f2b11481278c).
 
 ## User flow
 
-1. **Connect wallet** (Home / any page's nav bar — any EIP-1193 injected
-   wallet, e.g. MetaMask or Coinbase Wallet).
-2. **Connect a Safe** (Dashboard) — register the Safe address, and its
-   Roles Modifier address + role key if already configured.
-3. **Create a strategy** (Create Strategy) — protocol/action is fixed to
-   the one supported above; you choose the trigger condition and the
-   withdraw amount ("entire position" or an exact smallest-unit amount).
-4. **Review the exact transaction** — the target contract, function,
-   decoded arguments, and raw calldata are shown before anything is
-   activated. This is deterministically rebuilt server-side from the
-   stored strategy — the frontend never supplies a target/function/
-   calldata that gets trusted directly.
-5. **Activate** — hands the strategy to Exit Keepa. This is the last
-   thing a user does; everything below happens without them.
-6. **Exit Keepa watches** — a background poller (`agent/poller.ts`, on by
-   default in production) evaluates every active strategy on an interval.
-   Each tick reads the live Aave supply/borrow rate on Base, checks it
-   against your condition, and — only on a genuine edge crossing, claimed
-   atomically so exactly one attempt happens per crossing no matter how
-   many pollers are running — runs a deterministic policy check (right
-   chain, right contract, right function, right asset, funds returning
-   only to your Safe, Roles configured). Condition not met: nothing
-   happens. Policy check fails: the attempt is `refused` with a specific
-   reason and nothing reaches KeeperHub.
-7. **Exit Keepa simulates, then executes** — a passing policy check
-   creates an execution and simulates it (`execTransactionWithRole` with
-   `simulate: true`, against the real Roles Modifier and Aave Pool). A
-   simulation that says the transaction would revert is a hard stop:
-   `failed`, nothing broadcast. A clean simulation is broadcast
-   immediately and automatically — the identical call with
-   `simulate: false` and an `Idempotency-Key` (KeeperHub's Safe
-   First-Write Sequence), keyed to this execution's own stable id so a
-   retried request replays instead of double-broadcasting. Both this
-   autonomous path and the manual/admin recovery endpoint call one
-   canonical service (`execution/executeApproved.ts`); there is exactly
-   one broadcast lifecycle in the codebase, with exactly one definition
-   of every guard on it.
-8. **Exit Keepa verifies and reports** — KeeperHub's `executionId` is
-   saved as soon as it's known, then `GET /execute/{executionId}/status`
-   is polled with backoff (honoring `X-Poll-Interval-Hint`) until a
-   receipt confirms the outcome. A transaction hash is only ever
-   shown/stored once a receipt says so — never fabricated, and never
-   trusted from the self-reported status alone. An outcome that can't be
-   confirmed is reported as *"Execution status is being verified"*, never
-   as success and never as failure. The strategy page shows what
-   happened, with a BaseScan link for any receipt-confirmed transaction;
-   a still-confirming execution keeps re-checking on its own.
+1. **Connect a wallet.** Any EIP-1193 injected wallet works. Sign-in is SIWE-style: you sign a one-time nonce and receive a bearer session, and every Safe, strategy or execution route checks the `safe_owners` table.
+2. **Connect a Safe** on the dashboard, along with its Roles Modifier address and role key if you have them.
+3. **Create a strategy.** Pick the trigger condition and the amount, either the entire position or an exact amount.
+4. **Review the exact transaction.** The page shows the target, function, decoded arguments and raw calldata. The server rebuilds all of this from the stored strategy and never trusts calldata from the frontend.
+5. **Activate.** This is your last step.
+6. **Exit Keepa watches.** The poller ([`agent/poller.ts`](apps/api/src/agent/poller.ts)) reads the live Aave rate on every tick. On a genuine edge crossing it claims one attempt atomically and runs the policy check. If the check fails, the attempt is marked `refused` with a reason and nothing reaches KeeperHub.
+7. **Simulate, then broadcast.** Exit Keepa runs `execTransactionWithRole` with `simulate: true` first. If the simulation would revert, it stops with `failed`. If it passes, the same call is sent immediately with `simulate: false` and an `Idempotency-Key`. Both the autonomous path and the manual recovery endpoint go through [`execution/executeApproved.ts`](apps/api/src/execution/executeApproved.ts).
+8. **Verify.** Exit Keepa polls KeeperHub's execution status with backoff. A transaction hash is stored only once a receipt confirms it. An outcome it can't confirm is shown as *"Execution status is being verified"*.
 
-## For judges: what is and isn't real
-
-The links and the one-command summary are at the top of this file; this
-section is the detail behind them. See
-[`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md) for the exact click path
-(under 5 minutes), and [`docs/SUBMISSION.md`](docs/SUBMISSION.md) for the
-full pitch and honest-limitations list. The demo video is at
-https://youtu.be/WzgAuy__2Qo; the shot list and script behind it are in
-[`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md).
-
-- You can do everything through step 6 (simulate) with **zero funds at
-  risk** — connecting a wallet, registering any Safe address, creating a
-  strategy, and inspecting/simulating the exact transaction is all
-  read-only against chain state.
-- Step 7 (a real broadcast) additionally requires a Safe that (a) holds a
-  real USDC supply position on Aave v3 Base, and (b) has actually been
-  granted the Roles permission described above. For the live-proof Safe
-  linked in "Live proof" below, both are already true — that's why its
-  broadcast is a real, confirmed on-chain transaction rather than a
-  simulation. Try it yourself with **any other real Safe address** and
-  you'll see the same simulate step correctly refuse to broadcast until
-  those two conditions are met for that Safe. (Demo mode's own sandbox
-  Safe is a separate thing entirely — see `docs/JUDGE_DEMO.md` §2-4.)
-- **What runs unattended, precisely:** the whole lifecycle after
-  activation. The poller (`agent/poller.ts`) runs every
-  `AGENT_POLL_INTERVAL_MS` (default 30s) for every active strategy — on
-  by default in production, off by default in development, test, and
-  preview, and overridable in either direction with `AGENT_POLL_ENABLED`.
-  Each tick calls the same `evaluateStrategy` the on-demand **"Check
-  now"** button calls, reads the live Aave rate from Base rather than a
-  value typed in, and on a real crossing goes all the way through policy
-  → simulate → broadcast → status verification without anyone present.
-  Every decision, including the ones that do nothing, is recorded with a
-  full receipt: intent, observation, policy check, simulation result,
-  KeeperHub response, final on-chain result.
-- **The one thing a person still does** is the one-time Safe
-  authorization: granting Exit Keepa its narrow Roles permission, signed
-  by the Safe's own owners in Safe's own app. That cannot move
-  server-side without holding someone's keys, which this project does not
-  do. It happens once per Safe; every exit after it runs unattended. The
-  manual simulate/execute endpoints still exist, but only as developer
-  recovery for an execution the autonomous path couldn't finish — they
-  are not a step in the normal flow.
+The nav bar also has **Try demo**, which runs this flow against a sandbox Safe with no wallet extension. It needs the API to be up.
 
 ## Live proof
 
-This is **pre-existing chain history, not something a judge triggers**.
-A real Aave v3 USDC withdraw was broadcast end-to-end through this exact
-Safe → Roles Modifier → KeeperHub path on Base mainnet, before this
-submission — the judge path below points at it rather than asking anyone
-to re-broadcast against an already-emptied demo position:
+A real Aave v3 USDC withdraw went end to end through this path on Base mainnet. It is part of the chain's history; you can check it but you can't re-run it.
 
 | | |
 |---|---|
-| Tx hash | `0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b` |
-| BaseScan | https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b |
-| Result | Receipt status `0x1` (success) — USDC returned to the Safe |
-| Safe | `0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9` (Base) |
+| Tx | [`0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b`](https://basescan.org/tx/0xc8a00cc28bf116acea722ab298d610bdbfc50a05b902aae5ab74d9da1849fd8b) |
+| Result | receipt status `0x1`; USDC moved from Aave back to the Safe |
+| Safe | `0xfFd5c5e17e09E012C99550Bfb2ef88d370cd66a9` |
 | Roles Modifier | `0x694C3F6104741901F6AE0191Fd1afA9A274dBbBE` |
 | KeeperHub executor | `0xc68f0E22Dc6eD7e883873B36f23DdBBC1b3968Ac` |
 
-This was independently verified against the chain itself (not just the
-app's own claim) via `eth_getTransactionReceipt`. The app's own
-execution-history row for this broadcast briefly showed `status: failed`
-due to a hash-extraction bug (fixed — see the executor tests) even though
-the on-chain transaction had already succeeded; the chain, not the
-database, is the source of truth here.
+The canonical record lives in `packages/shared` and is served by `GET /api/live-proof` when the API is running. The app's own history row briefly showed `failed` because of a hash-extraction bug that has since been fixed. The chain is the source of truth.
 
-## Wallet-authenticated ownership
+## Agent surfaces
 
-`GET /api/auth/nonce`, `POST /api/auth/verify`, `POST /api/auth/demo-session`
-(`apps/api/src/routes/auth.ts`) implement a SIWE-style flow: sign a
-one-time nonce with `personal_sign`, exchange the recovered signature for
-a bearer session token, and every subsequent request to a Safe/strategy/
-execution/agent-decision route is checked against a `safe_owners` table
-(`apps/api/src/auth/session.ts`), so a caller can only ever read or act
-on Safes they registered themselves. See
-[`docs/SUBMISSION.md`](docs/SUBMISSION.md) for the full test list.
+- **MCP server** ([`packages/mcp`](packages/mcp/README.md)) has five read-and-simulate tools over the API's own helpers: `evaluate_exit_condition`, `build_exit_calldata`, `simulate_exit`, `get_execution_status` and `get_live_proof`. It has **no broadcast tool**. Run it with:
+  ```bash
+  node packages/mcp/bin/exit-keepa-mcp.mjs
+  ```
+- **Workflow artifact** ([`docs/workflows/aave-usdc-protective-exit.json`](docs/workflows/aave-usdc-protective-exit.json)) describes the exit as a KeeperHub workflow: condition, then policy gate, then simulate, then a broadcast step that is disabled and env-gated. It is schema-checked in tests and has never been registered or executed.
+- **Public audit API.** `GET /api/live-proof` recomputes the policy check on each request and needs no session.
+
+## The broadcast flag
+
+`EXIT_KEEPA_ALLOW_BROADCAST` is unset by default and only counts as on when it is exactly `"1"`. It gates the **MCP server** and the **workflow artifact's broadcast step**. The MCP server has no broadcast implementation at all, so setting the flag adds nothing there.
+
+> [!IMPORTANT]
+> The flag does **not** gate the API. `apps/api/src/execution/executeApproved.ts` is the one path that has ever broadcast, and it produced the live proof. It is controlled by the poller (`AGENT_POLL_ENABLED`) and by the Safe's Roles scope, not by `EXIT_KEEPA_ALLOW_BROADCAST`.
 
 ## Architecture
 
 ```
-apps/web        Next.js (App Router) — wallet connect, dashboard, strategy CRUD, simulate/execute UI, audit trail
-apps/api        Express + Drizzle ORM — strategy/execution state machine, KeeperHub integration
-packages/shared Types, Zod schemas, the Aave v3 Base protocol module (address constants + calldata encoder),
-                the canonical live-proof record, and the workflow-artifact schema
-packages/mcp    MCP server — a read-and-simulate adapter over apps/api's own execution helpers
+apps/web         Next.js 14 (App Router): wallet connect, dashboard, strategy CRUD, audit trail
+apps/api         Express + Drizzle ORM on Postgres: poller, policy, state machine, KeeperHub client
+packages/shared  Types, Zod schemas, Aave v3 Base module, live-proof record, workflow schema
+packages/mcp     MCP server: read-and-simulate adapter over apps/api's execution helpers
 ```
 
-Key backend pieces:
+| File | Role |
+|---|---|
+| [`apps/api/src/execution/buildTransaction.ts`](apps/api/src/execution/buildTransaction.ts) | The only place a stored strategy becomes a transaction |
+| [`apps/api/src/execution/executor.ts`](apps/api/src/execution/executor.ts) | Calls KeeperHub with `simulate: true`/`false`; accepts only well-formed hashes |
+| [`apps/api/src/execution/stateMachine.ts`](apps/api/src/execution/stateMachine.ts) | Broadcast idempotency via a conditional `UPDATE … WHERE status = 'simulated'` |
+| [`apps/api/src/auth/session.ts`](apps/api/src/auth/session.ts) | Session and Safe-ownership checks |
 
-- `packages/shared/src/protocols/aaveV3Base.ts` — the only place that
-  encodes a `withdraw` call; throws rather than encoding anything for a
-  non-USDC asset.
-- `apps/api/src/execution/buildTransaction.ts` — the only place that
-  turns a stored strategy into a transaction. Never accepts a
-  target/function/calldata from a caller.
-- `apps/api/src/execution/executor.ts` — calls KeeperHub's
-  `execTransactionWithRole` with `simulate: true`/`false`; only trusts a
-  transaction hash that passes real hex-format validation.
-- `apps/api/src/execution/stateMachine.ts` — the broadcast idempotency
-  rule (`decideBroadcast`), enforced with a conditional `UPDATE ... WHERE
-  status = 'simulated'` so two concurrent requests can never both
-  broadcast, and a retry after a successful broadcast is always a no-op.
+More detail: [`docs/architecture.md`](docs/architecture.md) and [`docs/keeperhub-integration.md`](docs/keeperhub-integration.md).
 
-## Local setup
+## Run it locally
+
+Requires Node 20 or newer, a Postgres database and KeeperHub credentials.
 
 ```bash
 npm install
+npm run build --workspace packages/shared   # apps/api tests and runtime resolve shared's dist/
 
 cp .env.example apps/api/.env
-cp .env.example apps/web/.env.local   # only NEXT_PUBLIC_* vars are read
+cp .env.example apps/web/.env.local          # web reads only NEXT_PUBLIC_API_URL
 ```
 
-Fill in `apps/api/.env` with a real `DATABASE_URL`, `KEEPERHUB_API_KEY`,
-and `KEEPERHUB_WEBHOOK_SECRET`. Fill in `apps/web/.env.local` with
-`NEXT_PUBLIC_API_URL=http://localhost:4000`. Never commit either file.
+Fill in `apps/api/.env` and set `NEXT_PUBLIC_API_URL=http://localhost:4000` in `apps/web/.env.local`. Never commit either file.
 
-Run migrations against your database:
+> [!NOTE]
+> The API does not load `.env` files by itself, because there is no dotenv in `apps/api`. Export the variables into your shell first, for example `set -a; . apps/api/.env; set +a`. Next.js loads `apps/web/.env.local` on its own.
 
 ```bash
-npm run db:migrate
+npm run db:migrate   # Drizzle migrations in apps/api/drizzle
+npm run dev:api      # http://localhost:4000, health at GET /health
+npm run dev:web      # http://localhost:3000, health at GET /api/health
 ```
 
-Start both apps in dev mode (separate terminals):
+## Configuration
 
-```bash
-npm run dev:api    # http://localhost:4000
-npm run dev:web    # http://localhost:3000
-```
+API variables are validated in [`apps/api/src/env.ts`](apps/api/src/env.ts). The template is [`.env.example`](.env.example).
 
-Health checks: `GET /health` on the API, `GET /api/health` on the web app.
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `DATABASE_URL` | yes | none | Postgres connection string |
+| `KEEPERHUB_API_KEY` | yes | none | KeeperHub API key |
+| `KEEPERHUB_WEBHOOK_SECRET` | yes | none | Verifies KeeperHub webhooks |
+| `KEEPERHUB_API_BASE_URL` | no | `https://app.keeperhub.com/api` | KeeperHub API base |
+| `CORS_ORIGINS` | no | empty (no cross-origin access) | Comma-separated origins, or `*` |
+| `BASE_CHAIN_ID` | no | `8453` | Base mainnet |
+| `BASE_RPC_URL` | no | `https://mainnet.base.org` | Primary RPC; use a keyed endpoint in production |
+| `BASE_RPC_FALLBACKS` | no | publicnode, 1rpc, drpc | Comma-separated fallback RPCs |
+| `AGENT_POLL_ENABLED` | no | `true` when `NODE_ENV=production`, else `false` | Background watcher and auto-execution |
+| `AGENT_POLL_INTERVAL_MS` | no | `30000` (min `5000`) | Poll interval |
+| `AGENT_DECISION_MAX_AGE_MS` | no | `300000` | Max age of a decision before it is stale |
+| `NODE_ENV` / `PORT` / `LOG_LEVEL` | no | `development` / `4000` / `info` | Runtime |
+| `NEXT_PUBLIC_API_URL` | yes (web) | none | API base URL for the browser |
+| `EXIT_KEEPA_ALLOW_BROADCAST` | no | unset | See [The broadcast flag](#the-broadcast-flag) |
 
 ## Testing
 
 ```bash
-npm test                                   # all three suites
-npm run judge                              # the same counts, plus everything else a judge needs
+npm run build --workspace packages/shared   # needed once on a fresh clone
+npm test                                    # shared + api + mcp
+npm run typecheck
 ```
 
-Or one at a time:
+On 2026-10-26, a fresh clone of this branch gave the following results:
 
-```bash
-npm run test --workspace packages/shared
-npm run test --workspace apps/api
-npm run test --workspace packages/mcp
-```
+- **323 tests passed:** `packages/shared` 36, `apps/api` 254 and `packages/mcp` 33.
+- `npm run typecheck` was clean.
 
-323 tests total at the time of writing — 254 in `apps/api`, 36 in
-`packages/shared`, 33 in `packages/mcp`. Rather than trusting that number
-here, run `npm run judge`: it reports the counts by actually running the
-suites, which is the only version that cannot go stale.
+Without the shared build step, the `apps/api` suites fail to resolve `@exit-keepa/shared`. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the following steps:
 
-What they cover: chain-boundary enforcement (rejecting a Safe registered
-on any chain other than Base before building a Base-targeted
-transaction), calldata correctness (against independently-computed hex
-fixtures, not the encoder checking itself), condition-comparator logic,
-execution state-transition/idempotency rules, KeeperHub response parsing
-(including refusing to trust a malformed hash, distinguishing a confirmed
-KeeperHub rejection from an ambiguous network/timeout failure, and the
-Safe First-Write Sequence's Idempotency-Key/status-polling handling), and
-end-to-end tests (`apps/api/test/e2e.test.ts`,
-`apps/api/test/auth.e2e.test.ts`) that walk create strategy → activate →
-condition check → simulate → broadcast → duplicate-broadcast rejection →
-recorded transaction hash, against an in-memory fake of the database and
-a mocked KeeperHub client.
-
-The tests added for the agent surfaces are specifically about what must
-*not* happen:
-
-- `simulate_exit` never sends `simulate: false` — asserted by inspecting
-  every `simulate` value the KeeperHub client was handed, with only the
-  network boundary mocked so the request under inspection is the one the
-  production code builds (`packages/mcp/src/tools.test.ts`).
-- Broadcasting is refused unless `EXIT_KEEPA_ALLOW_BROADCAST` is exactly
-  `"1"`, and refused again with a different, explicit reason when it is
-  (there is no broadcast implementation in the MCP surface to enable).
-- The blocked-call demo fails on `recipientBound` and nothing else, and
-  never contacts KeeperHub at all
-  (`apps/api/src/execution/blockedCall.test.ts`, `apps/api/test/e2e.test.ts`).
-- `get_live_proof` returns the exact canonical hash and ids, makes no
-  network call, and cannot return a freshly-generated one.
-- The shipped workflow artifact validates against its schema — the file
-  itself, not a fixture copy
-  (`packages/shared/src/workflows/keeperhubWorkflow.test.ts`).
-- A real MCP client drives the real server over a linked in-memory
-  transport, checking the tool list and the refusal shape
-  (`packages/mcp/src/server.test.ts`).
-
-## Environment variables
-
-See `.env.example` for the full list; all are validated at process
-startup (`apps/api/src/env.ts`, `apps/web/lib/env.ts`) — the app refuses
-to boot with missing/malformed required configuration.
-
-| Variable | Where | Notes |
-|---|---|---|
-| `DATABASE_URL` | API | Neon Postgres connection string |
-| `KEEPERHUB_API_KEY` | API | Never logged or exposed to the client |
-| `KEEPERHUB_WEBHOOK_SECRET` | API | HMAC secret for `/api/webhooks/keeperhub` |
-| `BASE_CHAIN_ID` / `BASE_RPC_URL` | API | Default to Base mainnet. **`BASE_RPC_URL` must be a key-authenticated provider endpoint (Alchemy/Infura/QuickNode) in any deployed environment** - verifying one Safe issues a batch of reads (module list, module bytecode + Roles invariants, role storage slots, five negative probes), and the free public `mainnet.base.org` rate-limits (HTTP 429) before that completes. A read that cannot complete fails closed to "could not verify", never to "protected". Set it as a host environment variable; never commit the key. |
-| `CORS_ORIGINS` | API | Set to `*` in production (this API has no cookie/session auth to protect) - unset means CORS is fully disabled and every browser request from the deployed frontend fails |
-| `NEXT_PUBLIC_API_URL` | Web | Must point at the deployed API's public URL |
-
-The Nav's **"Profile"** button (`apps/web/components/ProfileLoginModal.tsx`)
-offers a traditional username/password sign-up/login as an alternate login
-method alongside "Connect wallet" - a persistent account for someone who
-wants to build and review strategies without a wallet extension. No
-external provider and no extra configuration: passwords are hashed with
-scrypt and a per-account random salt (`apps/api/src/auth/password.ts`),
-stored in the `local_accounts` table (see Database below).
-
-## Database
-
-Schema: `apps/api/src/db/schema.ts` (Drizzle ORM). Tables:
-
-- `safe_accounts` — chain, Safe address, optional Roles Modifier address + role key
-- `exit_strategies` — condition (jsonb) + action (jsonb, validated `ExitAction`) + status
-- `keeperhub_executions` — one row per execution attempt: idempotency key (unique), status, request/response payloads, tx hash, broadcast/confirmed timestamps, error message
-- `local_accounts` — username/password profiles: unique username, scrypt password hash + salt
-- `audit_events` — append-only log of every state change
-
-Migrations live in `apps/api/drizzle/` with a proper `meta/` journal
-(earlier migrations in this project's history were never actually
-runnable — no journal existed — which is why the previous production
-database had zero tables; this is fixed).
-
-```bash
-npm run db:generate --workspace apps/api   # after changing schema.ts
-npm run db:migrate --workspace apps/api    # apply migrations
-```
-
-## KeeperHub integration
-
-**KeeperHub surfaces used.** Every write this project has ever made went
-through the plain REST Direct Execution API. `packages/mcp` adds an
-agent-facing adapter over the same helpers, but it is read-and-simulate
-only — it has no broadcast tool, so it is not a second write path:
-
-- `POST /execute/contract-call` — `execTransactionWithRole` against the
-  Roles Modifier, `simulate: true` first, then `simulate: false` once
-  clean (`apps/api/src/keeperhub/client.ts`'s `callContractFunction`).
-- **`Idempotency-Key`** header on every broadcast, sourced from the
-  execution row's own stable id — never minted fresh per HTTP attempt.
-  `idempotentReplay`, `409 idempotency_conflict`, and
-  `409 idempotency_in_progress` are each handled as their own case, not
-  folded into a generic error.
-- **`GET /execute/{executionId}/status`** polling with backoff, honoring
-  `X-Poll-Interval-Hint`. `receipts[]` (independently re-fetched from the
-  chain by KeeperHub) are treated as authoritative over the self-reported
-  `status`/`transactionHash` fields.
-- `GET /chains` — confirms Base is enabled.
-- **Evaluated and skipped:** `POST /execute/check-and-execute` — would
-  stay Roles-bound (the action leg is still `execTransactionWithRole`),
-  but its condition check requires a single-scalar contract read, and
-  Exit Keepa's real trigger (Aave's supply APR) only exists inside a
-  15-field struct return with no single-scalar getter. See
-  `docs/SUBMISSION.md` §4 for the full reasoning.
-
-`apps/api/src/keeperhub/client.ts` and `apps/api/src/keeperhub/types.ts`
-document, inline, exactly what was live-verified against KeeperHub's real
-API this session (contract-call resolution, the `functionArgs` JSON-
-stringified-array quirk, the `execTransactionWithRole` simulation and
-real-broadcast response shapes) versus what's implemented directly from
-KeeperHub's own published Direct Execution API reference but not yet
-independently live-exercised by this project (the Idempotency-Key and
-status-polling paths — see `docs/keeperhub-integration.md`'s
-"Documented (2026-09-01)" section and `docs/SUBMISSION.md`'s "what still
-breaks" list for the honest gap). `apps/api/src/execution/executor.ts` is
-written to never trust an unverified shape — see its doc comments.
-
-See `docs/keeperhub-integration.md` and `docs/zodiac-verification-evidence.md`
-for the full research trail.
+1. install
+2. build shared
+3. typecheck
+4. lint
+5. the three test suites
+6. a full build
 
 ## Deployment
 
-**Backend (Railway) — live:**
+| Piece | Host | Config | Status (2026-10-26) |
+|---|---|---|---|
+| API | Railway | [`apps/api/railway.json`](apps/api/railway.json) | down: `404 Application not found` |
+| Web | Vercel (`exit-keepa-web`) | [`docs/VERCEL_DEPLOY.md`](docs/VERCEL_DEPLOY.md) | up, but an older build without `/audit`; it still points at the Railway API |
 
-- Project: `exit-keepa` / service `api`, tracking branch
-  `claude/exit-keepa-init-v5lzuy`
-- URL: `https://api-production-2e11.up.railway.app`
-- Build: `npm install && npm run build:api` (Railway dashboard setting —
-  note this overrides `apps/api/railway.json`'s `build`/`deploy` fields
-  for this service; the dashboard config is authoritative)
-- **Pre-deploy command** (set directly on the Railway service, runs
-  before every deploy): `npm run db:migrate --workspace apps/api` —
-  idempotent, safe to run on every restart
-- Start: `npm run start --workspace apps/api`
-- Health check: `/health`
+## Further reading
 
-**Frontend (Vercel) — live:**
+- [`docs/SUBMISSION.md`](docs/SUBMISSION.md) is the full hackathon write-up.
+- [`docs/JUDGE_DEMO.md`](docs/JUDGE_DEMO.md) is the click-through, including `/audit` and **Try a blocked call**.
+- [`docs/ROLES_TIGHTENING.md`](docs/ROLES_TIGHTENING.md) and [`docs/zodiac-verification-evidence.md`](docs/zodiac-verification-evidence.md) are the Roles verification records.
+- [`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md) is the script behind the demo video.
 
-- Project: `exit-keepa-web`, tracking branch `claude/exit-keepa-init-v5lzuy`
-- URL: `https://exit-keepa-web.vercel.app`
-- Root Directory: `apps/web`; Install Command runs the real monorepo
-  `npm install`, Build Command runs `npm run build:web` — see
-  [`docs/VERCEL_DEPLOY.md`](docs/VERCEL_DEPLOY.md) for the exact
-  settings and the two build-breaking misconfigurations that were fixed
-  to get here (Root Directory, and the real `npm install` needing to run
-  as the Install Command rather than buried inside the Build Command).
+## License
 
-**Database (Neon):** already provisioned; migrations run automatically on
-every Railway deploy via the pre-deploy command above.
+No license specified. All rights reserved by the author unless a license is added.
